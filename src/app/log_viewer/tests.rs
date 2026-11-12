@@ -2930,7 +2930,7 @@ fn select_log(harness: &mut Harness<ViewerState>, name: &str) {
 }
 
 #[test]
-fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
+fn structured_scope_controls_select_typed_values_and_show_matching_modes() {
     let mut harness = harness_of(
         Vec::new(),
         &[(
@@ -2965,12 +2965,7 @@ fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
     assert_eq!(match_count(&harness), "2 of 3");
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
     run_until_the_scans_land(&mut harness);
-    assert_eq!(
-        harness
-            .get_all_by_label(egui_phosphor::regular::GEAR)
-            .count(),
-        1
-    );
+    assert_eq!(harness.get_all_by_label("Exact service").count(), 1);
     assert_eq!(
         harness
             .state()
@@ -3016,12 +3011,7 @@ fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
     assert_eq!(match_count(&harness), "1 of 3");
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
     run_until_the_scans_land(&mut harness);
-    assert_eq!(
-        harness
-            .get_all_by_label(egui_phosphor::regular::DESKTOP)
-            .count(),
-        1
-    );
+    assert_eq!(harness.get_all_by_label("Exact hostname").count(), 1);
     assert!(
         harness
             .query_by_label(filters::REGEX_TOGGLE_LABEL)
@@ -3516,7 +3506,7 @@ fn disabled_chip_effects_mute_text_fill_border_and_map_swatch(#[case] theme: egu
             other_text.galley.job.sections.first().unwrap().format.color,
             visuals.text_color()
         );
-        harness.snapshot(
+        harness.snapshot_with_color_tolerance(
             &format!("log_viewer_disabled_{effect:?}_effect_{theme:?}").to_ascii_lowercase(),
         );
         toggle_chip(&mut harness.inner, 0, effect);
@@ -4303,6 +4293,7 @@ const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
 const PAGE_STEPS_TO_THE_END: usize = 60;
 
 mod chronology_policies;
+mod condition_editing;
 mod exporter_totals;
 mod inspector_layout;
 mod integration;

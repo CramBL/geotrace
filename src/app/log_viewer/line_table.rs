@@ -1108,7 +1108,7 @@ impl LogViewerWindow {
                                 line_numbers,
                                 message,
                                 highlighted: HighlightedMessage {
-                                    spans: filters.live_filter_match_spans(message),
+                                    spans: filters.condition_match_spans(entry_index),
                                     color: highlight,
                                 },
                                 position: placement.map(|placement| placement.position),

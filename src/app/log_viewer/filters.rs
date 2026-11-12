@@ -8,13 +8,13 @@ use std::num::NonZeroUsize;
 use egui::widget_style::{Classes, WidgetState};
 use egui::{
     Button, Checkbox, Frame, Label, RichText, StrokeKind, TextEdit, TextStyle, TextWrapMode,
-    WidgetText,
+    WidgetInfo, WidgetText, WidgetType,
 };
 use egui_phosphor::regular::{EYE as ICON_EYE, EYE_SLASH as ICON_EYE_SLASH};
 use gt_log_view::{
     FilterChip, FilterChipId, FilterEffect, FilterGroup, FilterGroupId, FilterGroupOperator,
-    FilterScope, FilterStack, LayerColorSlots, LiveFilterDraft, LoadedLogs, TableFilterApplication,
-    TableFilterStatus,
+    FilterScope, FilterStack, InvalidFilterPattern, LayerColorSlots, LiveFilterDraft, LoadedLogs,
+    PreparedFilterCondition, TableFilterApplication, TableFilterStatus,
 };
 use gt_logfile::{LogLevelKind, ParsedLog};
 use gt_ui_types::LoadedLogId;
@@ -31,20 +31,25 @@ enum FilterEdit {
         effect: FilterEffect,
     },
     AddLiveFilterAsChip,
-    CancelLiveFilter,
-    ClearLiveFilter,
+    ApplyCondition,
+    CancelCondition,
+    ClearCondition,
     ClearTableFilters,
     CreateGroup,
+    EditChip {
+        chip: FilterChipId,
+        effect: FilterEffect,
+    },
     MoveChipToGroup {
         chip: FilterChipId,
         group: FilterGroupId,
     },
-    ReadLiveFilterAsRegex(bool),
     RemoveChipEffect {
         chip: FilterChipId,
         effect: FilterEffect,
     },
     RemoveGroup(FilterGroupId),
+    SelectChip(FilterChipId),
     SelectGroup(FilterGroupId),
     SelectMapHighlights,
     SetChipEffectEnabled {
@@ -57,9 +62,82 @@ enum FilterEdit {
         operator: FilterGroupOperator,
     },
     SetLevel(LogLevelKind),
+    SetRegex(bool),
     SetScope(FilterScope),
     SetTableApplication(TableFilterApplication),
-    WriteLiveFilter(String),
+    WriteCondition(String),
+}
+
+pub(super) struct ConditionEdit {
+    log: LoadedLogId,
+    chip: FilterChipId,
+    effect: FilterEffect,
+    draft: LiveFilterDraft,
+    replacement: Result<PreparedFilterCondition, InvalidFilterPattern>,
+}
+
+impl ConditionEdit {
+    fn of(log: LoadedLogId, chip: &FilterChip, effect: FilterEffect) -> Self {
+        let draft = LiveFilterDraft::from(chip.pattern());
+        let replacement = PreparedFilterCondition::try_from(&draft);
+        Self {
+            log,
+            chip: chip.id(),
+            effect,
+            draft,
+            replacement,
+        }
+    }
+
+    fn retain_existing_target(&mut self, log: LoadedLogId, filters: &FilterStack) -> bool {
+        let Some(chip) = filters.chip(self.chip).filter(|_| self.log == log) else {
+            return false;
+        };
+        if !chip.has_effect(self.effect) {
+            self.effect = if chip.has_effect(FilterEffect::Table) {
+                FilterEffect::Table
+            } else {
+                FilterEffect::Map
+            };
+        }
+        true
+    }
+
+    fn rewrite(&mut self, edit: &FilterEdit) -> bool {
+        self.draft = match edit {
+            FilterEdit::SetScope(scope) => {
+                if *scope == self.draft.scope() {
+                    self.draft.clone()
+                } else {
+                    LiveFilterDraft::empty(*scope)
+                }
+            }
+            FilterEdit::SetLevel(level) if self.draft.scope() == FilterScope::Level => {
+                LiveFilterDraft::Level(Some(*level))
+            }
+            FilterEdit::SetLevel(_) => return true,
+            FilterEdit::WriteCondition(text) => match &self.draft {
+                LiveFilterDraft::Message { regex, .. } => LiveFilterDraft::Message {
+                    text: text.clone(),
+                    regex: *regex,
+                },
+                LiveFilterDraft::Hostname(_) => LiveFilterDraft::Hostname(text.clone()),
+                LiveFilterDraft::Service(_) => LiveFilterDraft::Service(text.clone()),
+                LiveFilterDraft::Level(_) => return true,
+            },
+            FilterEdit::SetRegex(regex) => match &self.draft {
+                LiveFilterDraft::Message { text, .. } => LiveFilterDraft::Message {
+                    text: text.clone(),
+                    regex: *regex,
+                },
+                _ => return true,
+            },
+            FilterEdit::ClearCondition => self.draft.cleared(),
+            _ => return false,
+        };
+        self.replacement = PreparedFilterCondition::try_from(&self.draft);
+        true
+    }
 }
 
 impl LogViewerWindow {
@@ -74,6 +152,14 @@ impl LogViewerWindow {
             return;
         };
         let filters = log.filters();
+        if self
+            .log_state_mut(shown)
+            .condition_edit
+            .as_mut()
+            .is_some_and(|edit| !edit.retain_existing_target(shown, filters))
+        {
+            self.log_state_mut(shown).condition_edit = None;
+        }
         if !filters.live_filter_text().is_empty() {
             self.log_state_mut(shown).filter_editor_open = true;
         }
@@ -88,48 +174,34 @@ impl LogViewerWindow {
         let Some(edit) = edit else {
             return;
         };
-        if matches!(
-            edit,
-            FilterEdit::SelectGroup(_) | FilterEdit::SelectMapHighlights
-        ) {
-            self.log_state_mut(shown).filter_editor_open = true;
-            self.log_state_mut(shown).filter_editor_focus = true;
-        }
-        if let FilterEdit::SelectGroup(group) = edit
-            && filters.selected_group() == group
-            && filters.live_filter_effect() == FilterEffect::Table
-        {
+        if self.prepare_filter_edit(ui, shown, filters, &edit) {
             return;
-        }
-        if matches!(
-            edit,
-            FilterEdit::AddLiveFilterAsChip | FilterEdit::CancelLiveFilter
-        ) {
-            ui.memory_mut(|memory| {
-                if let Some(focused) = memory.focused() {
-                    memory.surrender_focus(focused);
-                }
-            });
-        }
-        if matches!(edit, FilterEdit::CancelLiveFilter) {
-            self.log_state_mut(shown).filter_editor_open = false;
-            if filters.live_filter_text().is_empty() {
-                return;
-            }
-        }
-        if matches!(
-            edit,
-            FilterEdit::SetTableApplication(_) | FilterEdit::ClearTableFilters
-        ) {
-            self.log_state_mut(shown).scroll_to_source_line = self
-                .log_state_mut(shown)
-                .table_reading_anchor
-                .filter(|anchor| anchor.log == shown);
         }
         let Some((stack, slots)) = logs.filter_stack_mut_by_id(shown) else {
             return;
         };
         match edit {
+            FilterEdit::ApplyCondition => {
+                if self
+                    .log_state_mut(shown)
+                    .condition_edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.log == shown && edit.replacement.is_ok())
+                    && let Some(edit) = self.log_state_mut(shown).condition_edit.take()
+                    && let Ok(replacement) = edit.replacement
+                {
+                    stack.replace_chip_condition(edit.chip, replacement);
+                }
+            }
+            FilterEdit::EditChip { chip, effect } => {
+                if let Some(condition) = stack.chip(chip).filter(|chip| chip.has_effect(effect)) {
+                    self.log_state_mut(shown).condition_edit =
+                        Some(ConditionEdit::of(shown, condition, effect));
+                    self.log_state_mut(shown).filter_editor_focus = true;
+                    stack.select_chip(chip);
+                }
+            }
+            FilterEdit::SelectChip(chip) => stack.select_chip(chip),
             FilterEdit::ClearTableFilters => {
                 stack.clear_table_filters();
                 if stack.live_filter_effect() == FilterEffect::Table {
@@ -141,9 +213,10 @@ impl LogViewerWindow {
             }
             FilterEdit::SetScope(scope) => stack.set_live_filter_scope(scope),
             FilterEdit::SetLevel(level) => stack.set_live_filter_level(level),
-            FilterEdit::WriteLiveFilter(text) => stack.set_live_filter_text(&text),
-            FilterEdit::ReadLiveFilterAsRegex(regex) => stack.set_live_filter_regex(regex),
+            FilterEdit::WriteCondition(text) => stack.set_live_filter_text(&text),
+            FilterEdit::SetRegex(regex) => stack.set_live_filter_regex(regex),
             FilterEdit::CreateGroup => {
+                self.log_state_mut(shown).condition_edit = None;
                 let group = stack.create_group();
                 stack.select_group(group);
                 stack.set_live_filter_effect(FilterEffect::Table);
@@ -168,7 +241,7 @@ impl LogViewerWindow {
             FilterEdit::SetGroupOperator { group, operator } => {
                 stack.set_group_operator(group, operator)
             }
-            FilterEdit::ClearLiveFilter | FilterEdit::CancelLiveFilter => stack.clear_live_filter(),
+            FilterEdit::ClearCondition | FilterEdit::CancelCondition => stack.clear_live_filter(),
             FilterEdit::AddLiveFilterAsChip => {
                 match stack.live_filter_effect() {
                     FilterEffect::Table => {
@@ -210,8 +283,73 @@ impl LogViewerWindow {
         .on_hover_text("Table display options");
     }
 
-    /// The field the user filters the log from, what its pattern selected, and
-    /// the controls turning it into a chip or emptying it.
+    fn prepare_filter_edit(
+        &mut self,
+        ui: &egui::Ui,
+        shown: LoadedLogId,
+        filters: &FilterStack,
+        edit: &FilterEdit,
+    ) -> bool {
+        if self.rewrite_condition_draft(shown, edit) {
+            return true;
+        }
+        if matches!(
+            edit,
+            FilterEdit::SelectGroup(_) | FilterEdit::SelectMapHighlights
+        ) {
+            self.log_state_mut(shown).condition_edit = None;
+            self.log_state_mut(shown).filter_editor_open = true;
+            self.log_state_mut(shown).filter_editor_focus = true;
+        }
+        if let FilterEdit::SelectGroup(group) = edit
+            && filters.selected_group() == *group
+            && filters.live_filter_effect() == FilterEffect::Table
+        {
+            return true;
+        }
+        if matches!(
+            edit,
+            FilterEdit::AddLiveFilterAsChip
+                | FilterEdit::ApplyCondition
+                | FilterEdit::CancelCondition
+        ) {
+            ui.memory_mut(|memory| {
+                if let Some(focused) = memory.focused() {
+                    memory.surrender_focus(focused);
+                }
+            });
+        }
+        if matches!(edit, FilterEdit::CancelCondition)
+            && self.log_state_mut(shown).condition_edit.take().is_some()
+        {
+            return true;
+        }
+        if matches!(edit, FilterEdit::CancelCondition) {
+            self.log_state_mut(shown).filter_editor_open = false;
+            if filters.live_filter_text().is_empty() {
+                return true;
+            }
+        }
+        if matches!(
+            edit,
+            FilterEdit::SetTableApplication(_) | FilterEdit::ClearTableFilters
+        ) {
+            self.log_state_mut(shown).scroll_to_source_line = self
+                .log_state_mut(shown)
+                .table_reading_anchor
+                .filter(|anchor| anchor.log == shown);
+        }
+        false
+    }
+
+    fn rewrite_condition_draft(&mut self, log: LoadedLogId, change: &FilterEdit) -> bool {
+        self.log_state_mut(log)
+            .condition_edit
+            .as_mut()
+            .filter(|edit| edit.log == log)
+            .is_some_and(|edit| edit.rewrite(change))
+    }
+
     fn filter_row_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -219,14 +357,27 @@ impl LogViewerWindow {
         log: &ParsedLog,
         shown: LoadedLogId,
     ) -> Option<FilterEdit> {
-        let mut text = filters.live_filter_text().to_owned();
-        let regex = filters.live_filter_is_regex();
-        let draft = filters.live_filter_draft();
+        let replacement = self.log_state_mut(shown).condition_edit.as_ref();
+        let editing = replacement.is_some();
+        let draft = replacement.map_or_else(
+            || filters.live_filter_draft().clone(),
+            |edit| edit.draft.clone(),
+        );
+        let mut text = draft.text().to_owned();
+        let regex = draft.is_regex();
         let scope = draft.scope();
-        let addable = filters.can_add_live_filter_as_chip();
+        let error = replacement
+            .map_or_else(
+                || filters.live_filter_error(),
+                |edit| edit.replacement.as_ref().err(),
+            )
+            .map(|error| error.message().to_owned());
         let focus_editor = mem::take(&mut self.log_state_mut(shown).filter_editor_focus);
 
         let mut edit = None;
+        if editing {
+            ui.strong("Edit condition");
+        }
         // Wraps onto further rows on a narrow window.
         ui.horizontal_wrapped(|ui| {
             let scope_response = ui
@@ -248,7 +399,7 @@ impl LogViewerWindow {
                 .accesskit_node_builder(scope_response.id, |node| {
                     node.set_author_id(LIVE_FILTER_SCOPE_ID)
                 });
-            if let LiveFilterDraft::Level(level) = draft {
+            if let LiveFilterDraft::Level(level) = &draft {
                 let field = ui
                     .menu_button(
                         level.map_or_else(|| "Choose level…".to_owned(), |level| level.to_string()),
@@ -269,7 +420,7 @@ impl LogViewerWindow {
                     )
                     .response
                     .on_hover_text(FilterScopeUi(scope).help(regex));
-                identify_editor(&field, filters);
+                identify_editor(&field, filters, editing);
                 if focus_editor {
                     field.request_focus();
                 }
@@ -282,12 +433,12 @@ impl LogViewerWindow {
                             .desired_width(FIELD_WIDTH_PX),
                     )
                     .on_hover_text(FilterScopeUi(scope).help(regex));
-                identify_editor(&field, filters);
+                identify_editor(&field, filters, editing);
                 if focus_editor {
                     field.request_focus();
                 }
                 if field.changed() {
-                    edit = Some(FilterEdit::WriteLiveFilter(text.clone()));
+                    edit = Some(FilterEdit::WriteCondition(text.clone()));
                 }
                 if scope == FilterScope::Service {
                     ui.add_enabled_ui(log.services_by_first_appearance().next().is_some(), |ui| {
@@ -297,7 +448,7 @@ impl LogViewerWindow {
                                     .selectable_label(text.eq_ignore_ascii_case(service), service)
                                     .clicked()
                                 {
-                                    edit = Some(FilterEdit::WriteLiveFilter(service.to_owned()));
+                                    edit = Some(FilterEdit::WriteCondition(service.to_owned()));
                                     ui.close();
                                 }
                             }
@@ -314,44 +465,16 @@ impl LogViewerWindow {
                     .on_hover_text(REGEX_TOGGLE_HOVER)
                     .clicked()
             {
-                edit = Some(FilterEdit::ReadLiveFilterAsRegex(!regex));
+                edit = Some(FilterEdit::SetRegex(!regex));
             }
-            if ui
-                .add_enabled(addable, Button::new(ADD_FILTER_LABEL))
-                .on_hover_text(match filters.live_filter_effect() {
-                    FilterEffect::Table => ADD_FILTER_HOVER,
-                    FilterEffect::Map => "Add this as a map highlight",
-                })
-                .on_disabled_hover_text(match filters.live_filter_error() {
-                    Some(_) => ADD_FILTER_INVALID_HOVER,
-                    None if scope == FilterScope::Level => "Choose a level to add a condition",
-                    None => ADD_FILTER_EMPTY_HOVER,
-                })
-                .clicked()
-            {
-                edit = Some(FilterEdit::AddLiveFilterAsChip);
-            }
-            let written = !filters.live_filter_text().is_empty();
-            if ui
-                .add_enabled(written, Button::new(CLEAR_LABEL))
-                .on_hover_text(CLEAR_HOVER)
-                .on_disabled_hover_text(CLEAR_EMPTY_HOVER)
-                .clicked()
-            {
-                edit = Some(FilterEdit::ClearLiveFilter);
-            }
-            if ui
-                .small_button("Cancel")
-                .on_hover_text("Clear this condition and close the editor")
-                .clicked()
-            {
-                edit = Some(FilterEdit::CancelLiveFilter);
+            if let Some(action) = self.condition_actions_ui(ui, filters, &draft, shown) {
+                edit = Some(action);
             }
         });
 
-        if let Some(error) = filters.live_filter_error() {
+        if let Some(error) = error {
             ui.label(
-                RichText::new(error.message())
+                RichText::new(error)
                     .small()
                     .color(gt_ui_theme::error_indicator(ui.visuals().dark_mode)),
             );
@@ -385,6 +508,85 @@ impl LogViewerWindow {
             .get_or_insert(now);
         (now - since >= PENDING_NOTE_DELAY_SECS).then_some(PENDING_NOTE)
     }
+
+    fn condition_actions_ui(
+        &self,
+        ui: &mut egui::Ui,
+        filters: &FilterStack,
+        draft: &LiveFilterDraft,
+        shown: LoadedLogId,
+    ) -> Option<FilterEdit> {
+        let replacement = self
+            .log_states
+            .get(&shown)
+            .and_then(|state| state.condition_edit.as_ref());
+        let editing = replacement.is_some();
+        let addable = replacement.map_or_else(
+            || filters.can_add_live_filter_as_chip(),
+            |edit| edit.replacement.is_ok(),
+        );
+        let error = replacement.map_or_else(
+            || filters.live_filter_error(),
+            |edit| edit.replacement.as_ref().err(),
+        );
+        let scope = draft.scope();
+        let mut edit = None;
+        if ui
+            .add_enabled(
+                addable,
+                Button::new(if editing {
+                    APPLY_CONDITION_LABEL
+                } else {
+                    ADD_FILTER_LABEL
+                }),
+            )
+            .on_hover_text(if editing {
+                "Apply this replacement and preserve the condition's effects"
+            } else {
+                match filters.live_filter_effect() {
+                    FilterEffect::Table => ADD_FILTER_HOVER,
+                    FilterEffect::Map => "Add this as a map highlight",
+                }
+            })
+            .on_disabled_hover_text(if editing {
+                "Correct the condition value before applying"
+            } else {
+                match error {
+                    Some(_) => ADD_FILTER_INVALID_HOVER,
+                    None if scope == FilterScope::Level => "Choose a level to add a condition",
+                    None => ADD_FILTER_EMPTY_HOVER,
+                }
+            })
+            .clicked()
+        {
+            edit = Some(if editing {
+                FilterEdit::ApplyCondition
+            } else {
+                FilterEdit::AddLiveFilterAsChip
+            });
+        }
+        let written = draft.is_written();
+        if ui
+            .add_enabled(written, Button::new(CLEAR_LABEL))
+            .on_hover_text(CLEAR_HOVER)
+            .on_disabled_hover_text(CLEAR_EMPTY_HOVER)
+            .clicked()
+        {
+            edit = Some(FilterEdit::ClearCondition);
+        }
+        if ui
+            .small_button("Cancel")
+            .on_hover_text(if editing {
+                "Discard this replacement"
+            } else {
+                "Clear this condition and close the editor"
+            })
+            .clicked()
+        {
+            edit = Some(FilterEdit::CancelCondition);
+        }
+        edit
+    }
 }
 
 impl LogViewerWindow {
@@ -399,6 +601,11 @@ impl LogViewerWindow {
         let mut edit = None;
         let editor_open =
             self.log_state_mut(shown).filter_editor_open || !filters.live_filter_text().is_empty();
+        let replacement = self
+            .log_state_mut(shown)
+            .condition_edit
+            .as_ref()
+            .map(|edit| (edit.effect, edit.chip));
         let pending_note = self.pending_note(ui, filters, shown);
         for (index, group) in filters.groups().iter().enumerate() {
             ui.push_id(group.id(), |ui| {
@@ -442,10 +649,17 @@ impl LogViewerWindow {
                     });
                     GroupControl::Overflow.identify(&overflow.response, group.id());
                 });
-                if editor_open
-                    && filters.live_filter_effect() == FilterEffect::Table
-                    && filters.selected_group() == group.id()
-                    && let Some(live_edit) = self.filter_row_ui(ui, filters, log, shown)
+                if replacement.map_or(
+                    editor_open
+                        && filters.live_filter_effect() == FilterEffect::Table
+                        && filters.selected_group() == group.id(),
+                    |(effect, chip)| {
+                        effect == FilterEffect::Table
+                            && filters
+                                .chip(chip)
+                                .is_some_and(|chip| chip.group() == group.id())
+                    },
+                ) && let Some(live_edit) = self.filter_row_ui(ui, filters, log, shown)
                 {
                     edit = Some(live_edit);
                 }
@@ -480,9 +694,10 @@ impl LogViewerWindow {
                 edit = Some(FilterEdit::SelectMapHighlights);
             }
         });
-        if editor_open
-            && filters.live_filter_effect() == FilterEffect::Map
-            && let Some(live_edit) = self.filter_row_ui(ui, filters, log, shown)
+        if replacement.map_or(
+            editor_open && filters.live_filter_effect() == FilterEffect::Map,
+            |(effect, _)| effect == FilterEffect::Map,
+        ) && let Some(live_edit) = self.filter_row_ui(ui, filters, log, shown)
         {
             edit = Some(live_edit);
         }
@@ -565,7 +780,13 @@ fn table_filter_controls_ui(
     edit
 }
 
-fn identify_editor(response: &egui::Response, filters: &FilterStack) {
+fn identify_editor(response: &egui::Response, filters: &FilterStack, editing: bool) {
+    if editing {
+        response.ctx.accesskit_node_builder(response.id, |node| {
+            node.set_author_id(CONDITION_EDIT_FIELD_ID)
+        });
+        return;
+    }
     match filters.live_filter_effect() {
         FilterEffect::Table => GroupControl::Editor.identify(response, filters.selected_group()),
         FilterEffect::Map => {
@@ -636,7 +857,10 @@ fn chip_ui(
         f32::INFINITY,
         TextStyle::Body,
     );
-    let scope = WidgetText::from(FilterScopeUi(chip.pattern().scope()).glyph()).into_galley(
+    let scope = WidgetText::from(
+        FilterScopeUi(chip.pattern().scope()).mode_label(chip.pattern().is_regex()),
+    )
+    .into_galley(
         ui,
         Some(TextWrapMode::Extend),
         f32::INFINITY,
@@ -706,8 +930,8 @@ fn chip_ui(
                                 "Show map highlight"
                             });
                         response.widget_info(|| {
-                            egui::WidgetInfo::selected(
-                                egui::WidgetType::Checkbox,
+                            WidgetInfo::selected(
+                                WidgetType::Checkbox,
                                 true,
                                 enabled,
                                 "Map highlight visibility",
@@ -731,12 +955,28 @@ fn chip_ui(
                     swatch_ui(ui, color, slots.is_shared(slot));
                 }
 
-                ui.label(FilterScopeUi(chip.pattern().scope()).glyph())
-                    .on_hover_text(chip.pattern().scope().to_string());
+                ui.label(
+                    FilterScopeUi(chip.pattern().scope()).mode_label(chip.pattern().is_regex()),
+                )
+                .on_hover_text(chip.pattern().scope().to_string());
                 let text = chip.pattern().text();
                 let value_response = ui
-                    .add(Label::new(value))
-                    .on_hover_text(format!("{text}\n{effect_hover}"));
+                    .add(Label::new(value).sense(egui::Sense::click()))
+                    .on_hover_text(format!(
+                        "{}\n{text}\nSelect matching text",
+                        FilterScopeUi(chip.pattern().scope()).mode_label(chip.pattern().is_regex())
+                    ));
+                value_response.widget_info(|| {
+                    WidgetInfo::selected(
+                        WidgetType::SelectableLabel,
+                        true,
+                        filters.selected_chip() == Some(chip.id()),
+                        text,
+                    )
+                });
+                if value_response.clicked() {
+                    edit = Some(FilterEdit::SelectChip(chip.id()));
+                }
                 ChipControl::Value.identify(&value_response, chip.id(), effect);
 
                 if let Some(action) = chip_actions_ui(ui, chip, effect, filters) {
@@ -748,6 +988,17 @@ fn chip_ui(
 
     let stroke = egui::Stroke::new(CHIP_BORDER_WIDTH_PX, color);
     paint_chip_border(ui.painter(), drawn.response.rect, stroke, effect);
+    if filters.selected_chip() == Some(chip.id()) {
+        ui.painter().rect_stroke(
+            drawn.response.rect.expand(SELECTED_CHIP_GAP_PX),
+            CHIP_CORNER_RADIUS,
+            egui::Stroke::new(
+                SELECTED_CHIP_BORDER_PX,
+                gt_ui_theme::LOG_LIVE_FILTER.resolve(dark_mode),
+            ),
+            StrokeKind::Outside,
+        );
+    }
     edit
 }
 
@@ -803,6 +1054,19 @@ fn chip_actions_ui(
 ) -> Option<FilterEdit> {
     let mut edit = None;
     let overflow = ui.menu_button(OVERFLOW_LABEL, |ui| {
+        ui.strong(FilterScopeUi(chip.pattern().scope()).mode_label(chip.pattern().is_regex()));
+        ui.add(Label::new(chip.pattern().text()).selectable(true).wrap());
+        let replace = ui
+            .button("Edit…")
+            .on_hover_text("Edit this condition while preserving its table and map effects");
+        ChipControl::Edit.identify(&replace, chip.id(), effect);
+        if replace.clicked() {
+            edit = Some(FilterEdit::EditChip {
+                chip: chip.id(),
+                effect,
+            });
+            ui.close();
+        }
         let (other, add_label, remove_other_label) = match effect {
             FilterEffect::Map => (
                 FilterEffect::Table,
@@ -1028,6 +1292,7 @@ pub(in crate::app) const MOVE_FILTER_LABEL: &str = "Move to group…";
 #[derive(Clone, Copy, Debug)]
 pub(in crate::app) enum ChipControl {
     Destination(FilterGroupId),
+    Edit,
     Enable,
     MoveToGroup,
     OtherEffect,
@@ -1053,6 +1318,10 @@ impl ChipControl {
     }
 }
 
+pub(in crate::app) const CONDITION_EDIT_FIELD_ID: &str = "log-condition-replacement";
+pub(in crate::app) const APPLY_CONDITION_LABEL: &str = "Apply";
+const SELECTED_CHIP_GAP_PX: f32 = 1.0;
+const SELECTED_CHIP_BORDER_PX: f32 = 1.0;
 const OVERFLOW_LABEL: &str = "⋯";
 pub(in crate::app) const MAP_HIGHLIGHT_ADD_ID: &str = "log-map-highlight-add";
 pub(in crate::app) const MAP_HIGHLIGHT_EDITOR_ID: &str = "log-map-highlight-editor";
@@ -1083,6 +1352,16 @@ impl GroupControl {
 struct FilterScopeUi(FilterScope);
 
 impl FilterScopeUi {
+    fn mode_label(&self, regex: bool) -> &'static str {
+        match self.0 {
+            FilterScope::Hostname => "Exact hostname",
+            FilterScope::Level => "Level",
+            FilterScope::Message if regex => "Regex",
+            FilterScope::Message => "Text (all terms)",
+            FilterScope::Service => "Exact service",
+        }
+    }
+
     fn hint(&self) -> &'static str {
         match self.0 {
             FilterScope::Hostname => "Filter hostnames",
