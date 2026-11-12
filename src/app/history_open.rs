@@ -10,6 +10,7 @@ use gt_ui_components::HeldBodyLines;
 use super::anchored_dialog::AnchoredDialogKind;
 use super::association_batches::RecordingOperationOrigin;
 use super::history_db::OpenedRecording;
+use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
 use super::loader::LoadedRecordingPlacement;
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
@@ -456,7 +457,17 @@ impl App {
             }
             Err(e) => {
                 log::error!("Failed to load recording from history: {e}");
-                self.toasts.error(format!("Could not open recording: {e}"));
+                let request = LoadReadRequest::OpenStoredRecording {
+                    recording: db_ref.clone(),
+                    placement,
+                };
+                self.load_failures.push(
+                    LoadFailure::new(
+                        LoadSource::StoredRecording(db_ref),
+                        LoadFailureCause::OpenStoredRecording(Box::new(e)),
+                    )
+                    .with_original_read(Some(request)),
+                );
             }
         }
     }

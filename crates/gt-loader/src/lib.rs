@@ -23,6 +23,7 @@ use gt_types::{
 };
 
 pub use error::LoadError;
+pub use geotrace_sdk::Error as SdkError;
 
 mod error;
 mod navigation;

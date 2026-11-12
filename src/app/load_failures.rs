@@ -3,12 +3,16 @@ use std::io;
 
 use egui::{Button, Label, Window};
 use egui_phosphor::regular::COPY as ICON_COPY;
-use gt_loader::LoadError;
+use gt_loader::{LoadError, SdkError};
 use gt_log_view::LogAttachmentRef;
-use gt_logfile::LogParseError;
-use gt_store::LogAttachmentError;
+use gt_logfile::{LogParseError, LogText};
+use gt_store::{DatabaseRef, DbError, LogAttachmentError, LogAttachmentReadError};
 
 use crate::app::modals::{self, DialogActionRow, DialogBody};
+
+pub(super) use recovery::{LoadFailureKind, LoadReadRequest, LoadRecovery, RecordingFileRead};
+
+mod recovery;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum LoadSource {
@@ -18,6 +22,7 @@ pub(super) enum LoadSource {
     },
     Filename(String),
     PastedText,
+    StoredRecording(DatabaseRef),
     UnnamedDrop,
 }
 
@@ -25,7 +30,7 @@ impl LoadSource {
     pub(super) fn into_filename(self) -> Option<String> {
         match self {
             Self::Attachment { name, .. } | Self::Filename(name) => Some(name),
-            Self::PastedText | Self::UnnamedDrop => None,
+            Self::PastedText | Self::StoredRecording(_) | Self::UnnamedDrop => None,
         }
     }
 }
@@ -40,6 +45,7 @@ impl fmt::Display for LoadSource {
             ),
             Self::Filename(filename) => f.write_str(filename),
             Self::PastedText => f.write_str("pasted log text"),
+            Self::StoredRecording(recording) => write!(f, "recording {recording}"),
             Self::UnnamedDrop => f.write_str("unnamed dropped log"),
         }
     }
@@ -49,11 +55,50 @@ impl fmt::Display for LoadSource {
 pub(super) struct LoadFailure {
     pub source: LoadSource,
     pub cause: LoadFailureCause,
+    input: Box<LoadRecoveryInput>,
 }
 
 impl LoadFailure {
     pub(super) fn new(source: LoadSource, cause: LoadFailureCause) -> Self {
-        Self { source, cause }
+        Self {
+            source,
+            cause,
+            input: Box::default(),
+        }
+    }
+
+    pub(super) fn with_original_read(mut self, request: Option<LoadReadRequest>) -> Self {
+        self.input.original_read = request;
+        self
+    }
+
+    pub(super) fn with_decoded_text(mut self, text: LogText) -> Self {
+        self.input.decoded_text = Some(text);
+        self
+    }
+
+    pub(super) fn original_read(&self) -> Option<&LoadReadRequest> {
+        self.input.original_read.as_ref()
+    }
+
+    pub(super) fn recovery(&self) -> LoadRecovery<'_> {
+        match self.cause.kind() {
+            LoadFailureKind::ReportUnreadableAttachment
+            | LoadFailureKind::ReportUnreadableFile
+            | LoadFailureKind::ReportUnreadableRecording => self
+                .original_read()
+                .map_or(LoadRecovery::ChooseFile, LoadRecovery::Retry),
+            LoadFailureKind::RejectEmptyInput | LoadFailureKind::RejectUnrecognizedFormat => self
+                .input
+                .decoded_text
+                .as_ref()
+                .map_or(LoadRecovery::ChooseFile, |text| {
+                    LoadRecovery::EnterText(text.text())
+                }),
+            LoadFailureKind::ReportUnavailableAttachment
+            | LoadFailureKind::RejectUnsupportedAttachment
+            | LoadFailureKind::RejectUnsupportedRecording => LoadRecovery::ChooseFile,
+        }
     }
 
     fn title(&self) -> String {
@@ -61,16 +106,70 @@ impl LoadFailure {
     }
 
     fn copy_text(&self) -> String {
-        format!("{}\n{}", self.title(), self.cause)
+        let details = format!("{}\n{}", self.title(), self.cause);
+        match (self.original_read(), &self.input.decoded_text) {
+            (Some(request), _) => format!(
+                "{details}\nOriginal read: {request}\nRecovery: {}",
+                self.recovery()
+            ),
+            (None, Some(_)) => format!("{details}\nRecovery: {}", self.recovery()),
+            (None, None) => details,
+        }
     }
+}
+
+#[derive(Debug, Default)]
+struct LoadRecoveryInput {
+    original_read: Option<LoadReadRequest>,
+    decoded_text: Option<LogText>,
 }
 
 #[derive(Debug)]
 pub(super) enum LoadFailureCause {
     LoadRecording(Box<LoadError>),
+    OpenStoredRecording(Box<DbError>),
     ParseLog(LogParseError),
     ReadLogAttachment(Box<LogAttachmentError>),
     ReadLogFile(io::Error),
+}
+
+impl LoadFailureCause {
+    pub(super) fn kind(&self) -> LoadFailureKind {
+        match self {
+            Self::LoadRecording(error) => match error.as_ref() {
+                LoadError::Io(_) | LoadError::Sdk(SdkError::Io(_)) => {
+                    LoadFailureKind::ReportUnreadableRecording
+                }
+                _ => LoadFailureKind::RejectUnsupportedRecording,
+            },
+            Self::ParseLog(LogParseError::Empty) => LoadFailureKind::RejectEmptyInput,
+            Self::ParseLog(LogParseError::NoRecognisedFormat { .. }) => {
+                LoadFailureKind::RejectUnrecognizedFormat
+            }
+            Self::ReadLogFile(_) => LoadFailureKind::ReportUnreadableFile,
+            Self::OpenStoredRecording(error) => match error.as_ref() {
+                DbError::SchemaTooNew { .. } => LoadFailureKind::RejectUnsupportedRecording,
+                _ => LoadFailureKind::ReportUnreadableRecording,
+            },
+            Self::ReadLogAttachment(error) => match error.as_ref() {
+                LogAttachmentError::MissingLog { .. }
+                | LogAttachmentError::UnknownAttachment { .. } => {
+                    LoadFailureKind::ReportUnavailableAttachment
+                }
+                LogAttachmentError::ContentHashMismatch { .. }
+                | LogAttachmentError::NotUtf8 { .. }
+                | LogAttachmentError::Database(DbError::SchemaTooNew { .. }) => {
+                    LoadFailureKind::RejectUnsupportedAttachment
+                }
+                LogAttachmentError::Database(DbError::UnreadableLogAttachment {
+                    source, ..
+                }) if !matches!(source.as_ref(), LogAttachmentReadError::ReadAttribute(_)) => {
+                    LoadFailureKind::RejectUnsupportedAttachment
+                }
+                _ => LoadFailureKind::ReportUnreadableAttachment,
+            },
+        }
+    }
 }
 
 impl fmt::Display for LoadFailureCause {
@@ -80,6 +179,7 @@ impl fmt::Display for LoadFailureCause {
             Self::ParseLog(error) => write!(f, "{error:#}"),
             Self::ReadLogAttachment(error) => write!(f, "{error:#}"),
             Self::ReadLogFile(error) => write!(f, "Failed to read the file: {error:#}"),
+            Self::OpenStoredRecording(error) => write!(f, "{error:#}"),
         }
     }
 }

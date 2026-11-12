@@ -9,7 +9,7 @@ use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey
 use gt_logfile::{LogParseError, ParsedLog};
 use gt_plot::AnalysisConfig;
 use gt_store::{
-    DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter,
+    DatabaseRef, DbError, LogAttachmentId, RecordingUiState, Store, StoredLogFilter,
     StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterStack, StoredLogSettings,
     StoredRecording, StoredYearResolution,
 };
@@ -18,7 +18,9 @@ use rstest::rstest;
 
 use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::history_db::{self, OpenedRecording};
-use crate::app::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
+use crate::app::load_failures::{
+    LoadFailure, LoadFailureCause, LoadReadRequest, LoadRecovery, LoadSource,
+};
 use crate::app::loader::{
     LoadedRecordingPlacement, LoadedRecordingResult, LooseLogResult, SavedLogResult,
 };
@@ -380,6 +382,37 @@ fn a_failed_recording_load_releases_pending_log_association(#[values(true, false
     failed(Err(recording_load_failure("failed.gtd")));
     harness.run_steps(2);
     assert_initial_association(&mut harness, ask, 1);
+}
+
+#[test]
+fn a_failed_history_read_retains_its_recording_request() {
+    let mut harness = harness(false);
+    let recording = DatabaseRef {
+        identity: "device".into(),
+        group_name: "recording".into(),
+    };
+    harness
+        .state_mut()
+        .handle_history_response(history_db::Response::Opened {
+            origin: RecordingOperationOrigin::Independent,
+            db_ref: recording.clone(),
+            placement: LoadedRecordingPlacement::AddAnEntry,
+            result: Err(DbError::Io(io::ErrorKind::PermissionDenied.into())),
+        });
+    let failure = harness.state().load_failures.iter().next().unwrap();
+    assert_eq!(
+        failure.source,
+        LoadSource::StoredRecording(recording.clone())
+    );
+    let LoadRecovery::Retry(LoadReadRequest::OpenStoredRecording {
+        recording: original,
+        placement,
+    }) = failure.recovery()
+    else {
+        panic!("the original database read can be repeated");
+    };
+    assert_eq!(original, &recording);
+    assert_eq!(*placement, LoadedRecordingPlacement::AddAnEntry);
 }
 
 #[test]
