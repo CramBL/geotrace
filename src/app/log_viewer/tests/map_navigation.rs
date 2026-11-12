@@ -4,7 +4,7 @@ use crate::app::log_viewer::line_table::SourceRequest;
 #[rstest]
 #[case::single_entry(vec![CLICKED_ENTRY])]
 #[case::multiple_entries(vec![CLICKED_ENTRY, CLICKED_ENTRY + 1])]
-fn hidden_first_glyph_entries_preserve_table_scroll(
+fn hidden_first_glyph_entries_reveal_exact_targets_and_return_to_filtered_results(
     #[case] entries: Vec<usize>,
     #[values(false, true)] source_reveal: bool,
 ) {
@@ -26,7 +26,11 @@ fn hidden_first_glyph_entries_preserve_table_scroll(
     }
     harness.state_mut().viewer.active_state_mut().scroll_to_row = Some(10);
     harness.run_steps(3);
-    let before = scroll.offset_px(&harness);
+    let return_offset = if source_reveal {
+        0.0
+    } else {
+        scroll.offset_px(&harness)
+    };
     let visible = harness
         .state()
         .shown_log()
@@ -41,19 +45,16 @@ fn hidden_first_glyph_entries_preserve_table_scroll(
     });
     harness.run_steps(3);
 
-    assert!((scroll.offset_px(&harness) - before).abs() < SCROLL_READING_TOLERANCE_PX);
-    assert_eq!(harness.state().viewer.active_state().source_reveal, None);
-    assert_eq!(harness.state().viewer.active_state().scroll_to_row, None);
+    harness.get_by_label("navsyncd: hidden entry 120");
     assert_eq!(
         harness
             .state()
             .viewer
             .active_state()
-            .clicked_glyph
-            .as_ref()
+            .source_reveal
             .unwrap()
-            .entry_indices,
-        entries
+            .entry_index(),
+        Some(CLICKED_ENTRY)
     );
     assert_eq!(
         *harness
@@ -64,12 +65,18 @@ fn hidden_first_glyph_entries_preserve_table_scroll(
             .visible_entries(),
         visible
     );
-    harness.get_by_label(long_log_entry_timestamp(10).as_str());
+    assert_eq!(match_count(&harness), "199 of 200");
+    harness.get_by_label(source_navigation_ui::REVEAL_LABEL);
+    let back = harness.get_by_label(source_navigation_ui::RETURN_LABEL);
     assert!(
-        harness
-            .query_by_label(long_log_entry_timestamp(CLICKED_ENTRY + 1).as_str())
-            .is_none()
+        harness.ctx.content_rect().contains_rect(back.rect()),
+        "Return {:?}",
+        back.rect()
     );
+    back.click();
+    harness.run_steps(3);
+    assert_eq!(harness.state().viewer.active_state().source_reveal, None);
+    assert!((scroll.offset_px(&harness) - return_offset).abs() < SCROLL_READING_TOLERANCE_PX);
 }
 
 #[rstest]

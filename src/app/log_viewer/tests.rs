@@ -36,7 +36,7 @@ use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover, LogM
 use super::{
     AssociationWindowUnit, InspectorSection, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests,
     LogViewerState, LogViewerWindow, YearsToResolve, filters, line_table, log_list,
-    unresolved_years,
+    source_navigation_ui, unresolved_years,
 };
 
 impl LogViewerWindow {
@@ -1655,6 +1655,7 @@ fn a_click_on_a_hexagon_of_an_unloaded_log_leaves_the_window_closed() {
 
     assert!(!harness.state().viewer.open);
     assert_eq!(harness.state().viewer.selected_log(), Some(shown));
+    harness.get_by_label(source_navigation_ui::UNAVAILABLE_SOURCE_LABEL);
 }
 
 /// The lines of the clicked hexagon stay marked once the cursor has left the
@@ -4294,6 +4295,7 @@ mod map_navigation;
 mod message_readability;
 mod per_log_state;
 mod reset_clock;
+mod revealed_targets;
 mod source_navigation;
 mod table_filter_controls;
 mod tabs;

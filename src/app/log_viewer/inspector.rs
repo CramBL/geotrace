@@ -184,7 +184,7 @@ impl LogViewerWindow {
         match parsed.chronology() {
             LogChronology::Unresolved(unresolved) => {
                 if let Some(year_resolution) =
-                    self.unresolved_years_ui(ui, id, parsed, unresolved.unresolved_year())
+                    self.unresolved_years_ui(ui, id, log, unresolved.unresolved_year())
                 {
                     requests.resolve_years = Some(YearsToResolve {
                         log: id,

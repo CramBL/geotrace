@@ -339,6 +339,7 @@ fn adding_a_live_table_condition_preserves_source_reveal_and_cached_rows() {
     let revision = log.filters().table_semantic_revision();
     let visible = log.filters().shared_visible_entries();
     let matches = ptr::from_ref(log.filters().live_filter_matches());
+    harness.run_steps(3);
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
     harness.run_steps(2);
     let state = harness.state_mut();

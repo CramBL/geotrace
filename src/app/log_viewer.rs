@@ -31,6 +31,7 @@ use line_table::{
 };
 use log_list::{LogGroup, LogNavigationAction, LogTab};
 use restored_logs_badge::RestoredLogsBadge;
+use source_navigation_ui::SourceNavigationFeedback;
 use unresolved_years::LastEntryYearDraft;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -43,6 +44,7 @@ mod line_table;
 pub(super) mod log_list;
 pub(super) mod restored_logs_badge;
 pub(super) mod settings_status;
+mod source_navigation_ui;
 mod summary_panel;
 pub(super) mod unresolved_years;
 
@@ -59,6 +61,7 @@ pub(super) struct LogViewerWindow {
     pub(super) restored_logs: RestoredLogsBadge,
     picker_query: String,
     reveal_selected_tab: bool,
+    source_navigation_feedback: Option<SourceNavigationFeedback>,
 }
 
 #[derive(Default)]
@@ -168,6 +171,7 @@ impl LogViewerWindow {
             restored_logs: RestoredLogsBadge::default(),
             picker_query: String::new(),
             reveal_selected_tab: true,
+            source_navigation_feedback: None,
         }
     }
 
@@ -206,25 +210,28 @@ impl LogViewerWindow {
         self.open = true;
     }
 
-    /// Opens the clicked hexagon's log and marks its entries in the table.
-    /// Scrolls to its first entry when table filters keep that entry visible.
-    ///
-    /// A hexagon of a log that is no longer loaded leaves the window as it is.
-    fn open_on_clicked_glyph(&mut self, clicked: LogMatchGlyph, logs: &LoadedLogs) {
+    fn open_on_clicked_glyph(
+        &mut self,
+        ctx: &egui::Context,
+        clicked: LogMatchGlyph,
+        logs: &LoadedLogs,
+    ) {
         let id = clicked.log;
-        let Some(log) = logs.get_by_id(id) else {
-            return;
-        };
-        self.open_on_log(clicked.log);
-        self.log_state_mut(clicked.log).source_reveal = None;
-        self.log_state_mut(clicked.log).filtered_return = None;
-        self.log_state_mut(clicked.log).scroll_to_source_line = None;
-        let rows = self.table_rows(log, clicked.log);
-        self.log_state_mut(clicked.log).scroll_to_row = clicked
+        let request = clicked
             .entry_indices
             .first()
-            .and_then(|&entry_index| rows.row_of_exact_entry(entry_index));
-        self.log_state_mut(id).clicked_glyph = Some(clicked);
+            .copied()
+            .map(line_table::SourceRequest::NavigateToEntry);
+        if let Some(log) = logs.get_by_id(id)
+            && let Some(request) = request
+            && self.navigate_to_source(log, id, request)
+        {
+            self.open_on_log(id);
+            self.log_state_mut(id).clicked_glyph = Some(clicked);
+            self.source_navigation_feedback = None;
+        } else {
+            self.report_unavailable_map_source(ctx);
+        }
     }
 
     fn log_state_mut(&mut self, id: LoadedLogId) -> &mut LogViewerState {
@@ -267,8 +274,9 @@ impl LogViewerWindow {
         // row: the rows below fill this in again while they draw.
         log_hover.row_placement = None;
         if let Some(clicked) = clicked_glyph.take() {
-            self.open_on_clicked_glyph(clicked, logs);
+            self.open_on_clicked_glyph(ctx, clicked, logs);
         }
+        self.source_feedback_ui(ctx);
         self.resolve_selected_log(logs);
         if let Some((id, log)) = self
             .selected
@@ -449,6 +457,7 @@ impl LogViewerWindow {
             let Some(log) = logs.get_by_id(shown) else {
                 return;
             };
+            self.source_navigation_status_ui(ui, log, shown);
             let visible = log.is_visible();
             let toggle = ui
                 .selectable_label(visible, if visible { ICON_EYE } else { ICON_EYE_SLASH })

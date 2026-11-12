@@ -3,8 +3,8 @@ use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use egui::{
-    Color32, FontId, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, TextFormat,
-    text::LayoutJob,
+    Color32, FontId, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, Stroke,
+    StrokeKind, TextFormat, text::LayoutJob,
 };
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_DEVICE_CLOCK;
 use gt_fmt::MIDDLE_DOT;
@@ -16,8 +16,7 @@ use gt_logfile::{
     ParsedLog, RecognisedMessage, StructuralLineKind, TimestampKind, YearlessTimestamp,
 };
 use gt_types::{AssociationWindow, Latitude, Longitude, mercator};
-use gt_ui_theme::ALMOST_EQUAL_TO;
-use gt_ui_theme::EM_DASH;
+use gt_ui_theme::{ALMOST_EQUAL_TO, EM_DASH};
 use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover, LogRowPlacement};
 use rustc_hash::FxHashMap;
 
@@ -844,7 +843,9 @@ impl LogViewerWindow {
             services: self.color_services,
             levels: self.color_levels,
         };
+        let show_structural_lines = self.show_structural_lines;
         let state = self.log_state_mut(log_id);
+        let reveal = state.source_reveal;
         let filtered_return = state.filtered_return.filter(|origin| origin.log == log_id);
         let source_anchor = filtered_return.map_or_else(
             || {
@@ -925,7 +926,11 @@ impl LogViewerWindow {
                     .scroll_the_table(ui);
                 }
                 for row in shown {
-                    match rows.at(row) {
+                    let table_row = rows.at(row);
+                    let revealed_reason = table_row.and_then(|row| {
+                        reveal.and_then(|reveal| reveal.row_reason(row, log, show_structural_lines))
+                    });
+                    match table_row {
                         Some(LineTableRow::BootDivider {
                             session_index,
                             structural_index,
@@ -980,18 +985,14 @@ impl LogViewerWindow {
                         }
                         Some(LineTableRow::Structural { structural_index }) => {
                             if let Some(line) = parsed.structural_lines().get(structural_index) {
-                                ui.horizontal(|ui| {
-                                    ui.allocate_space(egui::vec2(gutter.width_px(), 0.0));
-                                    line_numbers.ui(ui, line.line_number);
-                                    ui.add(
-                                        Label::new(
-                                            RichText::new(line.text.in_text(parsed.text()))
-                                                .monospace(),
-                                        )
-                                        .truncate()
-                                        .selectable(true),
-                                    );
-                                });
+                                StructuralSourceRow {
+                                    source: line.text.in_text(parsed.text()),
+                                    line_number: line.line_number,
+                                    line_numbers,
+                                    gutter_width_px: gutter.width_px(),
+                                    revealed_reason: revealed_reason.as_deref(),
+                                }
+                                .ui(ui);
                             }
                         }
                         Some(LineTableRow::Entry {
@@ -1023,6 +1024,7 @@ impl LogViewerWindow {
                                 tick: ticks.tick(visible_row),
                                 cross_highlight_fill: cross_highlighted.fill_of(entry_index),
                                 hover_dwell,
+                                revealed_reason: revealed_reason.as_deref(),
                             }
                             .ui(ui, unit);
                             let Some(RowInteraction { clicked }) = interaction else {
@@ -1239,7 +1241,44 @@ impl RowTimestamp {
     }
 }
 
-/// One entry of the log, as the table draws it.
+struct StructuralSourceRow<'a> {
+    source: &'a str,
+    line_number: u32,
+    line_numbers: LineNumberColumn,
+    gutter_width_px: f32,
+    revealed_reason: Option<&'a str>,
+}
+
+impl StructuralSourceRow<'_> {
+    fn ui(&self, ui: &mut egui::Ui) {
+        let row = ui
+            .horizontal(|ui| {
+                ui.allocate_space(egui::vec2(self.gutter_width_px, 0.0));
+                self.line_numbers.ui(ui, self.line_number);
+                let source = ui.add(
+                    Label::new(RichText::new(self.source).monospace())
+                        .truncate()
+                        .selectable(true),
+                );
+                if let Some(reason) = self.revealed_reason {
+                    source.on_hover_text(reason);
+                }
+            })
+            .response;
+        if self.revealed_reason.is_some() {
+            ui.painter().rect_stroke(
+                row.rect,
+                0,
+                Stroke::new(
+                    REVEAL_OUTLINE_WIDTH_PX,
+                    gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+                ),
+                StrokeKind::Inside,
+            );
+        }
+    }
+}
+
 struct EntryRow<'a> {
     entry: &'a LogEntry,
     timestamp: Option<RowTimestamp>,
@@ -1268,6 +1307,7 @@ struct EntryRow<'a> {
     cross_highlight_fill: Option<Color32>,
 
     hover_dwell: RowHoverDwell,
+    revealed_reason: Option<&'a str>,
 }
 
 /// What the cursor did to the row under it, built only for the row the pointer
@@ -1391,6 +1431,18 @@ impl EntryRow<'_> {
                 .set(background, Shape::rect_filled(row.rect, 0, fill));
         }
 
+        if self.revealed_reason.is_some() {
+            ui.painter().rect_stroke(
+                row.rect,
+                0,
+                Stroke::new(
+                    REVEAL_OUTLINE_WIDTH_PX,
+                    gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+                ),
+                StrokeKind::Inside,
+            );
+        }
+
         // Registered above the labels the row just drew: a selectable label
         // senses the pointer, and the topmost sensing widget under the cursor
         // takes the hover and the click.
@@ -1416,6 +1468,9 @@ impl EntryRow<'_> {
     }
 
     fn hover_text(&self, ctx: &egui::Context, unit: AssociationWindowUnit) -> Option<String> {
+        if let Some(reason) = self.revealed_reason {
+            return Some(reason.to_owned());
+        }
         if self.timestamp.is_some_and(RowTimestamp::is_device_clock) {
             return Some(
                 match self.timestamp.is_some_and(RowTimestamp::is_interpolated) {
@@ -1663,6 +1718,8 @@ const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 /// The run of the timestamp column after the hour and the minute, always drawn
 /// in the quiet colour.
 const SECONDS_FORMAT: &str = ":%S";
+
+const REVEAL_OUTLINE_WIDTH_PX: f32 = 1.0;
 
 pub(super) const DEVICE_CLOCK_ROW_HOVER: &str =
     "Absolute time and map position unavailable before clock synchronization";

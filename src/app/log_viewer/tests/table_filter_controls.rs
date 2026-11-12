@@ -182,7 +182,7 @@ impl SourceReadingPosition {
             .expect("a source message intersects the table viewport")
     }
 
-    fn assert_retained(&self, harness: &Harness<ViewerState>) {
+    pub(super) fn assert_retained(&self, harness: &Harness<ViewerState>) {
         let shown = Self::of(harness);
         assert_eq!(shown.entry_index, self.entry_index);
         assert!(
