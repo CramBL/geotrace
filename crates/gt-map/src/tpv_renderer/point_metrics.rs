@@ -49,6 +49,7 @@ impl PointMetrics<'_> {
                 recording_row_ui(ui, self.recording_name);
                 position_rows_ui(ui, self.point, self.placement);
                 self.motion_rows_ui(ui);
+                self.boot_time_row_ui(ui);
             });
     }
 
@@ -75,6 +76,16 @@ impl PointMetrics<'_> {
         }
 
         PointSummary(fix).dop_row_ui(ui);
+    }
+
+    fn boot_time_row_ui(&self, ui: &mut egui::Ui) {
+        if let Some(boot_time) = self.point.tpv.boot_time() {
+            ui.label("Boot time").on_hover_text(
+                "Elapsed microseconds since the producer's boot-clock origin. The producer selects the clock and suspend behavior.",
+            );
+            ui.label(format!("{}us", boot_time.as_micros()));
+            ui.end_row();
+        }
     }
 }
 
@@ -129,6 +140,7 @@ fn hover_grid_ui(ui: &mut egui::Ui, point: PlacedPoint<'_>, recording_name: Opti
             position_rows_ui(ui, fix, metrics.placement);
 
             metrics.motion_rows_ui(ui);
+            metrics.boot_time_row_ui(ui);
             satellite_tables::show_satellite_rows(ui, fix);
         });
 }

@@ -1606,7 +1606,7 @@ mod tests {
     use std::cell::RefCell;
     use std::path::PathBuf;
 
-    use chrono::DateTime;
+    use chrono::{DateTime, TimeDelta};
     use gt_types::{
         FileIdx, FileSource, GeneratedMarkerKindTag, LoadedFile, LoadedTrack, TimeRange,
         TotalDistance, TrackIdx, TrackMetadata,
@@ -2109,6 +2109,39 @@ mod tests {
             harness.inner.query_by_label("1h28m").is_some(),
             "the dialog does not state the recorded time its tracks hold"
         );
+    }
+
+    #[rstest::rstest]
+    #[case::regular(None)]
+    #[case::repaired(Some(TimeDelta::milliseconds(1_250)))]
+    fn recording_details_identify_debug_time_repair(#[case] repair_threshold: Option<TimeDelta>) {
+        let mut metadata = gt_test_utils::empty_file_metadata();
+        metadata.debug_time_repair_threshold = repair_threshold;
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(520.0, 400.0))
+            .ui_state(
+                |ui, request: &mut Option<RecordingDetails>| {
+                    super::show_recording_details_dialog(ui, request);
+                },
+                Some(RecordingDetails {
+                    metadata,
+                    identity: None,
+                }),
+            );
+        harness.run();
+
+        assert_eq!(
+            harness.inner.query_by_label("Debug time repair").is_some(),
+            repair_threshold.is_some(),
+        );
+        if repair_threshold.is_some() {
+            assert!(
+                harness
+                    .inner
+                    .query_by_label("Backward jump threshold 1.25s. System/boot deltas are computed from system timestamps loaded with debug time repair. Differences between shifted spans include synthetic shifts.")
+                    .is_some()
+            );
+        }
     }
 
     fn make_file(filename: String, track_count: usize) -> LoadedFile {

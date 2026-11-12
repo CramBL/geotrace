@@ -1059,6 +1059,7 @@ fn identity_cell(
         travel_mode: travel_mode.as_deref(),
         identity: None,
         notes: entry.notes.as_deref(),
+        debug_time_repair_threshold: None,
     };
     let has_metadata = meta.has_details();
     let label = ui

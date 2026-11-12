@@ -1778,6 +1778,7 @@ fn snapshot_metadata_detail_rows_content() {
                 travel_mode: Some("Bicycle"),
                 identity: Some("Morning ride::uBlox F9P"),
                 notes: Some("cross-town commute"),
+                debug_time_repair_threshold: None,
             }
             .show_ui(ui);
         });

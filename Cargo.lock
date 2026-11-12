@@ -3210,6 +3210,7 @@ dependencies = [
 name = "gt-ui-components"
 version = "0.19.0"
 dependencies = [
+ "chrono",
  "egui",
  "egui_kittest",
  "gt-types",
