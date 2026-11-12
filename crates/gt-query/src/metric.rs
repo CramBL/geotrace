@@ -41,6 +41,7 @@ pub enum QueryMetric {
     Vdop,
     Pdop,
     ClockDelta,
+    SystemBootDelta,
     SatsSeen,
     SatsFix,
     GpsSeen,
@@ -134,7 +135,7 @@ impl QueryMetric {
             QueryMetric::Velocity => Quantity::Speed,
             QueryMetric::Accel => Quantity::Acceleration,
             QueryMetric::Eph | QueryMetric::SnapError => Quantity::Length,
-            QueryMetric::ClockDelta => Quantity::Duration,
+            QueryMetric::ClockDelta | QueryMetric::SystemBootDelta => Quantity::Duration,
             QueryMetric::InvalidCoordinates
             | QueryMetric::SatsSeen
             | QueryMetric::SatsFix
@@ -190,6 +191,7 @@ impl QueryMetric {
             QueryMetric::Vdop => Some(MetricKind::Vdop),
             QueryMetric::Pdop => Some(MetricKind::Pdop),
             QueryMetric::ClockDelta => Some(MetricKind::ClockDeltaMs),
+            QueryMetric::SystemBootDelta => Some(MetricKind::SystemBootDeltaMs),
             QueryMetric::SatsSeen => Some(MetricKind::SatsSeen),
             QueryMetric::SatsFix => Some(MetricKind::SatsFix),
             QueryMetric::GpsSeen => Some(MetricKind::GpsSeen),
@@ -336,7 +338,7 @@ mod tests {
     }
 
     /// The DSL name is the `MetricKind` wire name with the unit suffix
-    /// stripped - `heading_deg` and `clock_delta_ms` are the only renames.
+    /// stripped from heading and clock differences.
     /// Locked by deserializing the reconstructed wire name back to the mapped
     /// variant (same idiom as `gt_types::metrics::tests::wire_names_are_stable`).
     #[test]
@@ -347,7 +349,7 @@ mod tests {
             };
             let suffix = match qm {
                 QueryMetric::Heading => "_deg",
-                QueryMetric::ClockDelta => "_ms",
+                QueryMetric::ClockDelta | QueryMetric::SystemBootDelta => "_ms",
                 _ => "",
             };
             let wire = format!("{qm}{suffix}");

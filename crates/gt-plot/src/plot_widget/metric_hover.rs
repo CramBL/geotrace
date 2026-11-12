@@ -1,6 +1,9 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use egui_plot::{Line, PlotItem as _, PlotPoint, PlotPoints};
-use gt_types::{FixRef, LoadedTrack, MetricKind, PointIdx, TrackRef};
+use gt_types::{
+    BootClockBackwardStep, FixRef, LoadedTrack, MetricKind, PointIdx, SystemBootComparison,
+    TrackRef,
+};
 
 use super::chips::MetricKindUi;
 use super::hover::HOVER_RADIUS_PX;
@@ -31,6 +34,13 @@ pub(super) struct MetricHover {
     kind: MetricKind,
     point: PlotPoint,
     time: Option<DateTime<Utc>>,
+    system_boot: Option<SystemBootMetricHover>,
+}
+
+struct SystemBootMetricHover {
+    comparison: SystemBootComparison,
+    backward_step: Option<BootClockBackwardStep>,
+    repair_threshold: Option<TimeDelta>,
 }
 
 impl MetricHover {
@@ -47,6 +57,16 @@ impl MetricHover {
             track: context.track_label.map(ToOwned::to_owned),
             kind: context.kind,
             point: sample.point,
+            system_boot: (context.kind == MetricKind::SystemBootDeltaMs)
+                .then(|| {
+                    let tpv = context.track.points.get(sample.source.point_index)?.tpv;
+                    Some(SystemBootMetricHover {
+                        comparison: tpv.system_boot_comparison()?,
+                        backward_step: tpv.boot_clock_backward_step(),
+                        repair_threshold: tpv.debug_time_repair_threshold(),
+                    })
+                })
+                .flatten(),
         }
     }
 
@@ -64,6 +84,10 @@ impl MetricHover {
         }
         if let Some(time) = self.time {
             ui.label(time.format("%H:%M:%S%.f").to_string());
+        }
+        if let Some(system_boot) = &self.system_boot {
+            system_boot.show_ui(ui);
+            return;
         }
         let value = match self.kind {
             MetricKind::SatsFix
@@ -83,6 +107,35 @@ impl MetricHover {
             _ => format!("{:.2}", self.point.y),
         };
         ui.label(value);
+    }
+}
+
+impl SystemBootMetricHover {
+    fn show_ui(&self, ui: &mut egui::Ui) {
+        ui.label(format!(
+            "{:+.3}ms ({:+}us)",
+            self.comparison.delta.as_millis_f64(),
+            self.comparison.delta.as_micros(),
+        ));
+        let reference = self.comparison.reference;
+        ui.label(format!(
+            "Reference system {}",
+            reference
+                .system_time
+                .utc()
+                .format("%Y-%m-%d %H:%M:%S%.6f UTC"),
+        ));
+        ui.label(format!(
+            "Reference boot {}us",
+            reference.boot_time.as_micros()
+        ));
+        ui.label("Positive means system time advanced farther than boot time");
+        if let Some(step) = self.backward_step {
+            ui.label(format!("Boot-clock backward step {step}"));
+        }
+        if let Some(threshold) = self.repair_threshold {
+            ui.label(format!("Computed from system timestamps loaded with debug time repair (threshold {}s). Differences between shifted spans include synthetic shifts.", threshold.as_seconds_f64()));
+        }
     }
 }
 

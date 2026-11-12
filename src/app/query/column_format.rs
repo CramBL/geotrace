@@ -81,7 +81,12 @@ impl<'a> ColumnFormat<'a> {
 
     /// How the column for `metric` prints, from the quantity it measures.
     pub(super) fn of_metric(metric: QueryMetric) -> Self {
-        Self::of_quantity(metric.quantity())
+        match metric {
+            QueryMetric::SystemBootDelta => {
+                Self::number(Some("s"), Unit::S.from_base(), SYSTEM_BOOT_DELTA_DECIMALS)
+            }
+            _ => Self::of_quantity(metric.quantity()),
+        }
     }
 
     /// How an aggregate column prints. A column whose values have no quantity
@@ -279,6 +284,8 @@ pub(super) fn wall_clock(unix_secs: f64) -> Option<DateTime<Utc>> {
     DateTime::<Utc>::from_timestamp_micros((unix_secs * MICROS_PER_SEC) as i64)
 }
 
+const SYSTEM_BOOT_DELTA_DECIMALS: usize = 6;
+
 /// Decimals a channel sample prints, matching the plot's channel readout.
 const CHANNEL_DECIMALS: usize = 3;
 
@@ -305,6 +312,7 @@ mod tests {
     #[case::length(QueryMetric::Eph, 2.44, "2.4", Some("m"))]
     #[case::acceleration(QueryMetric::Accel, 1.234, "1.23", Some("m/s²"))]
     #[case::duration(QueryMetric::ClockDelta, 0.012_5, "0.013", Some("s"))]
+    #[case::system_boot_delta(QueryMetric::SystemBootDelta, 0.000_001, "0.000001", Some("s"))]
     #[case::count(QueryMetric::SatsFix, 7.0, "7", None)]
     #[case::ratio(QueryMetric::UtilGps, 0.5, "50", Some("%"))]
     #[case::rate(QueryMetric::SlipAll, 2.0 / 60.0, "2.00", Some("/min"))]

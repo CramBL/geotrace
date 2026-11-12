@@ -103,6 +103,7 @@ impl MetricKindUi for MetricKind {
             | Self::Pdop
             | Self::HeadingDeg
             | Self::ClockDeltaMs
+            | Self::SystemBootDeltaMs
             | Self::UtilAll
             | Self::SlipAll
             | Self::SnapError
@@ -156,6 +157,7 @@ impl MetricKindUi for MetricKind {
             Self::Pdop => "PDOP",
             Self::HeadingDeg => "Heading (°)",
             Self::ClockDeltaMs => "Clock Δt (ms)",
+            Self::SystemBootDeltaMs => "System/boot delta (ms)",
             Self::UtilAll => "Util all (%)",
             Self::UtilGps => "GPS util (%)",
             Self::UtilGlonass => "GLONASS util (%)",
@@ -205,6 +207,12 @@ impl MetricKindUi for MetricKind {
                  for points sent in a completed snap run. Zoomed in, a dot marks a point the \
                  matcher placed independently; the plain line between dots is interpolated \
                  along the road; a cross at the baseline is a point the road network rejected.",
+            )),
+            Self::SystemBootDeltaMs => Some(ChipHover::Paragraph(
+                "Change in system-minus-boot offset from the first complete system/boot pair in the recording. \
+                 Positive means system time advanced farther than boot time. \
+                 Boot-clock backward steps start a new line. \
+                 Deltas are computed from loaded system timestamps when debug time repair is enabled. Differences between shifted spans include synthetic shifts.",
             )),
             Self::ClockDeltaMs => Some(ChipHover::Paragraph(
                 "GPS clock lead over the host system clock, in milliseconds. \
@@ -476,6 +484,9 @@ impl MetricAvailability {
             | MetricKind::Kp
             | MetricKind::Tec => None,
             _ if self.samples.contains(kind) => None,
+            MetricKind::SystemBootDeltaMs => {
+                Some("No complete system/boot pairs in the active time window")
+            }
             MetricKind::Hdop | MetricKind::Vdop | MetricKind::Pdop => {
                 Some("No reported DOP samples in the active time window")
             }
@@ -1150,6 +1161,7 @@ const BASIC_GROUPS: [&[MetricKind]; 2] = [
         MetricKind::SnapError,
         MetricKind::HeadingDeg,
         MetricKind::ClockDeltaMs,
+        MetricKind::SystemBootDeltaMs,
     ],
     // Per-constellation satellite counts.  Chips for a constellation
     // absent from the loaded data are skipped by `chip_group`.

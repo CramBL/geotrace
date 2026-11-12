@@ -484,6 +484,7 @@ pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
         M::Eph => ((220, 20, 220), (215, 19, 215)), // magenta
         M::HeadingDeg => ((255, 100, 50), (209, 81, 40)), // red-orange
         M::ClockDeltaMs => ((200, 200, 200), (123, 123, 123)), // light gray
+        M::SystemBootDeltaMs => ((235, 185, 210), (150, 85, 120)),
         // Each utilization rate line uses its constellation's hue, lightened in
         // dark mode.
         M::UtilAll => ((245, 245, 245), (122, 122, 122)), // near-white

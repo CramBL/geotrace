@@ -366,6 +366,13 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
             "Reported dimensionless position dilution of precision.",
             &["pdop < 3"],
         ),
+        QueryMetric::SystemBootDelta => (
+            "system/boot clock delta",
+            "Change in system-minus-boot offset from the first complete pair in the recording, in seconds. \
+             Positive means system time advanced farther than boot time. Missing without both readings. \
+             Deltas are computed from loaded system timestamps when debug time repair is enabled. Differences between shifted spans include synthetic shifts.",
+            &["system_boot_delta > 0.001 s"],
+        ),
         QueryMetric::ClockDelta => (
             "GPS/system clock offset",
             "The difference between the GPS and host system clocks at the \
