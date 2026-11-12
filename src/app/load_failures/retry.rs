@@ -3,7 +3,7 @@ use super::{LoadReadRequest, LoadSource};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(in crate::app) struct LoadFailureId(pub(super) u64);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LoadRetryAttempt {
     failure: LoadFailureId,
     generation: u64,
@@ -22,4 +22,11 @@ pub(in crate::app) struct LoadRetry {
     pub attempt: LoadRetryAttempt,
     pub request: LoadReadRequest,
     pub source: LoadSource,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::app) enum LoadProblemRequest {
+    ChooseFile(LoadRetryAttempt),
+    LoadText(LoadRetryAttempt),
+    Retry(LoadFailureId),
 }

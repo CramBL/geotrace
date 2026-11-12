@@ -34,6 +34,7 @@ use crate::app::{App, ParsedLogOrigin, loader, test_util, ui_tests};
 use crate::settings::InitialPositionSourcePolicy;
 
 mod recovery;
+mod replacement;
 
 fn harness(ask: bool) -> Harness<'static, App> {
     let mut harness = Harness::builder()

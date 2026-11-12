@@ -1,12 +1,15 @@
+use std::path::PathBuf;
+
 use gt_log_view::LogAttachmentRef;
 use gt_store::{AttachedLog, LogAttachmentError};
 
 use super::App;
-use super::association_batches::RecordingOperationOrigin;
+use super::association_batches::{LogArrival, RecordingOperationOrigin};
 use super::load_failures::{
-    LoadFailure, LoadFailureCause, LoadFailureId, LoadReadRequest, LoadRetryAttempt, LoadSource,
+    LoadFailure, LoadFailureCause, LoadFailureId, LoadProblemRequest, LoadReadRequest,
+    LoadRetryAttempt, LoadSource,
 };
-use super::loader::{AttachedLogRequester, CompletedLoad};
+use super::loader::{AttachedLogRequester, CompletedLoad, GtdLoadMode};
 
 impl App {
     pub(super) fn retry_load_failure(&mut self, failure: LoadFailureId) {
@@ -26,15 +29,8 @@ impl App {
                 retry.attempt,
             ),
             LoadReadRequest::ReadLogFile(path) => {
-                let batch = self.association_batches.begin_submission(
-                    self.shared
-                        .borrow()
-                        .loaded_files
-                        .view()
-                        .entries()
-                        .map(|entry| entry.id()),
-                );
-                let job = self.loader.spawn_log_path(path, batch.log());
+                let arrival = self.recovery_log_arrival();
+                let job = self.loader.spawn_log_path(path, arrival);
                 self.loader.mark_retry(job, retry.attempt);
                 true
             }
@@ -52,6 +48,54 @@ impl App {
         if !submitted {
             self.load_failures.cancel_retry(retry.attempt);
             self.toasts.error("Recording history is unavailable");
+        }
+    }
+
+    pub(super) fn apply_load_problem_request(&mut self, request: LoadProblemRequest) {
+        match request {
+            LoadProblemRequest::ChooseFile(attempt) => {
+                if self.load_failures.file_input_is_pending(attempt) {
+                    self.loader.open_recovery_file_dialog(attempt);
+                }
+            }
+            LoadProblemRequest::LoadText(attempt) => {
+                if let Some(text) = self.load_failures.submit_text_input(attempt) {
+                    let arrival = self.recovery_log_arrival();
+                    self.loader.spawn_recovery_text(text, arrival, attempt);
+                }
+            }
+            LoadProblemRequest::Retry(failure) => self.retry_load_failure(failure),
+        }
+    }
+
+    pub(super) fn apply_recovery_file_selection(
+        &mut self,
+        attempt: LoadRetryAttempt,
+        selection: Option<(PathBuf, GtdLoadMode)>,
+    ) {
+        let Some((path, mode)) = selection else {
+            self.load_failures.cancel_input(attempt);
+            return;
+        };
+        if !self.load_failures.accept_file_input(attempt, &path) {
+            return;
+        }
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default();
+        if extension.eq_ignore_ascii_case(GTD_FILE_EXTENSION) {
+            self.loader.spawn_gtd_path(
+                path,
+                self.processing_config,
+                mode,
+                None,
+                RecordingOperationOrigin::Retry(attempt),
+            );
+        } else {
+            let arrival = self.recovery_log_arrival();
+            let job = self.loader.spawn_log_path(path, arrival);
+            self.loader.mark_retry(job, attempt);
         }
     }
 
@@ -110,4 +154,18 @@ impl App {
             }
         }
     }
+
+    fn recovery_log_arrival(&mut self) -> LogArrival {
+        let batch = self.association_batches.begin_submission(
+            self.shared
+                .borrow()
+                .loaded_files
+                .view()
+                .entries()
+                .map(|entry| entry.id()),
+        );
+        batch.log()
+    }
 }
+
+const GTD_FILE_EXTENSION: &str = "gtd";

@@ -261,6 +261,16 @@ impl HistoryOpen {
     }
 }
 
+pub(super) struct FileDialogResult {
+    pub selection: Option<(PathBuf, GtdLoadMode)>,
+    pub recovery: Option<LoadRetryAttempt>,
+}
+
+struct PendingFileDialog {
+    receiver: mpsc::Receiver<Option<(PathBuf, GtdLoadMode)>>,
+    recovery: Option<LoadRetryAttempt>,
+}
+
 /// Manages the file-loading channel and all background load threads.
 ///
 /// `loading_jobs` and `finishing_jobs` are public for the progress overlay UI.
@@ -272,7 +282,7 @@ pub(super) struct LoadJobs {
     pub finishing_jobs: Vec<FinishedJob>,
     next_id: u64,
     retries: BTreeMap<u64, LoadRetryAttempt>,
-    file_dialog_rx: Option<mpsc::Receiver<Option<(PathBuf, GtdLoadMode)>>>,
+    file_dialogs: Vec<PendingFileDialog>,
     /// Path to the history database file, forwarded to background load threads
     /// so they can insert recordings after parsing.  `None` when storage is
     /// unavailable (DB failed to open at startup).
@@ -297,7 +307,7 @@ impl LoadJobs {
             finishing_jobs: Vec::new(),
             next_id: 0,
             retries: BTreeMap::new(),
-            file_dialog_rx: None,
+            file_dialogs: Vec::new(),
             db_path: None,
             analysis_config: AnalysisConfig::default(),
             pending_writes,
@@ -720,35 +730,50 @@ impl LoadJobs {
         id
     }
 
-    /// Spawn a background thread that shows the OS file-picker dialog.
-    ///
-    /// `rfd::FileDialog::pick_file()` blocks its calling thread.  Running it
-    /// on the render thread freezes the egui loop. On Wayland the compositor
-    /// then stops delivering events, making the window appear unresponsive.
-    /// The dialog runs on a dedicated thread instead. The chosen path arrives
-    /// via `drain_file_dialog` each frame.
     pub fn open_file_dialog(&mut self, mode: GtdLoadMode) {
-        let (tx, rx) = mpsc::channel();
-        self.file_dialog_rx = Some(rx);
-        let ctx = self.ctx.clone();
-        background_thread::spawn_or_panic("file-dialog", move || {
-            let path = rfd::FileDialog::new()
-                .add_filter("GeoTrace data", &["gtd"])
-                .add_filter("Log files", &["log", "txt"])
-                .add_filter("All files", &["*"])
-                .pick_file();
-            tx.send(path.map(|path| (path, mode))).ok();
-            ctx.request_repaint();
-        });
+        self.spawn_file_dialog(mode, None);
     }
 
-    pub fn drain_file_dialog(&mut self) -> Option<(PathBuf, GtdLoadMode)> {
-        let rx = self.file_dialog_rx.as_ref()?;
-        let Ok(path_opt) = rx.try_recv() else {
-            return None;
-        };
-        self.file_dialog_rx = None;
-        path_opt
+    pub(super) fn open_recovery_file_dialog(&mut self, attempt: LoadRetryAttempt) {
+        self.spawn_file_dialog(GtdLoadMode::Regular, Some(attempt));
+    }
+
+    pub(super) fn spawn_recovery_text(
+        &mut self,
+        text: String,
+        arrival: LogArrival,
+        attempt: LoadRetryAttempt,
+    ) {
+        let job = self.spawn_log_load(LoadSource::PastedText, arrival, move || LogText::from(text));
+        self.mark_retry(job, attempt);
+    }
+
+    pub(super) fn drain_file_dialogs(&mut self) -> Vec<FileDialogResult> {
+        let mut completed = Vec::new();
+        self.file_dialogs.retain(|dialog| {
+            let selection = match dialog.receiver.try_recv() {
+                Ok(selection) => selection,
+                Err(mpsc::TryRecvError::Empty) => return true,
+                Err(mpsc::TryRecvError::Disconnected) => None,
+            };
+            completed.push(FileDialogResult {
+                selection,
+                recovery: dialog.recovery,
+            });
+            false
+        });
+        completed
+    }
+
+    #[cfg(test)]
+    pub(super) fn controlled_file_dialog_for_test(
+        &mut self,
+        recovery: Option<LoadRetryAttempt>,
+    ) -> mpsc::Sender<Option<(PathBuf, GtdLoadMode)>> {
+        let (sender, receiver) = mpsc::channel();
+        self.file_dialogs
+            .push(PendingFileDialog { receiver, recovery });
+        sender
     }
 
     pub(super) fn mark_retry(&mut self, job: u64, attempt: LoadRetryAttempt) {
@@ -799,12 +824,28 @@ impl LoadJobs {
             .retain(|j| now - j.completed_at < f64::from(FINISHED_JOB_EXPIRE_SECS));
     }
 
+    fn spawn_file_dialog(&mut self, mode: GtdLoadMode, recovery: Option<LoadRetryAttempt>) {
+        let (tx, receiver) = mpsc::channel();
+        self.file_dialogs
+            .push(PendingFileDialog { receiver, recovery });
+        let ctx = self.ctx.clone();
+        background_thread::spawn_or_panic("file-dialog", move || {
+            let path = rfd::FileDialog::new()
+                .add_filter("GeoTrace data", &["gtd"])
+                .add_filter("Log files", &["log", "txt"])
+                .add_filter("All files", &["*"])
+                .pick_file();
+            tx.send(path.map(|path| (path, mode))).ok();
+            ctx.request_repaint();
+        });
+    }
+
     fn spawn_log_load(
         &mut self,
         source: LoadSource,
         arrival: LogArrival,
         decode: impl FnOnce() -> LogText + Send + 'static,
-    ) {
+    ) -> u64 {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         let job_name = source.to_string();
@@ -829,6 +870,7 @@ impl LoadJobs {
             .ok();
             ctx.request_repaint();
         });
+        id
     }
 
     #[cfg(test)]
