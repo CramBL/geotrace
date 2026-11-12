@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::{BootTime, SysTime};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,6 +16,35 @@ impl SystemBootTimePair {
         let boot_elapsed_us =
             i128::from(self.boot_time.as_micros()) - i128::from(reference.boot_time.as_micros());
         SystemBootDelta(system_elapsed_us - boot_elapsed_us)
+    }
+}
+
+/// The reference is the first complete pair in the full recording's stored order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SystemBootComparison {
+    pub reference: SystemBootTimePair,
+    pub delta: SystemBootDelta,
+}
+
+/// Fix indices are zero-based positions in the full recording's stored order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BootClockBackwardStep {
+    pub previous_record: usize,
+    pub record: usize,
+    pub previous_boot_time: BootTime,
+    pub boot_time: BootTime,
+}
+
+impl fmt::Display for BootClockBackwardStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "fix {} ({}us) -> fix {} ({}us)",
+            self.previous_record + 1,
+            self.previous_boot_time.as_micros(),
+            self.record + 1,
+            self.boot_time.as_micros(),
+        )
     }
 }
 

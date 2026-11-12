@@ -1740,6 +1740,7 @@ fn make_state_with_metadata() -> State {
                     device: Some(device.to_owned()),
                     notes: Some(notes.to_owned()),
                     travel_mode: None,
+                    debug_time_repair_threshold: None,
                 },
                 ..FileParts::default()
             },
@@ -1862,6 +1863,7 @@ fn clicking_note_icon_requests_recording_details() {
                 device: Some("uBlox F9P".to_owned()),
                 notes: None,
                 travel_mode: None,
+                debug_time_repair_threshold: None,
             },
             ..FileParts::default()
         },
