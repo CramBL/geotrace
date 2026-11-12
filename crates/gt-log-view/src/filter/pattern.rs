@@ -1,9 +1,12 @@
 use std::ops::Range;
+use std::sync::Arc;
 
 use gt_history_types::{StoredLogFilterCondition, StoredLogLevel};
 use gt_logfile::{LogLevelKind, ParsedLog};
 use regex::{Regex, RegexBuilder};
 use strum::{Display, EnumIter};
+
+use super::LiveFilterDraft;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FilterPattern {
@@ -140,8 +143,27 @@ impl FilterPattern {
     }
 }
 
-/// The regex the user wrote could not be compiled. Carries what the regex
-/// engine said about it, for the viewer to show under the field.
+#[derive(Debug)]
+pub struct PreparedFilterCondition {
+    pub(super) pattern: FilterPattern,
+    pub(super) compiled: Arc<CompiledFilter>,
+}
+
+impl TryFrom<&LiveFilterDraft> for PreparedFilterCondition {
+    type Error = InvalidFilterPattern;
+
+    fn try_from(draft: &LiveFilterDraft) -> Result<Self, Self::Error> {
+        let pattern = draft
+            .pattern()
+            .ok_or_else(|| InvalidFilterPattern("Choose a level".to_owned()))?;
+        let compiled = Arc::new(pattern.compile()?);
+        if compiled.matches_nothing() {
+            return Err(InvalidFilterPattern("Enter a condition value".to_owned()));
+        }
+        Ok(Self { pattern, compiled })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct InvalidFilterPattern(String);
@@ -189,7 +211,10 @@ impl CompiledFilter {
                     if service.slot() == u16::MAX {
                         service.identity_in(message)
                     } else {
-                        services.get(usize::from(service.slot())).copied()
+                        services
+                            .get(usize::from(service.slot()))
+                            .copied()
+                            .or_else(|| service.identity_in(message))
                     }
                 })
                 .is_some_and(|service| exact.is_match(service)),
@@ -201,6 +226,28 @@ impl CompiledFilter {
                 .and_then(|m| m.level())
                 .is_some_and(|level| level.kind() == *kind),
             _ => self.matches(message),
+        }
+    }
+
+    pub(super) fn entry_match_spans(&self, log: &ParsedLog, index: usize) -> Vec<Range<usize>> {
+        let Some(entry) = log.entries().get(index) else {
+            return Vec::new();
+        };
+        let metadata = log.recognised_messages().get(index).copied();
+        let span = match &self.0 {
+            Matcher::Service(_) => metadata
+                .and_then(|message| message.service())
+                .map(|service| service.span()),
+            Matcher::Hostname(_) => metadata.and_then(|message| message.hostname()),
+            Matcher::Level(_) => metadata
+                .and_then(|message| message.level())
+                .map(|level| level.span()),
+            _ => return self.match_spans(log.message(entry)),
+        };
+        if self.matches_entry(log, index, &[]) {
+            span.into_iter().collect()
+        } else {
+            Vec::new()
         }
     }
 

@@ -13,7 +13,9 @@ use crate::filter::{
     composition::FilterGroupOperator,
     draft::LiveFilterDraft,
     matches::EntryMatches,
-    pattern::{CompiledFilter, FilterPattern, FilterScope, InvalidFilterPattern},
+    pattern::{
+        CompiledFilter, FilterPattern, FilterScope, InvalidFilterPattern, PreparedFilterCondition,
+    },
     query::FilterQuery,
     slots::{LayerColorSlot, LayerColorSlots},
 };
@@ -233,6 +235,7 @@ pub struct FilterStack {
     live_effect: FilterEffect,
     chips: Vec<FilterChip>,
     next_chip_id: u64,
+    selected_chip: Option<FilterChipId>,
     groups: Vec<FilterGroup>,
     selected_group: FilterGroupId,
     table_application: TableFilterApplication,
@@ -270,6 +273,7 @@ impl FilterStack {
             live_effect: FilterEffect::Table,
             chips: Vec::new(),
             next_chip_id: 0,
+            selected_chip: None,
             groups: vec![FilterGroup {
                 id: FilterGroupId(0),
                 operator: FilterGroupOperator::All,
@@ -608,6 +612,7 @@ impl FilterStack {
             filter: mem::replace(&mut self.live, emptied),
             effects,
         });
+        self.selected_chip = Some(id);
         self.recompose_visible_entries();
         Some(id)
     }
@@ -619,6 +624,49 @@ impl FilterStack {
 
     pub fn chip(&self, id: FilterChipId) -> Option<&FilterChip> {
         self.chips.iter().find(|chip| chip.id == id)
+    }
+
+    pub fn replace_chip_condition(
+        &mut self,
+        id: FilterChipId,
+        condition: PreparedFilterCondition,
+    ) -> bool {
+        let Some(chip) = self.chips.iter_mut().find(|chip| chip.id == id) else {
+            return false;
+        };
+        self.selected_chip = Some(id);
+        if chip.filter.pattern == condition.pattern {
+            return false;
+        }
+        if chip.is_enabled(FilterEffect::Table) {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
+        chip.filter.pattern = condition.pattern;
+        chip.filter.compiled = Ok(Arc::clone(&condition.compiled));
+        chip.filter.query.restart(&self.log, condition.compiled);
+        self.recompose_visible_entries();
+        true
+    }
+
+    pub fn select_chip(&mut self, id: FilterChipId) {
+        if self.chip(id).is_some() {
+            self.selected_chip = Some(id);
+        }
+    }
+
+    pub fn selected_chip(&self) -> Option<FilterChipId> {
+        self.selected_chip
+    }
+
+    pub fn condition_match_spans(&self, entry_index: usize) -> Vec<Range<usize>> {
+        let filter = self
+            .selected_chip
+            .and_then(|id| self.chip(id))
+            .map_or(&self.live, |chip| &chip.filter);
+        filter.compiled.as_ref().map_or_else(
+            |_| Vec::new(),
+            |compiled| compiled.entry_match_spans(&self.log, entry_index),
+        )
     }
 
     /// The layer chips drawing on the map right now, each with the palette slot
@@ -717,6 +765,9 @@ impl FilterStack {
             return;
         };
         let removed = self.chips.remove(position);
+        if self.selected_chip == Some(id) {
+            self.selected_chip = None;
+        }
         if removed.participates_in_table() {
             self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
         }
@@ -847,6 +898,12 @@ impl FilterStack {
             chip.group = survivor;
             true
         });
+        if self
+            .selected_chip
+            .is_some_and(|chip| self.chip(chip).is_none())
+        {
+            self.selected_chip = None;
+        }
         if self.selected_group == id {
             if self.live_effect == FilterEffect::Table {
                 self.draft = self.draft.cleared();
@@ -881,6 +938,7 @@ impl FilterStack {
         if self.draft == draft {
             return;
         }
+        self.selected_chip = None;
         let participated = self.live_participates_in_table();
         self.live
             .rewrite(draft.pattern().unwrap_or_default(), &self.log);
@@ -1074,6 +1132,8 @@ mod tests {
 
     use super::*;
     use crate::{filter::slots::LAYER_COLOR_SLOT_COUNT, test_util};
+
+    mod replacements;
 
     fn unfiltered_stack() -> (FilterStack, LayerColorSlots) {
         let log = Arc::new(test_util::parsed_log_of_text(LOG));

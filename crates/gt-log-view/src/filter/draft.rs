@@ -77,3 +77,17 @@ impl Default for LiveFilterDraft {
         }
     }
 }
+
+impl From<&FilterPattern> for LiveFilterDraft {
+    fn from(pattern: &FilterPattern) -> Self {
+        match pattern {
+            FilterPattern::Hostname(text) => Self::Hostname(text.clone()),
+            FilterPattern::Level(level) => Self::Level(Some(*level)),
+            FilterPattern::Message { text, regex } => Self::Message {
+                text: text.clone(),
+                regex: *regex,
+            },
+            FilterPattern::Service(text) => Self::Service(text.clone()),
+        }
+    }
+}
