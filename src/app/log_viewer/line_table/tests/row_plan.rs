@@ -29,7 +29,7 @@ impl From<LineTableRow> for RowIdentity {
 
 use RowIdentity::{Boot, Day, Entry, Structural};
 
-const SOURCE: &str = "2026-01-01 23:59:59 keep first\n\
+pub(super) const SOURCE: &str = "2026-01-01 23:59:59 keep first\n\
 --- Device reboot ---\n\
 2026-01-02 00:00:01 hidden middle\n\
 2026-01-02 00:01:01 keep second\n\

@@ -11,10 +11,10 @@ fn empty_results_offer_pause_and_clear_with_structural_and_revealed_rows() {
     harness.get_by_label("--- Device reboot ---");
     let shown = harness.state().first_loaded_log();
     let state = harness.state_mut();
-    state.viewer.navigate_to_diagnostic(
+    state.viewer.navigate_to_source(
         state.logs.get_by_id(shown).unwrap(),
         shown,
-        line_table::DiagnosticTarget::Entry(0),
+        line_table::SourceRequest::NavigateToEntry(0),
     );
     harness.run_steps(2);
     harness.get_by_label("navsyncd: first");
@@ -42,7 +42,7 @@ fn empty_results_offer_pause_and_clear_with_structural_and_revealed_rows() {
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .is_none()
     );
 }

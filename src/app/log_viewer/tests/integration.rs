@@ -97,9 +97,10 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .unwrap()
-            .entry_index,
+            .entry_index()
+            .unwrap(),
         4
     );
     assert_eq!(match_count(&harness), "2 of 6");

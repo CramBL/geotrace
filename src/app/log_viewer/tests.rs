@@ -2140,14 +2140,14 @@ fn closing_an_inactive_log_preserves_the_active_reading_context_with_equal_filen
     {
         let state = harness.state_mut();
         let log = state.logs.get_by_id(shown).unwrap();
-        state.viewer.navigate_to_diagnostic(
+        state.viewer.navigate_to_source(
             log,
             shown,
-            line_table::DiagnosticTarget::Entry(REVEALED_ENTRY),
+            line_table::SourceRequest::NavigateToEntry(REVEALED_ENTRY),
         );
     }
     harness.run_steps(3);
-    let reveal = harness.state().viewer.active_state().diagnostic_reveal;
+    let reveal = harness.state().viewer.active_state().source_reveal;
     let filters = harness
         .state()
         .shown_log()
@@ -2167,10 +2167,7 @@ fn closing_an_inactive_log_preserves_the_active_reading_context_with_equal_filen
 
     assert!(harness.state().logs.get_by_id(other).is_none());
     assert_eq!(harness.state().viewer.selected_log(), Some(shown));
-    assert_eq!(
-        harness.state().viewer.active_state().diagnostic_reveal,
-        reveal
-    );
+    assert_eq!(harness.state().viewer.active_state().source_reveal, reveal);
     assert!(harness.state().viewer.active_state().filter_editor_open);
     assert_eq!(live_filter_text(&harness), "entry");
     assert_eq!(

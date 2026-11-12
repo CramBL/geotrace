@@ -26,7 +26,8 @@ use association_dialog::LogAssociationRequest;
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
 use inspector::InspectorSection;
 use line_table::{
-    DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell, TableReadingAnchor,
+    FilteredSourceReturn, LineTableCache, LineTableRequests, RowHoverDwell, SourceReveal,
+    TableReadingAnchor,
 };
 use log_list::{LogGroup, LogNavigationAction, LogTab};
 use restored_logs_badge::RestoredLogsBadge;
@@ -67,7 +68,8 @@ struct LogViewerState {
     association_window_unit: AssociationWindowUnit,
     association_window_edit: Option<AssociationWindowEdit>,
     last_entry_year_draft: Option<LastEntryYearDraft>,
-    diagnostic_reveal: Option<DiagnosticReveal>,
+    source_reveal: Option<SourceReveal>,
+    filtered_return: Option<FilteredSourceReturn>,
     line_table_cache: Option<LineTableCache>,
     table_reading_anchor: Option<TableReadingAnchor>,
     scroll_to_source_line: Option<TableReadingAnchor>,
@@ -214,7 +216,9 @@ impl LogViewerWindow {
             return;
         };
         self.open_on_log(clicked.log);
-        self.log_state_mut(clicked.log).diagnostic_reveal = None;
+        self.log_state_mut(clicked.log).source_reveal = None;
+        self.log_state_mut(clicked.log).filtered_return = None;
+        self.log_state_mut(clicked.log).scroll_to_source_line = None;
         let rows = self.table_rows(log, clicked.log);
         self.log_state_mut(clicked.log).scroll_to_row = clicked
             .entry_indices
@@ -270,7 +274,7 @@ impl LogViewerWindow {
             .selected
             .and_then(|id| logs.get_by_id(id).map(|log| (id, log)))
         {
-            self.clear_invalid_diagnostic_reveal(log, id);
+            self.clear_invalid_source_reveal(log, id);
         }
         if !self.open {
             self.commit_association_window(logs, recordings);

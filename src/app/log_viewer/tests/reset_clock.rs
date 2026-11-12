@@ -91,15 +91,11 @@ fn device_clock_source_rows_remain_copyable_and_reachable_without_a_map_target()
     super::unfold_the_summary_panel(&mut harness);
     click_inspector_control(&mut harness, "Boot 2");
     harness.run_steps(2);
-    let reveal = harness
-        .state()
-        .viewer
-        .active_state()
-        .diagnostic_reveal
-        .unwrap();
-    assert_eq!(reveal.entry_index, 1);
+    let reveal = harness.state().viewer.active_state().source_reveal.unwrap();
+    assert_eq!(reveal.entry_index().unwrap(), 1);
     assert_eq!(
-        harness.state().shown_log().unwrap().parsed().entries()[reveal.entry_index].line_number,
+        harness.state().shown_log().unwrap().parsed().entries()[reveal.entry_index().unwrap()]
+            .line_number,
         3
     );
     let row = harness.get_by_label(&timestamp).rect();

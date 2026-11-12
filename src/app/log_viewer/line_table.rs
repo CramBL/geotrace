@@ -23,6 +23,10 @@ use rustc_hash::FxHashMap;
 
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
+pub(super) use navigation::{FilteredSourceReturn, SourceRequest, SourceReveal, SourceRow};
+
+mod navigation;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LineTableRow {
     BootDivider {
@@ -88,7 +92,7 @@ impl From<LineTableRow> for TableRowIdentity {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct TableReadingAnchor {
     pub(super) log: LoadedLogId,
     pub(super) source_line: u32,
@@ -126,19 +130,6 @@ impl From<InsertedRowKind> for LineTableRow {
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum DiagnosticTarget {
-    BootSession(usize),
-    Entry(usize),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct DiagnosticReveal {
-    pub(super) log: LoadedLogId,
-    pub(super) table_semantic_revision: u64,
-    pub(super) entry_index: usize,
 }
 
 #[derive(Debug)]
@@ -418,7 +409,7 @@ struct RowCacheKey {
     log: LoadedLogId,
     visible_revision: u64,
     show_structural_lines: bool,
-    revealed_entry: Option<usize>,
+    revealed_source: Option<SourceRow>,
 }
 
 pub(super) struct LineTableCache {
@@ -541,13 +532,18 @@ impl LineTableRows {
         Self::with_overlay(log, false, None)
     }
 
-    fn with_overlay(
+    #[cfg(test)]
+    fn with_overlay(log: &LoadedLog, show_structural_lines: bool, entry: Option<usize>) -> Self {
+        Self::with_source_overlay(log, show_structural_lines, entry.map(SourceRow::ShowEntry))
+    }
+
+    fn with_source_overlay(
         log: &LoadedLog,
         show_structural_lines: bool,
-        revealed_entry: Option<usize>,
+        revealed_source: Option<SourceRow>,
     ) -> Self {
         let parsed = log.parsed();
-        let visible = DisplayedEntries::new(log, revealed_entry);
+        let visible = DisplayedEntries::new(log, revealed_source.and_then(SourceRow::entry_index));
         let ticks = DisplayedClockTicks::new(log, &visible);
         let source_boot_dividers = SourceBootDividers::of(parsed, show_structural_lines);
         let mut pending = Vec::new();
@@ -556,7 +552,26 @@ impl LineTableRows {
         if show_structural_lines {
             source_boot_dividers.append_structural_insertions(parsed, &visible, &mut pending);
         }
-        let largest_line_number = visible.largest_line_number(parsed, show_structural_lines);
+        if !show_structural_lines
+            && let Some(SourceRow::ShowStructuralLine(structural_index)) = revealed_source
+            && let Some(line) = parsed.structural_lines().get(structural_index)
+        {
+            let entry = parsed
+                .entries()
+                .partition_point(|entry| entry.line_number < line.line_number);
+            pending.push(PendingInsertion {
+                visible_row: visible.row_at_or_after(entry),
+                source_line: line.line_number,
+                row: InsertedRowKind::Structural { structural_index },
+            });
+        }
+        let largest_line_number = visible
+            .largest_line_number(parsed, show_structural_lines)
+            .max(
+                revealed_source
+                    .and_then(|source| source.line_number(parsed))
+                    .unwrap_or(0),
+            );
         let (insertions, boot_rows) = PendingInsertion::index_in_source_order(pending);
         Self {
             entries: visible,
@@ -616,12 +631,18 @@ impl LineTableRows {
         match target {
             TableRowIdentity::Entry(entry) => self.row_of_exact_entry(entry),
             TableRowIdentity::BootSession(session) => self.row_of_boot_divider(session),
-            TableRowIdentity::DayDivider(_) | TableRowIdentity::Structural(_) => {
-                self.insertions.iter().find_map(|insertion| {
-                    (TableRowIdentity::from(LineTableRow::from(insertion.row)) == target)
-                        .then_some(insertion.table_row)
-                })
-            }
+            TableRowIdentity::Structural(index) => self.insertions.iter().find_map(|insertion| {
+                matches!(insertion.row,
+                    InsertedRowKind::Structural { structural_index } |
+                    InsertedRowKind::BootDivider { structural_index: Some(structural_index), .. }
+                    if structural_index == index
+                )
+                .then_some(insertion.table_row)
+            }),
+            TableRowIdentity::DayDivider(_) => self.insertions.iter().find_map(|insertion| {
+                (TableRowIdentity::from(LineTableRow::from(insertion.row)) == target)
+                    .then_some(insertion.table_row)
+            }),
         }
     }
 
@@ -663,9 +684,6 @@ impl LogViewerWindow {
         log: &LoadedLog,
         log_id: LoadedLogId,
     ) {
-        if self.selected_log() != Some(log_id) {
-            return;
-        }
         let pending_target = self.log_state_mut(log_id).scroll_to_row.and_then(|row| {
             let cache = self.log_state_mut(log_id).line_table_cache.as_ref()?;
             if cache.key.log != log_id {
@@ -691,42 +709,28 @@ impl LogViewerWindow {
         self.log_state_mut(log_id).scroll_to_row = None;
     }
 
-    pub(super) fn clear_invalid_diagnostic_reveal(&mut self, log: &LoadedLog, log_id: LoadedLogId) {
-        if self
-            .log_state_mut(log_id)
-            .diagnostic_reveal
-            .is_some_and(|reveal| {
-                reveal.log != log_id
-                    || reveal.table_semantic_revision != log.filters().table_semantic_revision()
-            })
-        {
-            self.log_state_mut(log_id).diagnostic_reveal = None;
-            self.log_state_mut(log_id).scroll_to_row = None;
-        }
-    }
-
     pub(super) fn table_rows(
         &mut self,
         log: &LoadedLog,
         log_id: LoadedLogId,
     ) -> Arc<LineTableRows> {
-        self.clear_invalid_diagnostic_reveal(log, log_id);
+        self.clear_invalid_source_reveal(log, log_id);
         let key = RowCacheKey {
             log: log_id,
             visible_revision: log.filters().visible_revision(),
             show_structural_lines: self.show_structural_lines,
-            revealed_entry: self
+            revealed_source: self
                 .log_state_mut(log_id)
-                .diagnostic_reveal
-                .map(|reveal| reveal.entry_index),
+                .source_reveal
+                .map(|reveal| reveal.source()),
         };
         match &mut self.log_state_mut(log_id).line_table_cache {
             Some(cache) if cache.key == key => Arc::clone(&cache.rows),
             slot => {
-                let rows = Arc::new(LineTableRows::with_overlay(
+                let rows = Arc::new(LineTableRows::with_source_overlay(
                     log,
                     key.show_structural_lines,
-                    key.revealed_entry,
+                    key.revealed_source,
                 ));
                 *slot = Some(LineTableCache {
                     key,
@@ -735,47 +739,6 @@ impl LogViewerWindow {
                 rows
             }
         }
-    }
-
-    pub(super) fn navigate_to_diagnostic(
-        &mut self,
-        log: &LoadedLog,
-        log_id: LoadedLogId,
-        target: DiagnosticTarget,
-    ) {
-        let filtered = log.filters().visible_entries();
-        let (entry_index, hidden) = match target {
-            DiagnosticTarget::BootSession(index) => {
-                let Some(session) = log.parsed().boot_sessions().get(index) else {
-                    return;
-                };
-                (
-                    session.entry_range.start,
-                    filtered.row_at_or_after(session.entry_range.start)
-                        == filtered.row_at_or_after(session.entry_range.end),
-                )
-            }
-            DiagnosticTarget::Entry(index) => {
-                let visible_row = filtered.row_at_or_after(index);
-                (index, filtered.entry_index(visible_row) != Some(index))
-            }
-        };
-        if log.parsed().entries().get(entry_index).is_none() {
-            return;
-        }
-        self.log_state_mut(log_id).diagnostic_reveal = None;
-        if hidden {
-            self.log_state_mut(log_id).diagnostic_reveal = Some(DiagnosticReveal {
-                log: log_id,
-                table_semantic_revision: log.filters().table_semantic_revision(),
-                entry_index,
-            });
-        }
-        let rows = self.table_rows(log, log_id);
-        self.log_state_mut(log_id).scroll_to_row = match target {
-            DiagnosticTarget::BootSession(session) => rows.row_of_boot_divider(session),
-            DiagnosticTarget::Entry(entry_index) => rows.row_of_exact_entry(entry_index),
-        };
     }
 }
 
@@ -882,11 +845,18 @@ impl LogViewerWindow {
             levels: self.color_levels,
         };
         let state = self.log_state_mut(log_id);
-        let source_anchor = state
-            .scroll_to_source_line
-            .filter(|anchor| anchor.log == log_id);
-        if source_anchor.is_some() && !filters.is_table_query_pending() {
+        let filtered_return = state.filtered_return.filter(|origin| origin.log == log_id);
+        let source_anchor = filtered_return.map_or_else(
+            || {
+                state
+                    .scroll_to_source_line
+                    .filter(|anchor| anchor.log == log_id)
+            },
+            |origin| origin.anchor,
+        );
+        if !filters.is_table_query_pending() {
             state.scroll_to_source_line = None;
+            state.filtered_return = None;
         }
         let ticks = &rows.ticks;
         let line_numbers = LineNumberColumn::new(ui, rows.largest_line_number);
@@ -940,6 +910,9 @@ impl LogViewerWindow {
                 state.scroll_to_row = None;
                 scroll_area = scroll_area
                     .vertical_scroll_offset(row as f32 * row_height + anchor.offset_within_row_px);
+            } else if filtered_return.is_some() {
+                state.scroll_to_row = None;
+                scroll_area = scroll_area.vertical_scroll_offset(0.0);
             } else if let Some(row) = state.scroll_to_row.take() {
                 scroll_area = scroll_area.vertical_scroll_offset(row as f32 * row_height);
             }
@@ -1752,6 +1725,7 @@ const CROSS_HIGHLIGHT_ROW_ALPHA: f32 = 0.3;
 
 #[cfg(test)]
 mod tests {
+    mod navigation;
     mod row_plan;
 
     use std::sync::Arc;
