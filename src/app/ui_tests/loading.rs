@@ -19,6 +19,7 @@ fn drag_drop_gtd_path_loads_file() {
     let tmp_path = tmp.path().to_path_buf();
 
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(&mut harness, TestDroppedFile::path(tmp_path));
@@ -31,6 +32,7 @@ fn drag_drop_gtd_bytes_loads_file() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
 
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -46,6 +48,7 @@ fn drag_drop_gtd_bytes_loads_file() {
 #[test]
 fn drag_drop_binary_junk_reports_it_is_not_a_recognised_log() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -227,7 +230,7 @@ fn the_map_display_toggle_opens_on_a_press_under_the_loading_overlay() {
     let toggle = harness
         .inner
         .ctx
-        .memory(|memory| memory.area_rect(egui::Id::new(gt_map::DISPLAY_TOGGLE_BUTTON_AREA_ID)))
+        .memory(|memory| memory.area_rect(egui::Id::unique(gt_map::DISPLAY_TOGGLE_BUTTON_AREA_ID)))
         .expect("the map draws its display toggle");
     let overlay = harness
         .inner
@@ -246,7 +249,9 @@ fn the_map_display_toggle_opens_on_a_press_under_the_loading_overlay() {
         harness
             .inner
             .ctx
-            .memory(|memory| memory.area_rect(egui::Id::new(gt_map::DISPLAY_TOGGLE_POPUP_AREA_ID)))
+            .memory(
+                |memory| memory.area_rect(egui::Id::unique(gt_map::DISPLAY_TOGGLE_POPUP_AREA_ID))
+            )
             .is_some(),
         "the press on the display toggle did not open its popup: egui routed it to the loading \
          overlay instead"

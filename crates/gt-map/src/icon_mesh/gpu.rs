@@ -24,7 +24,7 @@ use crate::icon_mesh::{IconId, IconMeshLibrary};
 /// Marker in the egui context data store: GPU icon resources are installed
 /// in this context's renderer.
 fn installed_flag() -> egui::Id {
-    egui::Id::new("gt_icon_gpu_installed")
+    egui::Id::unique("gt_icon_gpu_installed")
 }
 
 pub(crate) fn is_installed(ctx: &egui::Context) -> bool {

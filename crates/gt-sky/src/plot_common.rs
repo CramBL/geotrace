@@ -47,7 +47,7 @@ pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &SkySatellite, at:
     // Keyed by satellite, and by the containing `Ui`: a grid's column widths
     // live under its id, so two tooltips sharing one would each keep resizing
     // to the other's measurements and repaint without ever settling.
-    let grid_id = ui.id().with((
+    let grid_id = ui.scope_id().with((
         "satellite_tooltip",
         satellite.constellation(),
         satellite.prn(),

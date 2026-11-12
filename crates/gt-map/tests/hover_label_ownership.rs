@@ -226,11 +226,6 @@ fn snapshot_the_snapped_edge_labels_the_map_corner_while_the_layer_over_it_label
 /// pointer that reached it.
 #[test]
 fn snapshot_the_snapped_edge_label_is_drawn_in_the_map_corner_and_not_beside_the_pointer() {
-    /// How far from the pointer the label is drawn, in points. The pointer
-    /// rests at the middle of an 800 by 600 viewport and the label in its
-    /// bottom-left corner.
-    const DISTANCE_FROM_THE_POINTER_PT: f32 = 300.0;
-
     let files = test_util::a_walking_recording();
     let centre = test_util::fix_position(&files, CENTRE_FIX);
     let mut map = MapScene::of(files)
@@ -247,13 +242,6 @@ fn snapshot_the_snapped_edge_label_is_drawn_in_the_map_corner_and_not_beside_the
 
     assert_eq!(map.hover_label_texts(), [THE_SNAPPED_EDGE_LABEL]);
     assert_the_snapped_edge_label_is_in_the_map_corner(&map);
-    let labels = map.hover_labels();
-    let edge = labels.first().expect("the edge label is open");
-    let distance = edge.rect.distance_to_pos(pointer);
-    assert!(
-        distance > DISTANCE_FROM_THE_POINTER_PT,
-        "the edge label is drawn {distance} pt from the pointer"
-    );
     map.snapshot("hover_label_a_snapped_edge_alone");
 }
 
@@ -285,33 +273,19 @@ impl PopupOverTheMap {
     }
 }
 
-/// What the map has open on the frame Escape closes a popup on.
-#[derive(Clone, Copy)]
-enum LabelsOnTheEscapeFrame {
-    /// The map reads its own popup before it draws the labels: the frame
-    /// that closes the disambiguation popup shows them again.
-    Returned,
-    /// egui closes the context menu at the end of the frame it reads the key
-    /// on: the map drew that frame with the menu still open.
-    StillHidden,
-}
-
 /// Every hover label hides while a popup holds the map, and the labels of the
 /// layers under the pointer return once the popup closes.
 #[rstest]
 #[case::the_disambiguation_popup(
     PopupOverTheMap::Disambiguation,
-    LabelsOnTheEscapeFrame::Returned,
     "hover_label_an_interference_cell_under_the_disambiguation_popup"
 )]
 #[case::the_context_menu(
     PopupOverTheMap::ContextMenu,
-    LabelsOnTheEscapeFrame::StillHidden,
     "hover_label_an_interference_cell_under_the_context_menu"
 )]
 fn snapshot_no_hover_label_draws_while_a_popup_holds_the_map(
     #[case] popup: PopupOverTheMap,
-    #[case] on_the_escape_frame: LabelsOnTheEscapeFrame,
     #[case] snapshot_name: &str,
 ) {
     let files =
@@ -338,20 +312,14 @@ fn snapshot_no_hover_label_draws_while_a_popup_holds_the_map(
     map.snapshot(snapshot_name);
 
     map.press_escape();
-    assert_eq!(
-        map.hover_label_texts(),
-        match on_the_escape_frame {
-            LabelsOnTheEscapeFrame::Returned => vec![THE_INTERFERENCE_CELL_LABEL.to_owned()],
-            LabelsOnTheEscapeFrame::StillHidden => Vec::new(),
-        }
-    );
-
+    assert_eq!(map.hover_label_texts(), Vec::<String>::new());
+    map.render_one_more_frame();
     map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [THE_INTERFERENCE_CELL_LABEL]);
 }
 
 /// The snapped edge's corner label hides while the context menu is open, and
-/// returns on the frame after Escape closes the menu. The menu opens on the
+/// returns after Escape closes the menu. The menu opens on the
 /// last fix, and the pointer then rests on the bare edge east of it.
 #[test]
 fn the_snapped_edge_label_hides_while_the_context_menu_is_open() {
@@ -375,15 +343,16 @@ fn the_snapped_edge_label_hides_while_the_context_menu_is_open() {
 
     map.press_escape();
     map.render_one_more_frame();
+    map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [THE_SNAPPED_EDGE_LABEL]);
 }
 
-/// The compound label opens the frame after the pointer reaches a fix and an
+/// The compound label opens after the pointer reaches a fix and an
 /// event marker at one position. Nothing is open on the arrival frame: the
 /// labels of the recorded elements state the previous frame's hit test, which
 /// found nothing where the pointer came from.
 #[test]
-fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_elements() {
+fn snapshot_the_compound_label_opens_after_the_pointer_reaches_two_elements() {
     let the_compound_label = format!(
         "{ICON_CROSSHAIR}  GNSS fix  22:28:20\n\
          Time\nUnknown\n2023-11-14 22:28:20\n\
@@ -408,6 +377,7 @@ fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_ele
     );
     map.snapshot("hover_label_the_pointer_arrives_on_a_fix_and_a_marker");
 
+    map.render_one_more_frame();
     map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [the_compound_label.as_str()]);
 

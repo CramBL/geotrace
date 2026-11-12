@@ -33,7 +33,7 @@ fn search_for(harness: &mut Harness<'_, ViewerState>, text: &str) {
     harness.run_steps(2);
     harness
         .ctx
-        .memory_mut(|memory| memory.request_focus(egui::Id::new((find::FIND_FIELD_ID, id))));
+        .memory_mut(|memory| memory.request_focus(egui::Id::unique((find::FIND_FIELD_ID, id))));
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     harness.run_steps(2);
     harness
@@ -118,7 +118,7 @@ fn find_reveals_exact_hidden_hits_and_restores_filtered_reading(
         31..36
     );
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new((
+        memory.request_focus(egui::Id::unique((
             find::FIND_FIELD_ID,
             harness.state().viewer.selected_log().unwrap(),
         )))
@@ -268,7 +268,7 @@ fn find_scope_tracks_filter_scan_landings_and_query_replacement() {
     let id = harness.state().viewer.selected_log().unwrap();
     harness
         .ctx
-        .memory_mut(|memory| memory.request_focus(egui::Id::new((find::FIND_FIELD_ID, id))));
+        .memory_mut(|memory| memory.request_focus(egui::Id::unique((find::FIND_FIELD_ID, id))));
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     harness.key_press(egui::Key::Backspace);
     harness.run_steps(3);
@@ -307,7 +307,7 @@ fn find_shortcuts_open_from_viewer_controls_and_escape_closes_only_find() {
     let id = harness.state().viewer.selected_log().unwrap();
     harness
         .ctx
-        .memory_mut(|memory| memory.request_focus(egui::Id::new((find::FIND_FIELD_ID, id))));
+        .memory_mut(|memory| memory.request_focus(egui::Id::unique((find::FIND_FIELD_ID, id))));
     harness.key_press(egui::Key::Escape);
     harness.run_steps(3);
     assert!(!harness.state().active_find().open);

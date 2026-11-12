@@ -450,6 +450,9 @@ fn the_coarse_bar_names_the_active_range_bar_on_hover() {
     harness
         .inner
         .hover_at_and_settle(test_util::point_on_track(bar, 0.5), 3);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     assert_eq!(
         test_util::label_texts(&harness, "active range bar below")

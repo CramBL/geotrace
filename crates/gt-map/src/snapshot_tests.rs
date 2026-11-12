@@ -291,7 +291,13 @@ fn snap_query_matches(
             .expect("the map draws the captured tiles");
         gt_test_utils::assert_map_tile_capture_is_complete(name, missing);
     }
-    map.snapshot(name);
+    if matches!(mode, DisplayMode::Keep) && cfg!(target_os = "macos") {
+        // Metal samples 75 pixels differently along one synthetic tile column.
+        map.harness
+            .snapshot_with_tolerance(name, gt_test_utils::CROSS_BACKEND_COLOR_TOLERANCE, 75);
+    } else {
+        map.snapshot(name);
+    }
 }
 
 /// The interference overlay under the fixture track. At the zoom that
@@ -1363,7 +1369,7 @@ fn scrolling_the_point_window_leaves_the_title_bar_untouched(#[case] viewport: e
     let window = harness
         .inner
         .ctx
-        .memory(|memory| memory.area_rect(egui::Id::new(("sticky_popup", clicked))))
+        .memory(|memory| memory.area_rect(egui::Id::unique(("sticky_popup", clicked))))
         .expect("the point window is shown");
     let sky_before = harness.inner.get_by_label("Sky").rect();
     // From the window's top edge to halfway to the body's first row, clear of
@@ -1500,7 +1506,7 @@ fn the_sticky_popup_fits_every_viewport(
         .inner
         .assert_window_fits_the_viewport(gt_test_utils::AuditedWindow::identified(
             "sticky popup",
-            egui::Id::new(("sticky_popup", clicked)),
+            egui::Id::unique(("sticky_popup", clicked)),
         ));
 }
 

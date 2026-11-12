@@ -22,7 +22,7 @@ fn tooltip_first_sizing_matches_reopen_with_wrapping_metadata(
     #[case] viewport_width: f32,
     #[case] preferred_tooltip_width: f32,
 ) {
-    let mut harness = Harness::builder()
+    let mut harness = Harness::builder().with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(viewport_width, 900.0))
         .with_pixels_per_point(pixels_per_point)
         .build_ui_state(
@@ -46,7 +46,6 @@ fn tooltip_first_sizing_matches_reopen_with_wrapping_metadata(
             },
             TooltipGeometry::default(),
         );
-    gt_ui_theme::install_app_style(&harness.ctx);
     harness
         .ctx
         .options_mut(|options| options.max_passes = NonZeroUsize::MIN);
@@ -101,7 +100,7 @@ fn tooltip_first_sizing_matches_reopen_with_wrapping_metadata(
 #[case::narrow(240.0)]
 #[case::wide(640.0)]
 fn details_use_parent_width_during_first_layout(#[case] parent_width: f32) {
-    let mut harness = Harness::builder()
+    let mut harness = Harness::builder().with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(800.0, 600.0))
         .build_ui_state(
             |ui, rect: &mut egui::Rect| {

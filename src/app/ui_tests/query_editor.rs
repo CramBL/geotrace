@@ -120,6 +120,7 @@ fn query_ctrl_enter_runs() {
 /// end, and step until the autocomplete popup has candidates.
 fn editor_with_popup(text: &str) -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -397,6 +398,7 @@ fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
 #[test]
 fn channel_popup_offers_and_inserts_a_loaded_channel() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -428,6 +430,7 @@ fn channel_popup_offers_and_inserts_a_loaded_channel() {
 #[test]
 fn mixed_channel_queries_explain_why_run_is_disabled() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();

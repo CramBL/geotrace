@@ -902,6 +902,7 @@ impl RenderedMap {
                 rect,
                 text: self.lines_under(id).join("\n"),
             })
+            .filter(|label| !label.text.is_empty())
             .collect();
         labels.sort_by(|left, right| left.text.cmp(&right.text));
         labels

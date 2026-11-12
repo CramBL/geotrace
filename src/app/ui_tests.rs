@@ -178,6 +178,7 @@ fn press_escape<State>(harness: &mut Harness<'_, State>) {
 /// Builds a harness with three overlapping files loaded and the plot settled.
 fn harness_with_three_files_loaded() -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(1280.0, 800.0))
         .build_eframe(test_util::harness::transient_app);
@@ -192,6 +193,7 @@ fn harness_with_three_files_loaded() -> Harness<'static, App> {
 /// for the interactive query-history tests.
 fn app_with_a_recording() -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -276,7 +278,7 @@ fn accel_channel_gtd_bytes(speed_kmh: f64) -> Vec<u8> {
 /// Focus the query editor and drop the caret at the end of `text`, so the
 /// caret-driven autocomplete and hover paths run in a snapshot.
 fn focus_query_editor_at_end(harness: &Harness<App>, text: &str) {
-    let editor_id = egui::Id::new(super::query::EDITOR_ID_SALT);
+    let editor_id = egui::Id::unique(super::query::EDITOR_ID_SALT);
     harness.ctx.memory_mut(|m| m.request_focus(editor_id));
     let mut state = TextEdit::load_state(&harness.ctx, editor_id).unwrap_or_default();
     state
@@ -325,6 +327,7 @@ where
 {
     let (sender_tx, sender_rx) = mpsc::channel();
     let harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(|cc| {
@@ -396,6 +399,7 @@ fn app_waiting_for_the_data_directory<'a>(
     let instance_lock = lock_on_a_directory_another_instance_holds(data_directory);
     let paths = paths.to_vec();
     Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
@@ -506,6 +510,7 @@ fn app_with_interference_days<'a>(
     gt_store::InterferenceArchive,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -688,7 +693,7 @@ fn focus_the_live_log_filter(harness: &mut Harness<'_, App>) {
         open_log_filter_group_editor(harness, group);
     }
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new((
+        memory.request_focus(egui::Id::unique((
             filters::LIVE_FILTER_FIELD_ID,
             harness.state().log_viewer.selected_log().unwrap(),
         )));

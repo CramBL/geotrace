@@ -143,20 +143,22 @@ fn an_unavailable_source_button_preserves_reading_position_and_shows_brief_feedb
     let text = super::long_log(LONG_LOG_ENTRIES);
     let state = super::viewer_state(Vec::new(), &[("source.log", &text)]);
     let id = state.first_loaded_log();
-    let mut harness = Harness::builder().with_size(VIEWER_SIZE).build_ui_state(
-        move |ui, state: &mut ViewerState| {
-            super::viewer_ui(ui, state);
-            state.viewer.source_link_ui(
-                ui,
-                state.logs.get_by_id(id).unwrap(),
-                id,
-                line_table::SourceRequest::NavigateToLine(u32::MAX),
-                Button::new("Unavailable source"),
-            );
-        },
-        state,
-    );
-    gt_ui_theme::install_app_style(&harness.ctx);
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_size(VIEWER_SIZE)
+        .build_ui_state(
+            move |ui, state: &mut ViewerState| {
+                super::viewer_ui(ui, state);
+                state.viewer.source_link_ui(
+                    ui,
+                    state.logs.get_by_id(id).unwrap(),
+                    id,
+                    line_table::SourceRequest::NavigateToLine(u32::MAX),
+                    Button::new("Unavailable source"),
+                );
+            },
+            state,
+        );
     harness.run_steps(3);
     let prior = SourceReadingPosition::of(&harness);
     harness.get_by_label("Unavailable source").click_accesskit();

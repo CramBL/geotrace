@@ -1340,11 +1340,7 @@ fn splitter_ui(ui: &mut egui::Ui) -> egui::Response {
         Sense::click_and_drag(),
     );
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::ResizeHandle,
-            ui.is_enabled(),
-            SPLITTER_LABEL,
-        )
+        egui::WidgetInfo::labeled(egui::Role::Splitter, ui.is_enabled(), SPLITTER_LABEL)
     });
     ui.painter().hline(
         rect.x_range(),

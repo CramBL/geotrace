@@ -93,18 +93,21 @@ fn dialog_over(
     viewport: egui::Vec2,
     opening: DialogOpening,
 ) -> Harness<'static, DialogUnderTest> {
-    let mut harness = Harness::builder().with_size(viewport).build_ui_state(
-        dialog_ui,
-        DialogUnderTest {
-            kind,
-            shown: true,
-            result_arrived: false,
-            cancelled: false,
-            suppressed: false,
-            background_pressed: false,
-            leading_control_text_color: None,
-        },
-    );
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_size(viewport)
+        .build_ui_state(
+            dialog_ui,
+            DialogUnderTest {
+                kind,
+                shown: true,
+                result_arrived: false,
+                cancelled: false,
+                suppressed: false,
+                background_pressed: false,
+                leading_control_text_color: None,
+            },
+        );
     harness.run_steps(4);
     if matches!(opening, DialogOpening::Second) {
         harness.state_mut().shown = false;

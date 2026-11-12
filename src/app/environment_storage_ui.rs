@@ -561,6 +561,9 @@ mod tests {
         harness
             .inner
             .hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
+        harness
+            .inner
+            .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
         harness.inner.get_by_label_contains(&blocker.hover_text());
     }
 }

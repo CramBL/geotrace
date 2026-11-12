@@ -50,12 +50,12 @@ impl OversizedAppWindow {
             Self::AutoPrune => gt_test_utils::AuditedWindow::titled(AUTO_PRUNE_TITLE),
             Self::Settings => gt_test_utils::AuditedWindow::identified(
                 "Settings",
-                egui::Id::new(settings_ui::WINDOW_ID),
+                egui::Id::unique(settings_ui::WINDOW_ID),
             ),
             Self::Query => gt_test_utils::AuditedWindow::titled("Query"),
             Self::TrackData => gt_test_utils::AuditedWindow::identified(
                 "Track data",
-                egui::Id::new("detached_panel"),
+                egui::Id::unique("detached_panel"),
             ),
             Self::LoadingProgress => {
                 gt_test_utils::AuditedWindow::titled(LOADING_OVERLAY_WINDOW_ID)
@@ -227,6 +227,7 @@ fn the_match_list_window_fits_the_audit_viewports(
     viewport: egui::Vec2,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(viewport)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);

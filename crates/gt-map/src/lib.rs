@@ -24,7 +24,7 @@ use gt_ui_types::{
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
-use walkers::{HttpTiles, Map, MapMemory};
+use walkers::{HttpTiles, Map, MapMemory, MercatorProjection};
 
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
@@ -842,7 +842,8 @@ impl NavMap {
         map_center: walkers::Position,
         ctx: &MapDrawContext<'a>,
     ) -> viewport::MapFramePlan<'a> {
-        let projector = walkers::Projector::new(map_rect, &self.map_memory, map_center);
+        let projector =
+            walkers::Projector::new(map_rect, &MercatorProjection, &self.map_memory, map_center);
         let transform = MercTransform::new(&projector, &self.map_memory, map_rect.center());
         let plan = viewport::MapFramePlan::compute(
             viewport::MapFrameInputs::new(
@@ -1031,7 +1032,8 @@ impl NavMap {
         // Recomputed from the rect the map actually took, so hit-testing lands
         // on what was drawn.
         let map_rect = map_response.rect;
-        let projector = walkers::Projector::new(map_rect, &self.map_memory, map_center);
+        let projector =
+            walkers::Projector::new(map_rect, &MercatorProjection, &self.map_memory, map_center);
         let transform = MercTransform::new(&projector, &self.map_memory, map_rect.center());
         let cursor_merc = [
             transform.merc_x_from_screen(screen_pos.x),
@@ -1114,7 +1116,7 @@ impl NavMap {
         map_rect: egui::Rect,
         ctx: &mut MapDrawContext<'_>,
     ) -> Option<ReferenceDocument> {
-        let layer_toggle = Area::new(egui::Id::new("map_layer_toggle"))
+        let layer_toggle = Area::new(egui::Id::unique("map_layer_toggle"))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
             .pivot(egui::Align2::RIGHT_BOTTOM)
             .show(ui.ctx(), |ui| {
@@ -1229,7 +1231,7 @@ impl NavMap {
             return;
         }
         let popup_pos = self.disambiguation_pos;
-        let area_resp = Area::new(egui::Id::new("map_disambig"))
+        let area_resp = Area::new(egui::Id::unique("map_disambig"))
             .fixed_pos(popup_pos)
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
@@ -1429,7 +1431,7 @@ fn show_sticky_popup(
     };
 
     let window = Window::new(title)
-        .id(egui::Id::new(("sticky_popup", sticky_ref)))
+        .id(egui::Id::unique(("sticky_popup", sticky_ref)))
         .default_pos(default_pos)
         .collapsible(false);
     let window = if sticky_uses_point_layout(sticky_ref.category()) {

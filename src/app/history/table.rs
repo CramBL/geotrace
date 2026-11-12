@@ -257,7 +257,7 @@ fn metadata_column_floors(
         pixels_per_point_bits: ui.pixels_per_point().to_bits(),
     };
     let pass = ui.ctx().cumulative_pass_nr();
-    let id = ui.id().with("history_column_floors");
+    let id = ui.scope_id().with("history_column_floors");
     let cached = ui
         .data(|d| d.get_temp::<MeasuredColumnFloors>(id))
         .filter(|cached| cached.measured_for == measured_for);
@@ -856,7 +856,7 @@ fn breakdown_cell(
 /// the cells within it, so no two breakdown cells in the table share an id and
 /// none collides with a neighbour's interaction state.
 pub(super) fn breakdown_cell_id(entry: &RecordingEntry, column: SortColumn) -> egui::Id {
-    egui::Id::new((
+    egui::Id::unique((
         "history_row_breakdown",
         entry.db_ref.identity.as_str(),
         entry.db_ref.group_name.as_str(),

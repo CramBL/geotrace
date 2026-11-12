@@ -105,7 +105,7 @@ fn settings_window_keeps_one_size_across_pages() {
         let window_rect = harness
             .inner
             .ctx
-            .memory(|m| m.area_rect(egui::Id::new(settings_ui::WINDOW_ID)))
+            .memory(|m| m.area_rect(egui::Id::unique(settings_ui::WINDOW_ID)))
             .expect("the settings window is open");
         let last_control = harness
             .inner
@@ -136,7 +136,7 @@ fn settings_window_keeps_one_size_across_pages() {
 fn snapshot_processing_controls_fit_with_a_multiline_position_source_label(#[case] resize: bool) {
     let (mut harness, _config_path) = harness_with_settings_window_open();
     harness.run();
-    let window_id = egui::Id::new(settings_ui::WINDOW_ID);
+    let window_id = egui::Id::unique(settings_ui::WINDOW_ID);
     let opened = harness
         .inner
         .ctx
@@ -202,7 +202,7 @@ fn snapshot_processing_controls_fit_with_a_multiline_position_source_label(#[cas
 /// which [`HarnessInteraction::type_into_text_input`] would match as well.
 fn type_into_settings_search(harness: &mut TestHarness<'_, App>, query: &str) {
     harness.inner.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new(settings_ui::search::QUERY_FIELD_ID));
+        memory.request_focus(egui::Id::unique(settings_ui::search::QUERY_FIELD_ID));
     });
     harness.run();
     harness
@@ -225,7 +225,7 @@ fn every_settings_page_renders_the_labels_it_declares() {
         let window_rect = harness
             .inner
             .ctx
-            .memory(|m| m.area_rect(egui::Id::new(settings_ui::WINDOW_ID)))
+            .memory(|m| m.area_rect(egui::Id::unique(settings_ui::WINDOW_ID)))
             .expect("the settings window is open");
         for label in page.searchable_labels() {
             assert!(
@@ -390,6 +390,7 @@ fn stored_recording_entry(identity: &str, title: &str) -> gt_store::RecordingEnt
 #[test]
 fn name_template_guide_previews_the_loaded_recording() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(test_util::harness::transient_app);
@@ -422,6 +423,7 @@ fn name_template_guide_previews_the_loaded_recording() {
 #[test]
 fn name_template_guide_previews_a_history_recording() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(test_util::harness::transient_app);
@@ -452,6 +454,7 @@ fn name_template_guide_previews_a_history_recording() {
 #[test]
 fn name_template_guide_previews_follow_the_typed_template() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(test_util::harness::transient_app);
@@ -479,6 +482,7 @@ fn name_template_guide_previews_follow_the_typed_template() {
 #[test]
 fn name_template_guide_explains_a_missing_recording() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(test_util::harness::transient_app);
@@ -498,6 +502,7 @@ fn name_template_guide_explains_a_missing_recording() {
 #[test]
 fn the_interface_page_edits_the_token_the_map_reads() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(test_util::harness::transient_app);
@@ -522,6 +527,7 @@ fn the_interface_page_edits_the_token_the_map_reads() {
 #[test]
 fn the_interface_page_gates_the_satellite_layer_on_a_token() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(test_util::harness::transient_app);
@@ -586,6 +592,7 @@ fn snapshot_recording_name_template_guide() {
 #[test]
 fn settings_window_stays_open_after_step() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step(); // initial render
@@ -605,6 +612,7 @@ fn settings_window_stays_open_after_step() {
 #[test]
 fn settings_window_closes_on_esc() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -625,6 +633,7 @@ fn settings_window_closes_on_esc() {
 fn query_history_persists_across_settings_roundtrip() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(

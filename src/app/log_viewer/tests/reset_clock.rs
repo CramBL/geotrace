@@ -30,7 +30,12 @@ fn device_clock_row_clicks_preserve_the_map_and_synchronized_rows_navigate() {
         harness.state_mut().map_center = Some((-10.0, -20.0));
         let row = harness.topmost_matching(By::new().label(&timestamp)).rect();
         harness.hover_at_and_settle(row.center(), TOOLTIP_DELAY_FRAMES);
-        harness.get_by_label(line_table::DEVICE_CLOCK_ROW_HOVER);
+        harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
+        harness.get(
+            By::new()
+                .role(Role::Label)
+                .label(line_table::DEVICE_CLOCK_ROW_HOVER),
+        );
         assert_eq!(harness.state().log_hover.row_placement, None);
         harness.click_at(row.center());
         harness.run_steps(2);
@@ -76,11 +81,12 @@ fn device_clock_source_rows_remain_copyable_and_reachable_without_a_map_target()
         .topmost_matching(By::new().label("continuation before synchronization"))
         .rect();
     harness.hover_at_and_settle(continuation.center(), TOOLTIP_DELAY_FRAMES);
-    harness.get_by_label(&format!(
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
+    harness.get(By::new().role(Role::Label).label(&format!(
         "{}. {}.",
         line_table::DEVICE_CLOCK_ROW_HOVER,
         line_table::INTERPOLATED_TIMESTAMP_HOVER
-    ));
+    )));
     assert_eq!(harness.state().log_hover.row_placement, None);
 
     super::type_into_live_filter(&mut harness, "reset");
@@ -151,7 +157,12 @@ fn viewer_draws_device_clock_messages_with_normal_contrast_and_shows_clock_statu
         .hover_at_and_settle(row.center(), TOOLTIP_DELAY_FRAMES);
     harness
         .inner
-        .get_by_label(line_table::DEVICE_CLOCK_ROW_HOVER);
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
+    harness.inner.get(
+        By::new()
+            .role(Role::Label)
+            .label(line_table::DEVICE_CLOCK_ROW_HOVER),
+    );
     harness.inner.run_steps(3);
     harness.snapshot(&format!("log_viewer_device_clock_{theme:?}").to_ascii_lowercase());
 }

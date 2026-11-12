@@ -354,6 +354,7 @@ mod tests {
     #[test]
     fn tec_mirrors_persist_across_settings_roundtrip() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(harness::transient_app);
         harness.step();
@@ -398,6 +399,7 @@ mod tests {
     #[test]
     fn dop_defaults_and_saved_selections_survive_settings_roundtrip() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(harness::transient_app);
         harness.step();
@@ -421,6 +423,7 @@ mod tests {
     #[test]
     fn plot_channel_toggles_persist_across_settings_roundtrip() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(harness::transient_app);
         harness.step();
@@ -455,6 +458,7 @@ mod tests {
     #[test]
     fn channel_component_colors_persist_across_settings_roundtrip() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(harness::transient_app);
         harness.step();
@@ -492,6 +496,7 @@ mod tests {
             .expect("write the settings file");
         let built_from = config_path.clone();
         let mut first = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_size(egui::vec2(900.0, 900.0))
             .with_wait_for_pending_images(false)
             .build_eframe(move |cc| harness::build_app(cc, &built_from, false));
@@ -505,7 +510,7 @@ mod tests {
                 .to_bits(),
             0.5_f32.to_bits()
         );
-        let section_id = egui::Id::new(("visible_tracks_section", false));
+        let section_id = egui::Id::unique(("visible_tracks_section", false));
         let before = first
             .ctx
             .read_response(section_id)
@@ -553,6 +558,7 @@ mod tests {
 
         let built_from = config_path.clone();
         let mut restarted = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_size(egui::vec2(900.0, 600.0))
             .with_wait_for_pending_images(false)
             .build_eframe(move |cc| harness::build_app(cc, &built_from, false));
@@ -596,6 +602,7 @@ mod tests {
     #[test]
     fn display_mask_persists_across_settings_roundtrip() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(harness::transient_app);
         harness.step();
@@ -645,6 +652,7 @@ mod tests {
     #[test]
     fn debug_time_repair_threshold_persists_across_settings_roundtrip() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(harness::transient_app);
         harness.step();
@@ -671,6 +679,7 @@ mod tests {
     #[test]
     fn showing_the_interference_layer_persists_across_settings_roundtrip() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(harness::transient_app);
         harness.step();

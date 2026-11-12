@@ -248,7 +248,7 @@ impl HoverLabelStack {
             let mut tooltip = Tooltip::always_open(
                 ui.ctx().clone(),
                 ui.layer_id(),
-                egui::Id::new(HOVER_LABEL_STACK_ID),
+                egui::Id::unique(HOVER_LABEL_STACK_ID),
                 PopupAnchor::Pointer,
             )
             .gap(TOOLTIP_POINTER_GAP_PX);
@@ -281,7 +281,8 @@ pub(crate) fn hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
 /// consecutive rows, so half would leave the middle uncovered. Where two rows
 /// overlap the lower one wins.
 pub(crate) fn row_hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
-    let bridge = ui.spacing().item_spacing.y;
+    let bridge =
+        ui.spacing().item_spacing.y + (ui.spacing().interact_size.y - rect.height()).max(0.0) * 0.5;
     if !ui.rect_contains_pointer(rect.expand2(egui::vec2(0.0, bridge))) {
         return false;
     }

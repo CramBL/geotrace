@@ -1,7 +1,7 @@
 use std::ops::RangeInclusive;
 
 use chrono::Datelike as _;
-use egui::{Button, ComboBox, DragValue, Grid, Label, RichText, WidgetInfo, WidgetType};
+use egui::{Button, ComboBox, DragValue, Grid, Label, RichText, Role, WidgetInfo};
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_RESET;
 use gt_log_view::LoadedLog;
 use gt_logfile::{BoundComparison, LogChronology, ParsedLog, UnresolvedYear, YearResolution};
@@ -70,9 +70,7 @@ impl ChronologyDraft {
                 )
                 .on_hover_text(RESET_LABEL)
                 .on_disabled_hover_text("Automatic dates are selected and applied");
-            reset.widget_info(|| {
-                WidgetInfo::labeled(WidgetType::Button, reset.enabled(), RESET_LABEL)
-            });
+            reset.widget_info(|| WidgetInfo::labeled(Role::Button, reset.enabled(), RESET_LABEL));
             if reset.clicked() {
                 self.policy = ChronologyPolicyDraft::UseAutomatic;
                 (parsed.year_resolution() != YearResolution::Infer).then_some(YearResolution::Infer)

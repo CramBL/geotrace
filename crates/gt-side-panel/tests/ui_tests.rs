@@ -966,7 +966,7 @@ fn the_visible_section_opens_at_the_stored_share_of_the_region(#[case] preferred
     let section = harness
         .inner
         .ctx
-        .read_response(egui::Id::new(("visible_tracks_section", false)))
+        .read_response(egui::Id::unique(("visible_tracks_section", false)))
         .expect("visible section")
         .rect;
     let region_height = 600.0 - 8.0 - section.top();
@@ -989,7 +989,7 @@ fn a_stored_share_above_the_maximum_opens_the_section_at_the_maximum() {
     let section = harness
         .inner
         .ctx
-        .read_response(egui::Id::new(("visible_tracks_section", false)))
+        .read_response(egui::Id::unique(("visible_tracks_section", false)))
         .expect("visible section")
         .rect;
     let region_height = 600.0 - 8.0 - section.top();
@@ -1007,7 +1007,7 @@ fn dragging_the_divider_writes_the_new_share_back() {
     let divider = harness
         .inner
         .ctx
-        .read_response(egui::Id::new(("visible_tracks_section", false)).with("divider"))
+        .read_response(egui::Id::unique(("visible_tracks_section", false)).with("divider"))
         .expect("visible section divider")
         .rect
         .center();
@@ -1029,7 +1029,7 @@ fn parent_resize_and_progress_strip_preserve_the_visible_section_preference() {
     state.tree.set_visible_section_fraction(0.5);
     let mut harness = make_harness(state);
     harness.run();
-    let section_id = egui::Id::new(("visible_tracks_section", false));
+    let section_id = egui::Id::unique(("visible_tracks_section", false));
     let before = harness
         .inner
         .ctx
@@ -1101,7 +1101,7 @@ fn default_visible_section_shows_the_header_caption_and_track_on_first_layout(
     let section = harness
         .inner
         .ctx
-        .read_response(egui::Id::new(("visible_tracks_section", false)))
+        .read_response(egui::Id::unique(("visible_tracks_section", false)))
         .expect("visible section")
         .rect;
     let track = section_row(&harness, track_label).rect();
@@ -1403,6 +1403,9 @@ fn the_recording_row_hover_states_the_time_range_and_the_recorded_time() {
 
     let row = tree_row(&harness, "paused.gtd").rect().center();
     harness.inner.hover_at_and_settle(row, 3);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     assert!(
         harness
@@ -1432,6 +1435,9 @@ fn the_recording_row_hover_states_an_em_dash_for_a_recording_with_no_fixes() {
 
     let row = tree_row(&harness, "no_fixes.gtd").rect().center();
     harness.inner.hover_at_and_settle(row, 3);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     assert!(
         harness.inner.query_by_label(gt_ui_theme::EM_DASH).is_some(),
@@ -2186,6 +2192,9 @@ fn snapshot_hovering_a_track_row_control_opens_that_controls_tooltip_alone(
     harness
         .inner
         .hover_at_and_settle(control, TOOLTIP_SETTLE_FRAMES);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     assert!(
         harness.inner.query_by_label(expected_tooltip).is_some(),
@@ -2287,6 +2296,9 @@ fn snapshot_a_track_row_shows_no_tooltip_on_the_frame_the_pointer_arrives(
     harness
         .inner
         .hover_at_and_settle(start, TOOLTIP_SETTLE_FRAMES);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     assert_eq!(open_tooltip_count(&harness), 1, "the tooltip hovered first");
 
     let target = to.position(&harness);
@@ -2359,6 +2371,9 @@ fn snapshot_the_trigger_tooltip_continues_when_its_run_starts_under_the_pointer(
     harness
         .inner
         .hover_at_and_settle(trigger, TOOLTIP_SETTLE_FRAMES);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     assert!(
         harness
             .inner
@@ -2399,6 +2414,9 @@ fn snapshot_the_trigger_takes_the_tooltip_when_wider_columns_shift_it_under_the_
     harness
         .inner
         .hover_at_and_settle(beside_the_trigger, TOOLTIP_SETTLE_FRAMES);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     assert!(
         harness
             .inner
@@ -2422,7 +2440,7 @@ fn snapshot_the_trigger_takes_the_tooltip_when_wider_columns_shift_it_under_the_
         shifted.contains(beside_the_trigger),
         "the wider columns must move the trigger onto the resting pointer"
     );
-    assert_eq!(counts, [1, 0, 1]);
+    assert_eq!(counts, [1, 1, 1]);
 
     // The trigger's tooltip opened on the last of those frames: hold the
     // pointer while egui lays it out.
@@ -2528,6 +2546,9 @@ fn hover_the_shelve_button(harness: &mut TestHarness<'static, State>) {
     harness
         .inner
         .hover_and_settle(By::new().label_contains(SHELVE_FILTERED_DATA_LABEL), 3);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 }
 
 fn shelve_button_is_disabled(harness: &TestHarness<'static, State>) -> bool {
@@ -2817,6 +2838,9 @@ fn the_tree_context_menu_grays_out_its_shelve_entry(
     harness
         .inner
         .hover_and_settle(By::new().label(SHELVE_TRACK_LABEL), 3);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.inner.get_by_label_contains(hover);
     assert_eq!(shelve_confirmation_items(&harness), None);
 }

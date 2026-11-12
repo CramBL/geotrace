@@ -3,7 +3,7 @@
 
 use std::mem;
 
-use egui::{Button, ComboBox, DragValue, Popup, RichText, WidgetInfo, WidgetType, Window};
+use egui::{Button, ComboBox, DragValue, Popup, RichText, Role, WidgetInfo, Window};
 use egui_phosphor::regular::{
     CARET_DOWN as ICON_CARET_DOWN, CARET_RIGHT as ICON_CARET_RIGHT, EYE as ICON_EYE,
     EYE_SLASH as ICON_EYE_SLASH, X as ICON_X,
@@ -491,7 +491,7 @@ impl LogViewerWindow {
                 .selectable_label(visible, if visible { ICON_EYE } else { ICON_EYE_SLASH })
                 .on_hover_text("Show this log's matches on the map");
             toggle.widget_info(|| {
-                WidgetInfo::selected(WidgetType::Checkbox, true, visible, "Show matches on map")
+                WidgetInfo::selected(Role::CheckBox, true, visible, "Show matches on map")
             });
             toggle.ctx.accesskit_node_builder(toggle.id, |node| {
                 node.set_description("Show this log's matches on the map")
@@ -594,7 +594,7 @@ impl LogViewerWindow {
         let names = recording_names_by_id(recordings, recording_names);
 
         ui.horizontal_wrapped(|ui| {
-            ui.label("Positions from");
+            let position_source_label = ui.label("Positions from");
             let ranked = candidates.ranked();
             let can_select_source =
                 years_resolved && !ranked.is_empty() && capabilities.select_position_source;
@@ -658,7 +658,8 @@ impl LogViewerWindow {
                         "Load a recording to use as this log's position source"
                     } else {
                         UNRESOLVED_YEARS_HOVER
-                    });
+                    })
+                    .labelled_by(position_source_label.id);
             });
 
             if let Some(db_ref) = unresolved_anchor {
@@ -698,7 +699,8 @@ impl LogViewerWindow {
                         }
                     })
                     .response
-                    .on_disabled_hover_text(UNRESOLVED_YEARS_HOVER);
+                    .on_disabled_hover_text(UNRESOLVED_YEARS_HOVER)
+                    .accessible_name("Association window unit");
             });
 
             ui.separator();

@@ -289,7 +289,7 @@ fn the_tickbox_is_grayed_out_where_no_stored_recording_has_a_shelved_track() {
         "the tickbox is live over recordings with every track in the view"
     );
     harness.get_by_label(LEAVE_SHELVED_TRACKS_OUT_LABEL).hover();
-    harness.run_steps(3);
+    harness.run_steps(5);
     assert!(
         harness
             .query_by_label_contains(NO_SHELVED_TRACK_HOVER)
@@ -532,6 +532,7 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
     #[case] expected_prompt: bool,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -603,6 +604,7 @@ fn the_resegment_prompt_offers_the_stored_tracks_only_for_rules_it_implements(
     #[case] expected_disabled: bool,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();

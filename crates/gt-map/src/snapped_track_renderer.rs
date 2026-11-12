@@ -203,7 +203,7 @@ impl Plugin for SnappedTrackRenderer<'_, '_> {
                 // labels drawn at the pointer.
                 Popup::from_response(response)
                     .kind(PopupKind::Tooltip)
-                    .id(egui::Id::new(SNAPPED_EDGE_LABEL_ID))
+                    .id(egui::Id::unique(SNAPPED_EDGE_LABEL_ID))
                     .show(|ui| edge_tooltip_rows(ui, edge));
             }
         }

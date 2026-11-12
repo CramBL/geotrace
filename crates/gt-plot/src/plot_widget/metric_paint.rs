@@ -51,6 +51,7 @@ pub(super) fn add_metric_run<'a>(
     } else {
         plot_ui.line(
             Line::new(name, PlotPoints::Borrowed(points))
+                .allow_band(false)
                 .color(stroke.color)
                 .style(stroke.style)
                 .width(stroke.width)

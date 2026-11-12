@@ -368,6 +368,7 @@ fn click_the_control_once_the_window_shows_it(
 fn storage_controls_drive_one_setting_from_both_windows() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(1000.0, 700.0))
         .build_eframe(test_util::harness::transient_app);
@@ -470,6 +471,7 @@ fn adopting_an_open_storage_installs_its_history_worker() {
     let recordings_path = store.recordings_path();
 
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -510,9 +512,10 @@ fn adopting_an_open_storage_installs_its_history_worker() {
 #[test]
 fn a_history_failure_in_the_adopted_storage_raises_its_prompt() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
-    harness.step();
+    harness.run_steps(3);
 
     harness
         .state_mut()
@@ -527,7 +530,7 @@ fn a_history_failure_in_the_adopted_storage_raises_its_prompt() {
             solar_flares: None,
             unavailable_archives: UnavailableArchives::default(),
         });
-    harness.step();
+    harness.run_steps(3);
 
     assert!(
         harness
@@ -546,6 +549,7 @@ fn a_failed_retry_restores_the_prompt() {
     std::fs::write(&path, b"not a database").expect("write");
 
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -598,6 +602,7 @@ fn a_history_database_recovery_is_rejected_once_shutdown_has_begun(
     let before = files_in_the_data_directory();
 
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -623,6 +628,7 @@ fn app_after_a_take_over_with<'a>(
     failure: crate::app::storage::HistoryFailure,
 ) -> Harness<'a, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();

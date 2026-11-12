@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
+use egui::Role;
+use egui_kittest::{Harness, OsThreshold, kittest::NodeT as _, kittest::Queryable as _};
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use gt_jam::wire::HexObservation;
 use gt_store::{EnvironmentArchive, JamStore};
-use gt_test_utils::{By, DEMO_BYTES, HarnessInteraction as _, TestHarness};
+use gt_test_utils::{
+    By, CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, HarnessInteraction as _, TestHarness,
+};
 use gt_types::{DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
 use gt_ui_types::{DisplayCategory, MapElementRef, MapEligibility, PointVisibility};
@@ -158,6 +161,7 @@ fn install_interference_archive_covering_loaded_fixes(
 fn query_results_over_archived_interference_stay_fresh() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -201,6 +205,7 @@ fn query_results_over_archived_interference_stay_fresh() {
 fn query_matches_on_snap_error_after_a_run() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -295,7 +300,7 @@ fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibil
 }
 
 /// A point `fraction_across` of the way from the plot pane's left edge to its
-/// right, at half its height. The pane holds the whole recording's span.
+/// right, in its lower quarter below the metric controls.
 fn plot_pane_point(harness: &Harness<'_, App>, fraction_across: f32) -> egui::Pos2 {
     let app = harness.state();
     let rect = app
@@ -305,7 +310,7 @@ fn plot_pane_point(harness: &Harness<'_, App>, fraction_across: f32) -> egui::Po
         .expect("the plot pane is laid out");
     egui::pos2(
         rect.left() + rect.width() * fraction_across,
-        rect.center().y,
+        rect.bottom() - rect.height() * 0.25,
     )
 }
 
@@ -499,6 +504,7 @@ fn the_results_leave_the_query_window_at_its_default_height() {
 /// match table then lists.
 fn demo_app_with_query_run(query: &str) -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -1272,6 +1278,7 @@ fn copying_after_sorting_writes_the_matches_in_the_listed_order() {
 /// The accel fixture with the query window open over it.
 fn accel_app_with_query_window() -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -1306,7 +1313,11 @@ fn accel_points_query_with_aggregate() -> Harness<'static, App> {
 /// Open the samples listed under the picked match.
 fn open_samples_listing(harness: &mut Harness<'_, App>) {
     harness
-        .get_by_label_contains(query::aggregate_samples::TOGGLE_LABEL)
+        .get(
+            By::new()
+                .role(Role::Button)
+                .label_contains(query::aggregate_samples::TOGGLE_LABEL),
+        )
         .click();
     harness.run_steps(3);
 }
@@ -1373,7 +1384,11 @@ fn expanding_a_channel_match_lists_the_samples_of_its_matched_rows() {
 #[test]
 fn a_match_whose_query_reduces_no_channel_states_why_it_lists_nothing() {
     let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
-    let toggle = harness.get_by_label_contains(query::aggregate_samples::TOGGLE_LABEL);
+    let toggle = harness.get(
+        By::new()
+            .role(Role::Button)
+            .label_contains(query::aggregate_samples::TOGGLE_LABEL),
+    );
     assert!(
         toggle.accesskit_node().is_disabled(),
         "a match with no channel aggregate lists no samples"
@@ -1511,6 +1526,7 @@ fn query_match_row_hover_highlights_the_match() {
 
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -1768,7 +1784,12 @@ fn snapshot_app_query_channel_source() {
         first_stretch.len()
     ));
 
-    harness.snapshot_with_color_tolerance("app_query_channel_source");
+    // Metal differs from the baseline at one antialiased track edge pixel.
+    harness.snapshot_with_tolerance(
+        "app_query_channel_source",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(1),
+    );
 }
 
 /// A points-source query that references a channel: the window's time span
@@ -1827,7 +1848,12 @@ fn snapshot_app_query_points_with_channel() {
     harness.inner.hover_at(egui::pos2(1.0, 1.0));
     harness.inner.run_steps(5);
 
-    harness.snapshot_with_color_tolerance("app_query_points_with_channel");
+    // Metal differs from the baseline at one antialiased track edge pixel.
+    harness.snapshot_with_tolerance(
+        "app_query_points_with_channel",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(1),
+    );
 }
 
 /// A match expanded to the samples behind its aggregate column: the results tab
@@ -1865,7 +1891,11 @@ fn snapshot_app_query_match_samples() {
 
     harness
         .inner
-        .get_by_label_contains(query::aggregate_samples::TOGGLE_LABEL)
+        .get(
+            By::new()
+                .role(Role::Button)
+                .label_contains(query::aggregate_samples::TOGGLE_LABEL),
+        )
         .click();
     harness.inner.run_steps(5);
 
@@ -1873,7 +1903,12 @@ fn snapshot_app_query_match_samples() {
     harness.inner.hover_at(egui::pos2(1.0, 1.0));
     harness.inner.run_steps(5);
 
-    harness.snapshot_with_color_tolerance("app_query_match_samples");
+    // Metal differs from the baseline at one antialiased track edge pixel.
+    harness.snapshot_with_tolerance(
+        "app_query_match_samples",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(1),
+    );
 }
 
 /// Several queries compose in one editor: a `hide` filter plus two colored

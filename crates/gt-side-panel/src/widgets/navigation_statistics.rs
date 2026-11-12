@@ -54,7 +54,7 @@ impl NavigationStatistics {
                         );
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
-                                egui::WidgetType::Label,
+                                egui::Role::Label,
                                 true,
                                 format!("{label} {value}. {description}."),
                             )
@@ -95,7 +95,7 @@ impl NavigationStatistics {
                     ui.label("Losses");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(self.0.fix_loss_count.to_string()).widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("Losses {}", self.0.fix_loss_count))
+                            egui::WidgetInfo::labeled(egui::Role::Label, true, format!("Losses {}", self.0.fix_loss_count))
                         });
                     });
                     ui.end_row();
@@ -105,7 +105,7 @@ impl NavigationStatistics {
                             gt_fmt::format_human_terse_duration(self.0.max_continuous_no_fix);
                         ui.label(&duration).widget_info(|| {
                             egui::WidgetInfo::labeled(
-                                egui::WidgetType::Label,
+                                egui::Role::Label,
                                 true,
                                 format!("Longest {duration}. Continuous known No fix or Estimated only duration."),
                             )
@@ -123,7 +123,7 @@ impl NavigationStatistics {
         );
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
-                egui::WidgetType::Label,
+                egui::Role::Label,
                 true,
                 "Navigation duration composition by state. Segments group intervals by state.",
             )
@@ -182,7 +182,7 @@ impl NavigationStatistics {
             ui.interact(segment, response.id.with(state.to_string()), Sense::hover())
                 .widget_info(|| {
                     egui::WidgetInfo::labeled(
-                        egui::WidgetType::Label,
+                        egui::Role::Label,
                         true,
                         format!(
                             "{} duration {} ({})",

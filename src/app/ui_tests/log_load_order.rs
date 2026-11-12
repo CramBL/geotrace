@@ -38,6 +38,7 @@ mod replacement;
 
 fn harness(ask: bool) -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -264,6 +265,7 @@ fn initial_association_waits_for_every_overlapping_recording(
     }
     harness.run_steps(2);
     if ask {
+        harness.run_steps(2);
         let dialog = harness.get(
             By::new()
                 .role(Role::Window)
@@ -459,6 +461,7 @@ fn load_failures_stay_after_later_loads_succeed_in_the_same_frame() {
         ]
     );
     assert_eq!(harness.state().logs.len(), 2);
+    harness.run_steps(2);
     harness.get_by_role_and_label(Role::Window, "Load problems");
     harness.get_by_label("broken.gtd");
     harness.get_by_label("broken.log");
@@ -1460,6 +1463,7 @@ fn independent_history_and_later_arrivals_preserve_initial_selection_scope(
             assert!(harness.state().association_dialog.is_none());
         } else if index == 0 {
             if ask {
+                harness.run_steps(2);
                 let chooser =
                     harness.get_by_role_and_label(Role::Window, association_dialog::TITLE);
                 assert!(chooser.query_by_label("arrival-a.gtd").is_some());

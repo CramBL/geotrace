@@ -35,6 +35,7 @@ fn app_waiting_for_the_data_directory_registering_writes_in<'a>(
 ) -> Harness<'a, App> {
     let instance_lock = ui_tests::lock_on_a_directory_another_instance_holds(data_directory);
     Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
@@ -456,6 +457,7 @@ fn app_waiting_on_a_stale_shutdown_report(directory: &Path) -> TestHarness<'stat
     write_a_shutting_down_status(directory, Some(written_at));
     let instance_lock = ui_tests::lock_on_a_directory_another_instance_holds(directory);
     let harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(640.0, 420.0))
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
@@ -960,6 +962,7 @@ fn only_a_read_only_session_shows_the_read_only_marker() {
 
     let marker = harness.get_by_label_contains(READ_ONLY_MARKER_LABEL).rect();
     harness.hover_at_and_settle(marker.center(), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(&format!(
         "Another GeoTrace (process {}) owns the data directory",
         process::id()

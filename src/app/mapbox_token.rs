@@ -24,15 +24,17 @@ pub struct MapboxTokenField {
 
 impl MapboxTokenField {
     pub fn show(&mut self, ui: &mut egui::Ui, map: &mut NavMap, commit: MapboxTokenCommit) {
-        let id = ui.id().with("mapbox_token_field");
+        let id = ui.scope_id().with("mapbox_token_field");
         if !ui.memory(|memory| memory.has_focus(id)) && self.text != map.mapbox_token() {
             self.text = map.mapbox_token().to_owned();
         }
-        let response = ui.add(
-            TextEdit::singleline(&mut self.text)
-                .id(id)
-                .desired_width(TOKEN_FIELD_WIDTH),
-        );
+        let response = ui
+            .add(
+                TextEdit::singleline(&mut self.text)
+                    .id(id)
+                    .desired_width(TOKEN_FIELD_WIDTH),
+            )
+            .accessible_name("Mapbox API token");
         if !response.lost_focus() {
             return;
         }

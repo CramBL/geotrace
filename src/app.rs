@@ -562,7 +562,7 @@ impl App {
         let root_tile_id = tiles.insert_new(Tile::Container(Container::Linear(
             Linear::new_binary(LinearDir::Vertical, [map_tile_id, plot_tile_id], 0.6),
         )));
-        let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
+        let tiles_tree = Tree::new(egui::Id::unique("main_tiles"), root_tile_id, tiles);
 
         // Nothing is opened while another instance holds the data directory:
         // recovery here would run against archives that instance is part-way

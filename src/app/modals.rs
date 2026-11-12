@@ -182,7 +182,7 @@ pub(super) fn dialog_body_above_the_action_row_taking<R>(
     DialogBody(body): DialogBody<impl FnOnce(&mut egui::Ui)>,
     actions: DialogActionRow<impl FnOnce(&mut egui::Ui), impl FnOnce(&mut egui::Ui) -> R>,
 ) -> R {
-    let measured_height_id = ui.id().with("dialog_actions_height");
+    let measured_height_id = ui.scope_id().with("dialog_actions_height");
     let reserved = ui
         .data(|data| data.get_temp::<f32>(measured_height_id))
         .unwrap_or_else(|| ui.spacing().interact_size.y + DIALOG_ACTIONS_GAP)

@@ -37,7 +37,7 @@ impl SatelliteCountBadge {
         });
         pair.response.widget_info(|| {
             egui::WidgetInfo::labeled(
-                egui::WidgetType::Label,
+                egui::Role::Label,
                 true,
                 format!("Satellites used / seen {}", gt_fmt::SatelliteCounts(self.0)),
             )
@@ -85,7 +85,7 @@ impl NavigationStatus {
             .show(ui, |ui| ui.label(RichText::new(symbol).color(color)))
             .inner;
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, self.state.to_string())
+            egui::WidgetInfo::labeled(egui::Role::Label, true, self.state.to_string())
         });
         response.on_hover_text(if synthesized {
             format!("{} · SDK synthesized\n{explanation}", self.state)

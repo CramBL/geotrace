@@ -306,7 +306,7 @@ impl WindowBody<'_> {
         // one. The measurement therefore has to span *everything* below the
         // plot row - the transport and the spacing egui inserts above it - not
         // just the transport's own height.
-        let reserve_id = ui.id().with("below_plot_height");
+        let reserve_id = ui.scope_id().with("below_plot_height");
         let reserved = ui
             .data(|d| d.get_temp::<f32>(reserve_id))
             .unwrap_or(TRANSPORT_RESERVE_PX);
@@ -491,7 +491,11 @@ fn stats_row(ui: &mut egui::Ui, shown: &mut ConstellationSet, count: &TrailDispl
     let row = ui
         .horizontal(|ui| {
             let mut checked = on;
-            if ui.checkbox(&mut checked, "").changed() {
+            if ui
+                .checkbox(&mut checked, "")
+                .accessible_name(format!("Show {}", count.constellation.display_name()))
+                .changed()
+            {
                 shown.set(count.constellation, checked);
                 on = checked;
             }
@@ -617,7 +621,7 @@ fn stats_cell(
             color,
         );
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
     response
 }
 
@@ -711,7 +715,7 @@ fn advance_playback(
 /// second call in the same frame returns zero.
 fn frame_dt(ui: &egui::Ui) -> f32 {
     let now = ui.input(|i| i.time);
-    let last_id = ui.id().with("playback_last_time");
+    let last_id = ui.scope_id().with("playback_last_time");
     let last = ui.data(|d| d.get_temp::<f64>(last_id)).unwrap_or(now);
     ui.data_mut(|d| d.insert_temp(last_id, now));
     ((now - last) as f32).min(MAX_PLAYBACK_FRAME_SECS)
@@ -773,7 +777,7 @@ fn handle_seek_keys(
     speed: &mut f32,
     dt: f32,
 ) {
-    let press_id = ui.id().with("seek_press_time");
+    let press_id = ui.scope_id().with("seek_press_time");
     if !window_hovered || ui.memory(|m| m.focused()).is_some() {
         ui.data_mut(|d| d.remove::<f64>(press_id));
         return;
@@ -864,9 +868,11 @@ fn transport(
         }
 
         ui.spacing_mut().slider_width = ui.available_width();
-        let slider = ui.add(
-            egui::Slider::new(scrub_secs, 0.0..=total_secs.max(f64::EPSILON)).show_value(false),
-        );
+        let slider = ui
+            .add(
+                egui::Slider::new(scrub_secs, 0.0..=total_secs.max(f64::EPSILON)).show_value(false),
+            )
+            .accessible_name("Playback position");
         // Grabbing the slider takes over from playback.
         if slider.dragged() {
             *playing = false;

@@ -407,7 +407,7 @@ pub(crate) fn show_display_toggle(
     counts: impl FnOnce() -> DisplayCounts,
 ) {
     let gap = ui.style().spacing.item_spacing.y;
-    let button_response = Area::new(Id::new(DISPLAY_TOGGLE_BUTTON_AREA_ID))
+    let button_response = Area::new(Id::unique(DISPLAY_TOGGLE_BUTTON_AREA_ID))
         .fixed_pos(egui::pos2(below_rect.right(), below_rect.top() - gap))
         .pivot(Align2::RIGHT_BOTTOM)
         .show(ui.ctx(), |ui| {
@@ -455,7 +455,7 @@ pub(crate) fn show_display_toggle(
     }
     let button_rect = button_response.response.rect;
     let counts = counts();
-    let popup_response = Area::new(Id::new(DISPLAY_TOGGLE_POPUP_AREA_ID))
+    let popup_response = Area::new(Id::unique(DISPLAY_TOGGLE_POPUP_AREA_ID))
         .fixed_pos(egui::pos2(button_rect.right(), button_rect.top() - gap))
         .pivot(Align2::RIGHT_BOTTOM)
         .show(ui.ctx(), |ui| {

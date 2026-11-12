@@ -198,8 +198,9 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
     // Open the inline editor through the identity's context menu.
     // `request_focus` applies the frame after the editor first renders,
     // so settle a couple of frames before typing.
+    h.inner.run_steps(2);
     h.inner.get_by_label_contains("ride.gtd").click_secondary();
-    h.step();
+    h.inner.run_steps(2);
     h.inner.get_by_label("Rename").click_accesskit();
     h.step();
     h.step();
@@ -246,7 +247,7 @@ fn the_logs_column_counts_the_stored_logs_and_opens_the_one_that_was_chosen() {
     }
 
     h.inner.get_by_label(count.as_str()).click();
-    h.step();
+    h.inner.run_steps(2);
     h.inner.get_by_label("hal-powerd.log");
     h.inner.get_by_label("navsyncd.log");
     // The first row is "hal-powerd.log": the menu lists the attachments by
@@ -308,6 +309,7 @@ fn the_row_actions_that_write_are_grayed_in_a_read_only_session() {
     );
 
     h.inner.hover_at_and_settle(delete_center, 3);
+    h.inner.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     h.inner
         .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
@@ -336,8 +338,9 @@ fn no_rename_editor_opens_in_a_read_only_session() {
         h.inner.query_all_by_value("ride.gtd v2").next().is_none(),
         "the read-only session opened the rename editor and typing reached it"
     );
+    h.inner.run_steps(2);
     h.inner.get_by_label_contains("ride.gtd").click_secondary();
-    h.step();
+    h.inner.run_steps(2);
     assert!(
         h.inner
             .get_by_label("Rename")
@@ -711,10 +714,12 @@ fn the_write_controls_of_the_shelf_are_grayed_in_a_read_only_session() {
     let delete_shelved_center = delete_shelved.rect().center();
 
     h.inner.hover_at_and_settle(unshelve_center, 3);
+    h.inner.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     h.inner
         .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 
     h.inner.hover_at_and_settle(delete_shelved_center, 3);
+    h.inner.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     h.inner
         .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
@@ -2840,7 +2845,7 @@ fn snapshot_window_dragged_shorter_than_its_listing() {
 
 #[rstest::rstest]
 #[case::wide(1400.0, 1.0, 1.0, true)]
-#[case::normal(900.0, 1.0, 1.0, false)]
+#[case::normal(850.0, 1.0, 1.0, false)]
 #[case::scaled(900.0, 1.5, 1.0, false)]
 #[case::narrow(500.0, 1.0, 1.0, false)]
 #[case::larger_font(1200.0, 1.0, 1.25, true)]
@@ -2936,7 +2941,7 @@ fn resizing_restores_optional_columns_and_preserves_the_active_sort() {
     let wide = window_rect(&h);
     h.inner.press_drag_release(
         egui::pos2(wide.right() - 1.0, wide.bottom() - 1.0),
-        egui::vec2(-400.0, 0.0),
+        egui::vec2(-500.0, 0.0),
         8,
     );
     h.inner.run_steps(4);
@@ -2954,7 +2959,7 @@ fn resizing_restores_optional_columns_and_preserves_the_active_sort() {
     assert!(narrow.width() < wide.width() - 300.0);
     h.inner.press_drag_release(
         egui::pos2(narrow.right() - 1.0, narrow.bottom() - 1.0),
-        egui::vec2(400.0, 0.0),
+        egui::vec2(500.0, 0.0),
         8,
     );
     h.inner.run_steps(4);
@@ -2973,7 +2978,7 @@ fn hidden_sort_columns_remain_selectable_and_show_the_active_order() {
         gtd_size_bytes: 132_746_444,
     });
     let mut h = TestHarness::builder()
-        .size(egui::vec2(900.0, 600.0))
+        .size(egui::vec2(850.0, 600.0))
         .ui_state(show_history, history_harness(vec![entry]));
     h.inner.run_steps(6);
     assert!(h.inner.query_by_label("Size").is_none());

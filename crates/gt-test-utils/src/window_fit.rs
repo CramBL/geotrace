@@ -3,6 +3,7 @@
 //! the screen edge. egui clips a window past that edge and puts its content out
 //! of reach.
 
+use egui::MouseWheelSource;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{By, Queryable as _};
 
@@ -27,7 +28,7 @@ impl<'a> AuditedWindow<'a> {
     pub fn titled(title: &'a str) -> Self {
         Self {
             name: title,
-            area_id: egui::Id::new(Some(title)),
+            area_id: egui::Id::unique(Some(title)),
         }
     }
 
@@ -96,6 +97,7 @@ impl<State> WindowFitAssertions for Harness<'_, State> {
             self.step();
             self.input_mut().events.push(egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
+                source: MouseWheelSource::Wheel,
                 delta: egui::vec2(0.0, towards),
                 phase: egui::TouchPhase::Move,
                 modifiers: egui::Modifiers::NONE,

@@ -1,6 +1,8 @@
-use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
+use egui_kittest::{Harness, OsThreshold, kittest::NodeT as _, kittest::Queryable as _};
 use gt_store::{FlareStore, IonexStore, SolarStore};
-use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness};
+use gt_test_utils::{
+    CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness,
+};
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use gt_ui_types::{MapElementRef, MapEligibility};
 use strum::IntoEnumIterator as _;
@@ -111,7 +113,7 @@ fn the_map_warning_levels_open_their_reference_windows() {
         .inner
         .get_by_label_contains(interference.link_question)
         .click();
-    harness.inner.run_steps(2);
+    harness.inner.run_steps(3);
 
     assert!(harness.inner.state().reference_window.is_open());
     assert!(
@@ -185,7 +187,12 @@ fn snapshot_app_point_window_coordinate_out_of_range() {
     }
     harness.inner.run_steps(30);
 
-    harness.snapshot_with_color_tolerance("app_point_window_coordinate_out_of_range");
+    // Metal samples 67 pixels differently along one synthetic tile row.
+    harness.snapshot_with_tolerance(
+        "app_point_window_coordinate_out_of_range",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(67),
+    );
 }
 
 /// Snapshot of the app zoomed into the cluster of Sahara desert tracks from
@@ -413,7 +420,11 @@ fn snapshot_app_plot_channel_components() {
     for _ in 0..60 {
         harness.inner.run();
     }
-    harness.snapshot_with_color_tolerance("app_plot_channel_components");
+    harness.snapshot_with_tolerance(
+        "app_plot_channel_components",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(PLOT_TILE_AND_TRACK_EDGE_PIXEL_BUDGET),
+    );
 }
 
 /// The channel chip's right-click menu carries one color entry per
@@ -437,7 +448,7 @@ fn channel_chip_menu_offers_component_colors() {
         .inner
         .get_by_label_contains("accel (g)")
         .click_secondary();
-    harness.inner.step();
+    harness.inner.run_steps(2);
     for label in ["Color of accel.x", "Color of accel.y", "Color of accel.z"] {
         assert!(
             harness.inner.query_by_label_contains(label).is_some(),
@@ -467,7 +478,7 @@ fn channel_chip_menu_offers_component_colors() {
         .inner
         .get_by_label_contains("accel (g)")
         .click_secondary();
-    harness.inner.step();
+    harness.inner.run_steps(2);
     harness.inner.get_by_label("Reset colors").click_accesskit();
     harness.inner.run_steps(2);
     assert!(
@@ -516,7 +527,11 @@ fn snapshot_app_plot_channel_color_override() {
     for _ in 0..60 {
         harness.inner.run();
     }
-    harness.snapshot_with_color_tolerance("app_plot_channel_color_override");
+    harness.snapshot_with_tolerance(
+        "app_plot_channel_color_override",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(PLOT_TILE_AND_TRACK_EDGE_PIXEL_BUDGET),
+    );
 }
 
 #[test]
@@ -582,6 +597,7 @@ fn clock_excursion_gtd_bytes() -> Vec<u8> {
 fn snapshot_app_plot_clock_excursion() {
     let gtd_bytes = clock_excursion_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -601,7 +617,11 @@ fn snapshot_app_plot_clock_excursion() {
     harness.run_steps(5);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_with_color_tolerance("app_plot_clock_excursion");
+    harness.snapshot_with_tolerance(
+        "app_plot_clock_excursion",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(PLOT_TILE_BORDER_PIXEL_BUDGET),
+    );
 }
 
 /// The plot's snap error series from an injected completed run: the mint
@@ -612,6 +632,7 @@ fn snapshot_app_plot_clock_excursion() {
 fn snapshot_app_plot_snap_error() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -640,7 +661,11 @@ fn snapshot_app_plot_snap_error() {
     harness.run_steps(5);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_with_color_tolerance("app_plot_snap_error");
+    harness.snapshot_with_tolerance(
+        "app_plot_snap_error",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(PLOT_TILE_BORDER_PIXEL_BUDGET),
+    );
 }
 
 /// Every affected track the map indicator lists, as its label and its lines.
@@ -675,6 +700,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
         sats_in_fix: 8,
     });
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -717,7 +743,11 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
     harness.run_steps(2);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_with_color_tolerance("app_plot_context_line");
+    harness.snapshot_with_tolerance(
+        "app_plot_context_line",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(PLOT_TILE_BORDER_PIXEL_BUDGET),
+    );
 }
 
 /// A geomagnetic day archived after the recording was loaded reaches it: the
@@ -727,6 +757,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
 fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -783,6 +814,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
 fn a_tec_window_archived_after_the_load_warns_on_the_map() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -895,6 +927,7 @@ fn harness_with_archived_flares<'a>(
         sats_in_fix: 8,
     });
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -956,7 +989,11 @@ fn snapshot_app_plot_solar_flare_markers() {
     harness.run_steps(5);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_with_color_tolerance("app_plot_solar_flare_markers");
+    harness.snapshot_with_tolerance(
+        "app_plot_solar_flare_markers",
+        CROSS_BACKEND_COLOR_TOLERANCE,
+        OsThreshold::new(0).macos(PLOT_TILE_BORDER_PIXEL_BUDGET),
+    );
 }
 
 #[test]
@@ -1027,6 +1064,7 @@ fn solar_flare_chip_is_disabled_until_a_day_is_archived() {
 fn snap_error_chip_is_disabled_until_a_run_completes() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -1056,6 +1094,7 @@ fn snap_error_chip_is_disabled_until_a_run_completes() {
 #[test]
 fn snap_error_view_resolves_point_times_and_kinds() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -1116,3 +1155,8 @@ fn snapshot_recording_details_dialog() {
     harness.run();
     harness.snapshot_with_color_tolerance("recording_details_dialog");
 }
+
+// Metal differs from the baseline at two synthetic tile-border pixels.
+const PLOT_TILE_BORDER_PIXEL_BUDGET: usize = 2;
+// The channel plot snapshots also differ at one antialiased track edge pixel.
+const PLOT_TILE_AND_TRACK_EDGE_PIXEL_BUDGET: usize = 3;

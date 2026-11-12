@@ -25,6 +25,7 @@ use crate::app::ui_tests;
 #[case::not_synced_to_the_map(false)]
 fn the_plot_takes_a_range_from_the_map_only_while_sync_to_map_is_on(#[case] sync_to_map: bool) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.state().shared.borrow_mut().plot_state.sync_to_map = sync_to_map;
@@ -51,7 +52,7 @@ fn detach_legend(harness: &mut Harness<App>, offset: egui::Vec2) {
         shared.plot_state.file_legend_offset = offset;
         shared.plot_state.file_legend_collapsed = false;
     }
-    harness.step();
+    harness.run_steps(2);
 }
 
 #[test]
@@ -240,6 +241,7 @@ fn count_sample_hover_highlights_its_associated_fix_through_map_policy(
     #[case] fixture: CountSampleFixture,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     {

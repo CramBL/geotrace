@@ -48,6 +48,7 @@ fn snapshot_file_menu_open() {
 #[test]
 fn file_menu_opens_about_dialog() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -71,6 +72,7 @@ fn the_about_dialog_shows_the_text_cursor_only_over_the_version(
     #[case] expected: egui::CursorIcon,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -90,6 +92,7 @@ fn the_about_dialog_shows_the_text_cursor_only_over_the_version(
 #[test]
 fn about_dialog_closes_on_escape() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();

@@ -99,14 +99,15 @@ bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "now", "clock", "oldtime"] }
 criterion = "0.8"
 dirs = "7"
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "links", "wgpu", "wayland"] }
-egui = "0.36"
-egui-phosphor = "0.14.0"
-egui-wgpu = "0.36"
-egui_extras = { version = "0.36", features = ["datepicker"] }
-egui_kittest = { version = "0.36", features = ["eframe", "wgpu", "snapshot"] }
-egui_plot = "0.37.0"
-egui_tiles = "0.17"
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "links", "wgpu", "wayland"] }
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
+# The published 0.14 release requires egui 0.36. Upstream PR #49 updates it to 0.37.
+egui-phosphor = { git = "https://github.com/xangelix/egui-phosphor", rev = "01e8c1144cac3f551ceb834b6d26ddf36ba502cd" }
+egui-wgpu = "0.37"
+egui_extras = { version = "0.37", features = ["datepicker"] }
+egui_kittest = { version = "0.37", features = ["eframe", "wgpu", "snapshot"] }
+egui_plot = "0.38.0"
+egui_tiles = "0.18"
 env_logger = "0.11.11"
 # The advisory lock GeoTrace holds on its data directory while it runs. The OS
 # drops the lock when the process ends, however it ends.
@@ -162,7 +163,7 @@ trybuild = "1"
 uom = "0.38.0"
 uuid = { version = "1", features = ["v4"] }
 vec1 = "1"
-walkers = "0.60.0"
+walkers = "0.65.0"
 # XXH3, for the content hash a log attachment is stored under. The algorithm
 # is frozen upstream: every build reads back the same hash.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
@@ -311,7 +312,7 @@ chrono.workspace = true
 dirs.workspace = true
 eframe.workspace = true
 egui.workspace = true
-egui-notify = "0.23"
+egui-notify = "0.24"
 egui-phosphor.workspace = true
 egui_extras.workspace = true
 egui_tiles.workspace = true
