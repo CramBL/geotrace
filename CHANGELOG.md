@@ -11,7 +11,7 @@
 - **Recordings:** GTD version 3 recordings load with navigation state, coordinate origin and independent satellite reports available for inspection.
 - **Recordings:** Navigation status and interval statistics include epochs without recorded coordinates.
 - **Plots:** Dilution of precision metrics are available for recordings with DOP samples.
-- **Plots:** System/boot clock delta is available as a plot metric and as `system_boot_delta` in queries.
+- **Recordings:** Boot readings are available in fix details, with system/boot clock delta in plots and `system_boot_delta` queries.
 - **Log Viewer:** Date policies can be edited and reset with source links, export range status and save status.
 
 ### Changed

@@ -12,7 +12,7 @@ use gt_types::satellites::{
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{
-    MercPoint, NavPoint, NavigationMetadata, NearbySkyEvidence, PositionProvenance,
+    BootTime, MercPoint, NavPoint, NavigationMetadata, NearbySkyEvidence, PositionProvenance,
     RecordedLongitude, ResolvedPosition, SatelliteCoverage, SatelliteIdentity, SatelliteMembership,
     SatelliteReportMetadata, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
     SolutionDimension, SolutionMethod,
@@ -50,6 +50,69 @@ fn point_at(secs: i64, satellites: Option<Satellites>) -> NavPoint {
             Some(Angle::new::<degree>(90.0)),
             gt_types::fixtures::FixKind::GhostWithoutHeading,
         ),
+    }
+}
+
+#[rstest]
+#[case::absent(None, None)]
+#[case::zero(Some(0), Some("0us"))]
+#[case::maximum(Some(u64::MAX - 1), Some("18446744073709551614us"))]
+fn receiver_only_boot_readings_are_exact_in_point_details(
+    #[case] boot_micros: Option<u64>,
+    #[case] expected_value: Option<&str>,
+) {
+    for pinned in [false, true] {
+        let point = NavPoint::new(
+            TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(fixture_epoch()))
+                .lat(Latitude::new(FIXTURE_LAT))
+                .lon(Longitude::new(FIXTURE_LON))
+                .maybe_boot_time(boot_micros.map(|value| BootTime::from_micros(value).unwrap()))
+                .build(),
+            None,
+        );
+        let track = gt_test_utils::loaded_track_with_points(vec![point]);
+        let mut folds = PointWindowFolds::default();
+        let mut harness = test_util::harness_builder()
+            .size(egui::vec2(500.0, 400.0))
+            .ui(move |ui| {
+                let Some(point) = placed_point(&track, 0) else {
+                    panic!("the fixture has a recorded position");
+                };
+                if pinned {
+                    let _opened = pinned_point::show_sticky_tpv_content(
+                        ui,
+                        point.fix,
+                        &SkySection::TrackWithoutReports,
+                        &mut folds,
+                        None,
+                        FixPlacement::Placed(point.resolved()),
+                    );
+                } else {
+                    point_metrics::show_hover_table(
+                        ui,
+                        point,
+                        &SkySection::TrackWithoutReports,
+                        None,
+                    );
+                }
+            });
+        harness.run();
+        assert_eq!(
+            harness.inner.query_by_label("Boot time").is_some(),
+            expected_value.is_some(),
+        );
+        if let Some(expected) = expected_value {
+            assert!(harness.inner.query_by_label(expected).is_some());
+            harness.inner.get_by_label("Boot time").hover();
+            harness.inner.run_steps(3);
+            assert!(
+                harness
+                    .inner
+                    .query_by_label("Elapsed microseconds since the producer's boot-clock origin. The producer selects the clock and suspend behavior.")
+                    .is_some()
+            );
+        }
     }
 }
 
