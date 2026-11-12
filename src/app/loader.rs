@@ -18,7 +18,9 @@ use gt_track_builder::{
 use gt_types::{LoadedFile, TrackAggregates};
 
 use super::association_batches::{LogArrival, RecordingOperationOrigin};
-use super::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
+use super::load_failures::{
+    LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource, RecordingFileRead,
+};
 use crate::app::background_thread;
 
 /// State for a single in-flight background load job, shown in the progress UI.
@@ -140,13 +142,13 @@ pub(super) struct CompletedLoad {
 
 /// Where the app puts a recording a load finished: in an entry of its own, or
 /// over the entry the view already holds for that recording.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LoadedRecordingPlacement {
     AddAnEntry,
     ReplaceTheLoadedEntry,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GtdLoadMode {
     DebugTimeRepair { backward_jump_threshold: Duration },
     Regular,
@@ -194,6 +196,7 @@ impl GtdLoadMode {
 
 /// What a load thread does with the recording the history database holds for
 /// the file it loads, beyond storing that file.
+#[derive(Clone, Debug)]
 pub(super) enum HistoryOpen {
     /// Apply the recording's stored track table to the loaded view: number each
     /// track by the stored row from which it was reproduced, and leave the
@@ -341,6 +344,18 @@ impl LoadJobs {
         open: Option<HistoryOpen>,
         origin: RecordingOperationOrigin,
     ) {
+        let request = RecordingFileRead {
+            path,
+            config,
+            mode,
+            open,
+        };
+        let RecordingFileRead {
+            path,
+            config,
+            mode,
+            open,
+        } = request.clone();
         let id = self.alloc_id();
         let started_at = self.frame_time();
         let filename = path
@@ -426,6 +441,7 @@ impl LoadJobs {
                         LoadSource::Filename(log_name),
                         LoadFailureCause::LoadRecording(Box::new(e)),
                     )
+                    .with_original_read(Some(LoadReadRequest::ReadRecordingFile(Box::new(request))))
                 });
             tx.send(LoadMessage::Completed {
                 id,
@@ -451,6 +467,12 @@ impl LoadJobs {
         open: Option<HistoryOpen>,
         origin: RecordingOperationOrigin,
     ) {
+        let request = open
+            .as_ref()
+            .map(|open| LoadReadRequest::OpenStoredRecording {
+                recording: open.db_ref().clone(),
+                placement: open.placement(),
+            });
         let id = self.alloc_id();
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
@@ -520,6 +542,7 @@ impl LoadJobs {
                         LoadSource::Filename(log_name),
                         LoadFailureCause::LoadRecording(Box::new(e)),
                     )
+                    .with_original_read(request)
                 });
             tx.send(LoadMessage::Completed {
                 id,
@@ -563,7 +586,8 @@ impl LoadJobs {
                             result: Err(LoadFailure::new(
                                 LoadSource::Filename(filename),
                                 LoadFailureCause::ReadLogFile(e),
-                            )),
+                            )
+                            .with_original_read(Some(LoadReadRequest::ReadLogFile(path)))),
                         },
                     })
                     .ok();
@@ -578,7 +602,10 @@ impl LoadJobs {
                 Utc::now(),
                 YearResolution::Infer,
                 report,
-            );
+            )
+            .map_err(|failure| {
+                failure.with_original_read(Some(LoadReadRequest::ReadLogFile(path)))
+            });
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::LooseLog { arrival, result },
@@ -641,7 +668,11 @@ impl LoadJobs {
         log::info!("Loading the log {name:?} stored with a recording in history");
         background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
             let report = progress_reporter(id, tx.clone(), ctx.clone());
-            let source = LoadSource::Filename(name);
+            let request = LoadReadRequest::ReadAttachment(restored.attachment.clone());
+            let source = LoadSource::Attachment {
+                attachment: restored.attachment.clone(),
+                name,
+            };
             let result = parse_loaded_log(
                 source,
                 text,
@@ -649,6 +680,7 @@ impl LoadJobs {
                 gt_log_view::year_resolution_of_stored(restored.settings.year_resolution),
                 report,
             )
+            .map_err(|failure| failure.with_original_read(Some(request)))
             .map(|LooseLogResult { filename, parsed }| SavedLogResult {
                 filename,
                 parsed,
@@ -816,8 +848,12 @@ fn parse_loaded_log(
     report: impl Fn(f32, &'static str),
 ) -> Result<LooseLogResult, LoadFailure> {
     report(0.55, STAGE_PARSING);
+    let original_text = text.clone();
     let parsed = gt_logfile::parse_log_with_year_resolution(text, year_reference, year_resolution)
-        .map_err(|err| LoadFailure::new(source.clone(), LoadFailureCause::ParseLog(err)))?;
+        .map_err(|err| {
+            LoadFailure::new(source.clone(), LoadFailureCause::ParseLog(err))
+                .with_decoded_text(original_text)
+        })?;
     let unindexable_line_count = parsed.unindexable_line_count();
     if unindexable_line_count > 0 {
         let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
@@ -1303,16 +1339,21 @@ const PLOTTING_FRACTION: f32 = 0.95;
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::LazyLock;
     use std::time::{Duration, Instant};
 
-    use chrono::DateTime;
+    use chrono::{DateTime, Duration as ChronoDuration};
     use gt_logfile::LogParseError;
-    use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings, StoredYearResolution};
+    use gt_store::{
+        DatabaseRef, HistoryDatabase, LogAttachmentId, ReadOnlyHistoryDatabase, Recordings,
+        StoredYearResolution,
+    };
     use gt_test_utils::SyntheticGtdSpec;
     use rstest::rstest;
 
     use super::*;
     use crate::app::association_batches::AssociationBatches;
+    use crate::app::load_failures::LoadRecovery;
 
     #[test]
     fn stored_segmentation_records_persisted_fields() {
@@ -1693,10 +1734,12 @@ mod tests {
         AttachedLog,
         GtdBytes,
         GtdPath,
+        LogBytesWithAName,
         LogBytesWithoutAName,
         LogPathWithoutATimestamp,
         MissingLogPath,
         PastedText,
+        StoredGtdBytes,
     }
 
     impl FailingLoad {
@@ -1715,13 +1758,7 @@ mod tests {
                         },
                         parse_year_reference: Utc::now(),
                     },
-                    LogAttachmentRef {
-                        recording: gt_store::DatabaseRef {
-                            identity: "device".to_owned(),
-                            group_name: "recording".to_owned(),
-                        },
-                        id: gt_store::LogAttachmentId::new_random(),
-                    },
+                    FAILING_ATTACHMENT.clone(),
                     AttachedLogRequester::RecordingLoad,
                 ),
                 Self::GtdBytes => jobs.spawn_gtd_bytes(
@@ -1738,11 +1775,33 @@ mod tests {
                     jobs.spawn_gtd_path(
                         path,
                         SegmentationConfig::default(),
-                        GtdLoadMode::Regular,
+                        GtdLoadMode::DebugTimeRepair {
+                            backward_jump_threshold: ChronoDuration::seconds(5),
+                        },
                         None,
                         RecordingOperationOrigin::Independent,
                     );
                 }
+                Self::LogBytesWithAName => {
+                    jobs.spawn_log_bytes(
+                        Arc::from(junk.as_bytes()),
+                        Some("broken.log".to_owned()),
+                        arrival,
+                    );
+                }
+                Self::StoredGtdBytes => jobs.spawn_gtd_bytes(
+                    Arc::from(junk.as_bytes()),
+                    "broken.gtd".to_owned(),
+                    SegmentationConfig::default(),
+                    GtdLoadMode::Regular,
+                    Some(HistoryOpen::ApplyShelved {
+                        db_ref: FAILING_ATTACHMENT.recording.clone(),
+                        stored_tracks: Vec::new(),
+                        applied_current_marker_settings: false,
+                        placement: LoadedRecordingPlacement::ReplaceTheLoadedEntry,
+                    }),
+                    RecordingOperationOrigin::Independent,
+                ),
                 Self::LogBytesWithoutAName => {
                     jobs.spawn_log_bytes(Arc::from(junk.as_bytes()), None, arrival);
                 }
@@ -1758,8 +1817,14 @@ mod tests {
 
         fn source(self) -> LoadSource {
             match self {
-                Self::GtdBytes | Self::GtdPath => LoadSource::Filename("broken.gtd".to_owned()),
-                Self::AttachedLog | Self::LogPathWithoutATimestamp | Self::MissingLogPath => {
+                Self::GtdBytes | Self::GtdPath | Self::StoredGtdBytes => {
+                    LoadSource::Filename("broken.gtd".to_owned())
+                }
+                Self::AttachedLog => LoadSource::Attachment {
+                    attachment: FAILING_ATTACHMENT.clone(),
+                    name: "broken.log".to_owned(),
+                },
+                Self::LogBytesWithAName | Self::LogPathWithoutATimestamp | Self::MissingLogPath => {
                     LoadSource::Filename("broken.log".to_owned())
                 }
                 Self::LogBytesWithoutAName => LoadSource::UnnamedDrop,
@@ -1769,15 +1834,17 @@ mod tests {
     }
 
     #[rstest]
-    fn a_failed_load_has_the_source_it_read(
+    fn failed_loads_retain_original_sources_and_recovery_capabilities(
         #[values(
             FailingLoad::AttachedLog,
             FailingLoad::GtdBytes,
             FailingLoad::GtdPath,
+            FailingLoad::LogBytesWithAName,
             FailingLoad::LogBytesWithoutAName,
             FailingLoad::LogPathWithoutATimestamp,
             FailingLoad::MissingLogPath,
-            FailingLoad::PastedText
+            FailingLoad::PastedText,
+            FailingLoad::StoredGtdBytes
         )]
         load: FailingLoad,
     ) {
@@ -1788,10 +1855,65 @@ mod tests {
         load.spawn(&mut jobs, dir.path(), batch.log());
 
         let completed = drain_until_complete(&mut jobs);
-        assert_eq!(
-            completed.completion.failure().map(|failure| failure.source),
-            Some(load.source())
-        );
+        let failure = completed.completion.failure().expect("the input fails");
+        assert_eq!(failure.source, load.source());
+        match (failure.original_read(), load) {
+            (Some(LoadReadRequest::ReadAttachment(attachment)), FailingLoad::AttachedLog) => {
+                assert_eq!(attachment, &*FAILING_ATTACHMENT)
+            }
+            (
+                Some(LoadReadRequest::ReadLogFile(path)),
+                FailingLoad::LogPathWithoutATimestamp | FailingLoad::MissingLogPath,
+            ) => assert_eq!(path, &dir.path().join("broken.log")),
+            (Some(LoadReadRequest::ReadRecordingFile(request)), FailingLoad::GtdPath) => {
+                assert_eq!(request.path, dir.path().join("broken.gtd"));
+                assert_eq!(request.config, SegmentationConfig::default());
+                assert_eq!(
+                    request.mode,
+                    GtdLoadMode::DebugTimeRepair {
+                        backward_jump_threshold: ChronoDuration::seconds(5)
+                    }
+                );
+                assert!(request.open.is_none());
+            }
+            (
+                Some(LoadReadRequest::OpenStoredRecording {
+                    recording,
+                    placement,
+                }),
+                FailingLoad::StoredGtdBytes,
+            ) => {
+                assert_eq!(recording, &FAILING_ATTACHMENT.recording);
+                assert_eq!(*placement, LoadedRecordingPlacement::ReplaceTheLoadedEntry);
+            }
+            (
+                None,
+                FailingLoad::GtdBytes
+                | FailingLoad::LogBytesWithAName
+                | FailingLoad::LogBytesWithoutAName
+                | FailingLoad::PastedText,
+            ) => {}
+            _ => panic!("the request matches the original input"),
+        }
+        match (failure.recovery(), load) {
+            (
+                LoadRecovery::Retry(LoadReadRequest::ReadLogFile(path)),
+                FailingLoad::MissingLogPath,
+            ) => assert_eq!(path, &dir.path().join("broken.log")),
+            (
+                LoadRecovery::EnterText(text),
+                FailingLoad::AttachedLog
+                | FailingLoad::LogBytesWithAName
+                | FailingLoad::LogBytesWithoutAName
+                | FailingLoad::LogPathWithoutATimestamp
+                | FailingLoad::PastedText,
+            ) => assert_eq!(text, "no recording and no timestamp"),
+            (
+                LoadRecovery::ChooseFile,
+                FailingLoad::GtdBytes | FailingLoad::GtdPath | FailingLoad::StoredGtdBytes,
+            ) => {}
+            _ => panic!("the recovery matches the cause and input"),
+        }
     }
 
     /// Regression: opening a `.gtd` file with storage enabled must insert it into
@@ -2177,4 +2299,12 @@ mod tests {
             "every track should now be shelved"
         );
     }
+
+    static FAILING_ATTACHMENT: LazyLock<LogAttachmentRef> = LazyLock::new(|| LogAttachmentRef {
+        recording: DatabaseRef {
+            identity: "device".to_owned(),
+            group_name: "recording".to_owned(),
+        },
+        id: LogAttachmentId::new_random(),
+    });
 }

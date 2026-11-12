@@ -19,7 +19,7 @@ use crate::settings::InitialPositionSourcePolicy;
 
 use super::App;
 use super::history_db::{ExistingLogAttachment, RestoredLogAttachment};
-use super::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
+use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
 use super::loader;
 use super::log_viewer::association_dialog::{
     LogAssociationChoice, LogAssociationDialog, LogAssociationRequest,
@@ -327,13 +327,17 @@ impl App {
                 .loader
                 .spawn_attached_log(attached, attachment, requested_by),
             Err(error @ LogAttachmentError::Database(DbError::UnreadableLogAttachment { .. })) => {
-                self.load_failures.push(LoadFailure::new(
-                    LoadSource::Attachment {
-                        attachment,
-                        name: name.to_owned(),
-                    },
-                    LoadFailureCause::ReadLogAttachment(Box::new(error)),
-                ));
+                let request = LoadReadRequest::ReadAttachment(attachment.clone());
+                self.load_failures.push(
+                    LoadFailure::new(
+                        LoadSource::Attachment {
+                            attachment,
+                            name: name.to_owned(),
+                        },
+                        LoadFailureCause::ReadLogAttachment(Box::new(error)),
+                    )
+                    .with_original_read(Some(request)),
+                );
             }
             Err(LogAttachmentError::MissingLog { .. }) => self.log_viewer.report_warning(format!(
                 "{name} {EM_DASH} log missing from recording history"
