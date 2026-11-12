@@ -2,13 +2,16 @@ use std::mem;
 use std::slice;
 
 use geotrace_sdk::{
-    NavFixTime, SatelliteCoverage, SatelliteObservationReport, SatelliteScope, SatelliteUsageReport,
+    NavFix, NavFixTime, SatelliteCoverage, SatelliteObservationReport, SatelliteScope,
+    SatelliteUsageReport,
 };
 
 use super::GtdFileBuilder;
 use crate::error::{self, GtdStatus};
 use crate::navigation::TimestampArguments;
-use crate::{GtdNavFixV2, GtdSatelliteObservation, GtdSatelliteReportInput, GtdSatelliteUsage};
+use crate::{
+    GtdNavFixV2, GtdNavFixV3, GtdSatelliteObservation, GtdSatelliteReportInput, GtdSatelliteUsage,
+};
 
 /// Copy a navigation fix after checking every timestamp and metadata tag.
 /// The input remains caller-owned. Errors leave the builder unchanged.
@@ -20,13 +23,21 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix_v2(
     error::run_catching_panics(|| {
         let builder = nonnull_mut!(builder);
         let fix = nonnull_ref!(fix);
-        match fix.to_sdk() {
-            Ok(fix) => {
-                builder.recorder_mut().add_nav_fix(fix);
-                GtdStatus::GTD_OK
-            }
-            Err(status) => status,
-        }
+        builder.ingest_parsed_nav_fix(fix.to_sdk())
+    })
+}
+
+/// Copy a navigation fix after checking every timestamp and metadata tag.
+/// The input remains caller-owned. Errors leave the builder unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_add_nav_fix_v3(
+    builder: *mut GtdFileBuilder,
+    fix: *const GtdNavFixV3,
+) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let builder = nonnull_mut!(builder);
+        let fix = nonnull_ref!(fix);
+        builder.ingest_parsed_nav_fix(fix.to_sdk())
     })
 }
 
@@ -94,6 +105,18 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_observation_report(
             Err(status) => status,
         }
     })
+}
+
+impl GtdFileBuilder {
+    fn ingest_parsed_nav_fix(&mut self, fix: Result<NavFix, GtdStatus>) -> GtdStatus {
+        match fix {
+            Ok(fix) => {
+                self.recorder_mut().add_nav_fix(fix);
+                GtdStatus::GTD_OK
+            }
+            Err(status) => status,
+        }
+    }
 }
 
 struct ParsedSatelliteReport<Row> {

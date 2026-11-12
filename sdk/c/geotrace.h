@@ -35,6 +35,12 @@
 /** An optional unsigned count with value @p v. */
 #define GTD_SOME_U32(v) ((GtdOptU32){.value = (v), .present = 1})
 
+/** An absent optional unsigned 64-bit value. */
+#define GTD_NONE_U64 ((GtdOptU64){.value = 0, .present = 0})
+
+/** An optional unsigned 64-bit value with value @p v. */
+#define GTD_SOME_U64(v) ((GtdOptU64){.value = (v), .present = 1})
+
 /** An absent optional double. */
 #define GTD_NONE_F64 ((GtdOptF64){.value = 0.0, .present = 0})
 
@@ -658,6 +664,35 @@ typedef struct {
 } GtdNavFixV2;
 
 /**
+ * `present == 0` means absent. Units depend on the field containing this value.
+ */
+typedef struct {
+    /**
+     * Unsigned integer when present, including zero.
+     */
+    uint64_t value;
+    /**
+     * Zero for absent, nonzero for present.
+     */
+    uint8_t present;
+} GtdOptU64;
+
+/**
+ * The navigation facts use the unchanged v2 layout.
+ */
+typedef struct {
+    /**
+     * Navigation facts in the unchanged v2 layout.
+     */
+    GtdNavFixV2 fix;
+    /**
+     * Microseconds from the producer's boot-clock origin. Zero is valid.
+     * A present `u64::MAX` is invalid. Clock selection is determined by the producer.
+     */
+    GtdOptU64 boot_time_us;
+} GtdNavFixV3;
+
+/**
  * Global requires a zero mask. Explicit scope requires a nonzero mask.
  * Bit `1 << GtdConstellation` selects that constellation. Unsupported bits are invalid.
  */
@@ -984,6 +1019,24 @@ typedef struct {
      */
     size_t observation_report_count;
 } GtdNavPointInfoV2;
+
+/**
+ * Caller-owned navigation facts and canonical report counts.
+ */
+typedef struct {
+    /**
+     * Recorded navigation facts and coordinate origin.
+     */
+    GtdNavFixV3 fix;
+    /**
+     * Number of canonical usage samples associated with this point.
+     */
+    size_t usage_report_count;
+    /**
+     * Number of canonical observation samples associated with this point.
+     */
+    size_t observation_report_count;
+} GtdNavPointInfoV3;
 
 /**
  * All fields are caller-owned.
@@ -1430,6 +1483,12 @@ GtdStatus gtd_builder_set_satellite_window_us(GtdFileBuilder *builder, uint64_t 
 GtdStatus gtd_builder_add_nav_fix_v2(GtdFileBuilder *builder, const GtdNavFixV2 *fix);
 
 /**
+ * Copy a navigation fix after checking every timestamp and metadata tag.
+ * The input remains caller-owned. Errors leave the builder unchanged.
+ */
+GtdStatus gtd_builder_add_nav_fix_v3(GtdFileBuilder *builder, const GtdNavFixV3 *fix);
+
+/**
  * Copy all source rows in order after checking the complete report.
  * A null @p rows pointer is valid when @p row_count is zero.
  * Errors leave the builder unchanged. Input buffers may be released after this call.
@@ -1868,6 +1927,14 @@ GtdStatus gtd_nav_file_get_nav_point_v2(const GtdNavFile *file,
                                         GtdNavPointInfoV2 *out);
 
 /**
+ * Fill caller-owned @p out on success. Errors leave @p out unchanged.
+ * Canonical counts include every independent sample even without a legacy projection.
+ */
+GtdStatus gtd_nav_file_get_nav_point_v3(const GtdNavFile *file,
+                                        size_t index,
+                                        GtdNavPointInfoV3 *out);
+
+/**
  * Return one canonical usage sample's metadata in caller-owned @p out.
  * Errors leave @p out unchanged and identify the invalid navigation or report index.
  */
@@ -2039,6 +2106,18 @@ GtdNavFixV2 gtd_nav_fix_v2_init(void);
  * Set at least one timestamp before ingestion, which validates the raw state tag.
  */
 GtdNavFixV2 gtd_nav_fix_v2_status_only_init(uint32_t state);
+
+/**
+ * Initialize absent boot time and navigation metadata with source-provided coordinates.
+ * Set at least one timestamp and the coordinates before ingestion.
+ */
+GtdNavFixV3 gtd_nav_fix_v3_init(void);
+
+/**
+ * Initialize an explicit status with absent coordinates, coordinate origin and boot time.
+ * Set at least one timestamp before ingestion.
+ */
+GtdNavFixV3 gtd_nav_fix_v3_status_only_init(uint32_t state);
 
 /**
  * Whether @p snr_dbhz is the SNR some receiver firmware sends when it has no measurement:
