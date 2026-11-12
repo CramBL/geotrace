@@ -36,6 +36,8 @@ pub use log_save::{
     LogSaveCompletion, LogSaveReceipt, LogSaveRequest, PositionSourceSelection,
 };
 
+pub use source_search::{SourceOccurrence, SourceSearch, SourceSearchScope, SourceSearchStatus};
+
 mod anchor;
 mod association;
 mod attachment;
@@ -43,4 +45,5 @@ mod attachment_settings;
 mod filter;
 mod loaded_log;
 mod log_save;
+mod source_search;
 mod test_util;
