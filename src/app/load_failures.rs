@@ -1,17 +1,18 @@
-use std::fmt;
-use std::io;
+use std::path::Path;
+use std::{fmt, io, mem};
 
-use egui::{Button, Label, Window};
+use egui::{Button, Label, TextEdit, Window};
 use egui_phosphor::regular::COPY as ICON_COPY;
 use gt_loader::{LoadError, SdkError};
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogParseError, LogText};
 use gt_store::{DatabaseRef, DbError, LogAttachmentError, LogAttachmentReadError};
+use strum::Display;
 
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 
 pub(super) use recovery::{LoadFailureKind, LoadReadRequest, LoadRecovery, RecordingFileRead};
-pub(super) use retry::{LoadFailureId, LoadRetry, LoadRetryAttempt};
+pub(super) use retry::{LoadFailureId, LoadProblemRequest, LoadRetry, LoadRetryAttempt};
 
 mod recovery;
 mod retry;
@@ -118,6 +119,19 @@ impl LoadFailure {
             (None, None) => details,
         }
     }
+
+    fn copy_recovery_details(&self, original: &LoadSource, recovered: Option<&str>) -> String {
+        let details = self.copy_text();
+        let details = match recovered {
+            Some(loaded) => format!("Recovered source: {loaded}\n{details}"),
+            None => details,
+        };
+        if original == &self.source {
+            details
+        } else {
+            format!("Original source: {original}\n{details}")
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -200,8 +214,9 @@ impl LoadFailures {
         self.next_failure_id += 1;
         self.retained.push(RetainedLoadFailure {
             failure_id,
+            source: failure.source.clone(),
             failure,
-            pending: None,
+            state: LoadRecoveryState::ReportFailure,
         });
         failure_id
     }
@@ -211,7 +226,7 @@ impl LoadFailures {
             .retained
             .iter_mut()
             .find(|row| row.failure_id == failure)?;
-        if retained.pending.is_some() {
+        if !matches!(retained.state, LoadRecoveryState::ReportFailure) {
             return None;
         }
         let LoadRecovery::Retry(request) = retained.failure.recovery() else {
@@ -220,7 +235,14 @@ impl LoadFailures {
         let request = request.clone();
         let attempt = LoadRetryAttempt::new(failure, self.next_retry_id);
         self.next_retry_id += 1;
-        retained.pending = Some(attempt);
+        let source = match &request {
+            LoadReadRequest::ReadLogFile(path) => LoadSource::Filename(path.display().to_string()),
+            LoadReadRequest::ReadRecordingFile(request) => {
+                LoadSource::Filename(request.path.display().to_string())
+            }
+            _ => retained.failure.source.clone(),
+        };
+        retained.state = LoadRecoveryState::AwaitRetry { attempt, source };
         Some(LoadRetry {
             attempt,
             request,
@@ -233,21 +255,23 @@ impl LoadFailures {
         attempt: LoadRetryAttempt,
         result: Result<(), LoadFailure>,
     ) -> bool {
-        let Some(index) = self
-            .retained
-            .iter()
-            .position(|row| row.pending == Some(attempt))
-        else {
+        let Some(index) = self.retained.iter().position(
+            |row| matches!(row.state, LoadRecoveryState::AwaitRetry { attempt: pending, .. } if pending == attempt),
+        ) else {
             return false;
         };
         match result {
             Ok(()) => {
-                self.retained.remove(index);
+                if let Some(retained) = self.retained.get_mut(index)
+                    && let LoadRecoveryState::AwaitRetry { source, .. } = &retained.state
+                {
+                    retained.state = LoadRecoveryState::ReportRecovery(source.clone());
+                }
             }
             Err(failure) => {
                 if let Some(retained) = self.retained.get_mut(index) {
                     retained.failure = failure;
-                    retained.pending = None;
+                    retained.state = LoadRecoveryState::ReportFailure;
                 }
             }
         }
@@ -259,28 +283,106 @@ impl LoadFailures {
     }
 
     pub(super) fn cancel_retry(&mut self, attempt: LoadRetryAttempt) {
-        if let Some(retained) = self
+        if let Some(retained) = self.retained.iter_mut().find(
+            |row| matches!(row.state, LoadRecoveryState::AwaitRetry { attempt: owner, .. } if owner == attempt),
+        ) {
+            retained.state = LoadRecoveryState::ReportFailure;
+        }
+    }
+
+    pub(super) fn cancel_input(&mut self, attempt: LoadRetryAttempt) {
+        for retained in &mut self.retained {
+            if matches!(retained.state, LoadRecoveryState::AwaitFile(owner) | LoadRecoveryState::EditText { attempt: owner, .. } if owner == attempt)
+            {
+                retained.state = LoadRecoveryState::ReportFailure;
+                break;
+            }
+        }
+    }
+
+    pub(super) fn begin_input(&mut self, failure: LoadFailureId) -> Option<LoadRetryAttempt> {
+        let retained = self
             .retained
             .iter_mut()
-            .find(|row| row.pending == Some(attempt))
-        {
-            retained.pending = None;
+            .find(|row| row.failure_id == failure)?;
+        if !matches!(retained.state, LoadRecoveryState::ReportFailure) {
+            return None;
         }
+        let attempt = LoadRetryAttempt::new(failure, self.next_retry_id);
+        let state = match retained.failure.recovery() {
+            LoadRecovery::ChooseFile => LoadRecoveryState::AwaitFile(attempt),
+            LoadRecovery::EnterText(text) => LoadRecoveryState::EditText {
+                attempt,
+                text: text.to_owned(),
+                focus: true,
+            },
+            LoadRecovery::Retry(_) => return None,
+        };
+        self.next_retry_id += 1;
+        retained.state = state;
+        Some(attempt)
+    }
+
+    pub(super) fn accept_file_input(&mut self, attempt: LoadRetryAttempt, path: &Path) -> bool {
+        let Some(retained) = self.retained.iter_mut().find(
+            |row| matches!(row.state, LoadRecoveryState::AwaitFile(owner) if owner == attempt),
+        ) else {
+            return false;
+        };
+        retained.state = LoadRecoveryState::AwaitRetry {
+            attempt,
+            source: LoadSource::Filename(path.display().to_string()),
+        };
+        true
+    }
+
+    pub(super) fn submit_text_input(&mut self, attempt: LoadRetryAttempt) -> Option<String> {
+        for retained in &mut self.retained {
+            if let LoadRecoveryState::EditText {
+                attempt: owner,
+                text,
+                ..
+            } = &mut retained.state
+                && *owner == attempt
+            {
+                let text = mem::take(text);
+                retained.state = LoadRecoveryState::AwaitRetry {
+                    attempt,
+                    source: LoadSource::PastedText,
+                };
+                return Some(text);
+            }
+        }
+        None
     }
 
     /// Shows one error window per failure, and removes the failures the user
     /// dismissed on this frame.
-    pub(super) fn show_windows(&mut self, ctx: &egui::Context) -> Vec<LoadFailureId> {
+    pub(super) fn show_windows(&mut self, ctx: &egui::Context) -> Vec<LoadProblemRequest> {
         let failure_count = self.retained.len();
         let mut dismissed = Vec::new();
         let mut retries = Vec::new();
         let mut dismiss_all = false;
-        for retained in &self.retained {
+        let mut inputs = Vec::new();
+        for retained in &mut self.retained {
             match retained.show_window(ctx, failure_count) {
                 FailureWindowAction::Dismiss => dismissed.push(retained.failure_id),
                 FailureWindowAction::DismissAll => dismiss_all = true,
                 FailureWindowAction::Keep => {}
-                FailureWindowAction::Retry => retries.push(retained.failure_id),
+                FailureWindowAction::Retry => {
+                    retries.push(LoadProblemRequest::Retry(retained.failure_id))
+                }
+                action @ (FailureWindowAction::ChooseFile | FailureWindowAction::EnterText) => {
+                    inputs.push((retained.failure_id, action))
+                }
+                FailureWindowAction::CancelInput => {
+                    retained.state = LoadRecoveryState::ReportFailure;
+                }
+                FailureWindowAction::SubmitText => {
+                    if let Some(attempt) = retained.state.attempt() {
+                        retries.push(LoadProblemRequest::LoadText(attempt));
+                    }
+                }
             }
         }
         if dismiss_all {
@@ -290,16 +392,34 @@ impl LoadFailures {
                 self.dismiss(failure);
             }
         }
+        for (failure, action) in inputs {
+            if let Some(attempt) = self.begin_input(failure)
+                && action == FailureWindowAction::ChooseFile
+            {
+                retries.push(LoadProblemRequest::ChooseFile(attempt));
+            }
+        }
         retries
     }
 
+    pub(super) fn file_input_is_pending(&self, attempt: LoadRetryAttempt) -> bool {
+        self.retained
+            .iter()
+            .any(|row| matches!(row.state, LoadRecoveryState::AwaitFile(owner) if owner == attempt))
+    }
+
     pub(super) fn retry_is_pending(&self, attempt: LoadRetryAttempt) -> bool {
-        self.retained.iter().any(|row| row.pending == Some(attempt))
+        self.retained.iter().any(
+            |row| matches!(row.state, LoadRecoveryState::AwaitRetry { attempt: pending, .. } if pending == attempt),
+        )
     }
 
     #[cfg(test)]
     pub(super) fn iter(&self) -> impl Iterator<Item = &LoadFailure> {
-        self.retained.iter().map(|retained| &retained.failure)
+        self.retained
+            .iter()
+            .filter(|row| !matches!(row.state, LoadRecoveryState::ReportRecovery(_)))
+            .map(|retained| &retained.failure)
     }
 }
 
@@ -307,39 +427,151 @@ struct RetainedLoadFailure {
     /// The window id of the failure: egui derives a window id from the title
     /// otherwise, and two failures of one source have the same title.
     failure_id: LoadFailureId,
+    source: LoadSource,
     failure: LoadFailure,
-    pending: Option<LoadRetryAttempt>,
+    state: LoadRecoveryState,
+}
+
+enum LoadRecoveryState {
+    AwaitFile(LoadRetryAttempt),
+    AwaitRetry {
+        attempt: LoadRetryAttempt,
+        source: LoadSource,
+    },
+    EditText {
+        attempt: LoadRetryAttempt,
+        text: String,
+        focus: bool,
+    },
+    ReportFailure,
+    ReportRecovery(LoadSource),
+}
+
+impl LoadRecoveryState {
+    fn body_ui(&mut self, ui: &mut egui::Ui, failure: &LoadFailure, original: &LoadSource) {
+        match self {
+            Self::EditText {
+                attempt,
+                text,
+                focus,
+            } => {
+                let label = ui.label("Log text");
+                let response = ui
+                    .add(
+                        TextEdit::multiline(text)
+                            .id(egui::Id::new(TEXT_INPUT_ID_SALT).with(*attempt))
+                            .desired_rows(TEXT_INPUT_ROWS)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .labelled_by(label.id);
+                if mem::take(focus) {
+                    response.request_focus();
+                }
+            }
+            Self::AwaitFile(_) => {
+                ui.label("Choose a replacement file");
+            }
+            Self::ReportRecovery(source) => {
+                ui.label("Recovered");
+                ui.add(
+                    Label::new(format!("Loaded source {source}"))
+                        .selectable(true)
+                        .wrap(),
+                );
+                if source != original {
+                    ui.add(
+                        Label::new(format!("Original source {original}"))
+                            .selectable(true)
+                            .wrap(),
+                    );
+                }
+            }
+            Self::AwaitRetry { source, .. } => {
+                ui.add(
+                    Label::new(format!("Loading source {source}"))
+                        .selectable(true)
+                        .wrap(),
+                );
+                ui.add(
+                    Label::new(failure.cause.to_string())
+                        .selectable(true)
+                        .wrap(),
+                );
+            }
+            Self::ReportFailure => {
+                ui.add(
+                    Label::new(failure.cause.to_string())
+                        .selectable(true)
+                        .wrap(),
+                );
+            }
+        }
+    }
+
+    fn attempt(&self) -> Option<LoadRetryAttempt> {
+        match self {
+            Self::AwaitFile(attempt)
+            | Self::AwaitRetry { attempt, .. }
+            | Self::EditText { attempt, .. } => Some(*attempt),
+            Self::ReportFailure | Self::ReportRecovery(_) => None,
+        }
+    }
 }
 
 impl RetainedLoadFailure {
-    fn show_window(&self, ctx: &egui::Context, failure_count: usize) -> FailureWindowAction {
-        let failure = &self.failure;
+    fn show_window(&mut self, ctx: &egui::Context, failure_count: usize) -> FailureWindowAction {
         let mut action = FailureWindowAction::Keep;
-        Window::new(failure.title())
-            .id(self.window_id())
+        let recovery = self.recovery_control();
+        let window_id = self.window_id();
+        let title = match &self.state {
+            LoadRecoveryState::ReportRecovery(source) => format!("Recovered {source}"),
+            _ => format!("Failed to load {}", self.source),
+        };
+        let recovered = if let LoadRecoveryState::ReportRecovery(source) = &self.state {
+            Some(source.to_string())
+        } else {
+            None
+        };
+        let source = &self.source;
+        let failure = &self.failure;
+        let state = &mut self.state;
+        Window::new(title)
+            .id(window_id)
             .collapsible(false)
             .resizable(true)
             .min_width(LOAD_FAILURE_WINDOW_MIN_WIDTH)
             .show(ctx, |ui| {
                 modals::dialog_body_above_the_action_row(
                     ui,
-                    DialogBody::new(|ui| {
-                        ui.add(
-                            Label::new(failure.cause.to_string())
-                                .selectable(true)
-                                .wrap(),
-                        );
-                    }),
+                    DialogBody::new(|ui| state.body_ui(ui, failure, source)),
                     DialogActionRow::buttons(|ui| {
-                        if matches!(failure.recovery(), LoadRecovery::Retry(_)) {
-                            let retry = ui
-                                .add_enabled(self.pending.is_none(), Button::new("Retry"))
-                                .on_hover_text("Read the original source again")
-                                .on_disabled_hover_text("The original source is being read");
-                            if retry.clicked() {
-                                action = FailureWindowAction::Retry;
+                        if let Some((primary, enabled)) = recovery {
+                            if ui
+                                .add_enabled(enabled, Button::new(primary.to_string()))
+                                .on_hover_text(match primary {
+                                    FailureWindowAction::CancelInput => "Cancel replacement input",
+                                    FailureWindowAction::ChooseFile => "Select a replacement file",
+                                    FailureWindowAction::EnterText => "Edit the retained log text",
+                                    FailureWindowAction::SubmitText => "Load the edited text",
+                                    _ => "Read the original source again",
+                                })
+                                .on_disabled_hover_text(
+                                    if primary == FailureWindowAction::SubmitText {
+                                        "Enter log text to load"
+                                    } else {
+                                        "The source is being loaded"
+                                    },
+                                )
+                                .clicked()
+                            {
+                                action = primary;
                             }
-                            if self.pending.is_some() {
+                            if primary == FailureWindowAction::SubmitText
+                                && ui.button("Cancel").clicked()
+                            {
+                                action = FailureWindowAction::CancelInput;
+                            }
+                            if !enabled && primary == FailureWindowAction::Retry {
                                 ui.spinner();
                                 ui.label("Retrying…");
                             }
@@ -347,11 +579,12 @@ impl RetainedLoadFailure {
                         if ui.button(DISMISS_BUTTON_LABEL).clicked() {
                             action = FailureWindowAction::Dismiss;
                         }
-                        let dismiss_all = ui
+                        if ui
                             .add_enabled(failure_count > 1, Button::new(DISMISS_ALL_BUTTON_LABEL))
-                            .on_hover_text(format!("Dismiss all {failure_count} load failures"))
-                            .on_disabled_hover_text("No other load failed");
-                        if dismiss_all.clicked() {
+                            .on_hover_text(format!("Dismiss all {failure_count} load problems"))
+                            .on_disabled_hover_text("No other load failed")
+                            .clicked()
+                        {
                             action = FailureWindowAction::DismissAll;
                         }
                         if ui
@@ -359,7 +592,9 @@ impl RetainedLoadFailure {
                             .on_hover_text("Copy the source and the error text")
                             .clicked()
                         {
-                            ui.ctx().copy_text(failure.copy_text());
+                            ui.ctx().copy_text(
+                                failure.copy_recovery_details(source, recovered.as_deref()),
+                            );
                         }
                     }),
                 );
@@ -370,15 +605,45 @@ impl RetainedLoadFailure {
     fn window_id(&self) -> egui::Id {
         egui::Id::new(LOAD_FAILURE_WINDOW_ID_SALT).with(self.failure_id)
     }
+
+    fn recovery_control(&self) -> Option<(FailureWindowAction, bool)> {
+        match &self.state {
+            LoadRecoveryState::AwaitFile(_) => Some((FailureWindowAction::CancelInput, true)),
+            LoadRecoveryState::AwaitRetry { .. } => Some((FailureWindowAction::Retry, false)),
+            LoadRecoveryState::EditText { text, .. } => {
+                Some((FailureWindowAction::SubmitText, !text.trim().is_empty()))
+            }
+            LoadRecoveryState::ReportFailure => Some((
+                match self.failure.recovery() {
+                    LoadRecovery::ChooseFile => FailureWindowAction::ChooseFile,
+                    LoadRecovery::EnterText(_) => FailureWindowAction::EnterText,
+                    LoadRecovery::Retry(_) => FailureWindowAction::Retry,
+                },
+                true,
+            )),
+            LoadRecoveryState::ReportRecovery(_) => None,
+        }
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Display, Eq, PartialEq)]
 enum FailureWindowAction {
+    #[strum(serialize = "Cancel")]
+    CancelInput,
+    #[strum(serialize = "Choose file…")]
+    ChooseFile,
     Dismiss,
     DismissAll,
+    #[strum(serialize = "Enter text…")]
+    EnterText,
     Keep,
     Retry,
+    #[strum(serialize = "Load text")]
+    SubmitText,
 }
+
+const TEXT_INPUT_ID_SALT: &str = "load_recovery_text";
+const TEXT_INPUT_ROWS: usize = 4;
 
 const DISMISS_BUTTON_LABEL: &str = "Dismiss";
 

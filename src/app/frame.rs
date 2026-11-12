@@ -119,8 +119,8 @@ impl eframe::App for App {
         self.show_loading_progress_overlay(ui);
         show_drop_hint_overlay(ui.ctx());
         self.show_debug_build_and_read_only_markers(ui);
-        for failure in self.load_failures.show_windows(ui.ctx()) {
-            self.retry_load_failure(failure);
+        for request in self.load_failures.show_windows(ui.ctx()) {
+            self.apply_load_problem_request(request);
         }
         self.apply_pending_unload_and_removal(ui);
 
@@ -202,8 +202,12 @@ impl App {
 
     fn load_files_from_dialog_drops_and_paste(&mut self, ui: &egui::Ui) {
         // Consume a pending file-picker result and dispatch the chosen path.
-        if let Some((path, mode)) = self.loader.drain_file_dialog() {
-            self.load_arriving_files(vec![QueuedLoad::Path { path, mode }]);
+        for dialog in self.loader.drain_file_dialogs() {
+            if let Some(attempt) = dialog.recovery {
+                self.apply_recovery_file_selection(attempt, dialog.selection);
+            } else if let Some((path, mode)) = dialog.selection {
+                self.load_arriving_files(vec![QueuedLoad::Path { path, mode }]);
+            }
         }
 
         // The recordings history already holds raise one prompt between them:
