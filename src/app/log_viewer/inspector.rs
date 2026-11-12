@@ -75,7 +75,9 @@ impl LogViewerWindow {
                 } else {
                     0.0
                 };
-            let controls_height = content_height * controls_share;
+            let pixel_scale = ui.ctx().pixels_per_point();
+            let controls_height =
+                (content_height * controls_share * pixel_scale).floor() / pixel_scale;
             ScrollArea::both()
                 .id_salt(("log_viewer_header", self.selected))
                 .min_scrolled_height(0.0)
@@ -89,6 +91,7 @@ impl LogViewerWindow {
                     if let Some(id) = self.selected {
                         self.filters_ui(ui, logs, id);
                         self.find_bar_ui(ui, logs, id);
+                        self.jump_bar_ui(ui, logs, id);
                     }
                 });
             let Some(id) = self.selected else {
@@ -138,6 +141,8 @@ impl LogViewerWindow {
             .inspector_height
             .unwrap_or(automatic)
             .clamp(0.0, maximum);
+        let pixel_scale = ui.ctx().pixels_per_point();
+        let height = (height * pixel_scale).floor() / pixel_scale;
         let top = ui.cursor().top();
         ScrollArea::both()
             .id_salt(("log_viewer_inspector", id, section))

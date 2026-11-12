@@ -36,6 +36,8 @@ pub use log_save::{
     LogSaveCompletion, LogSaveReceipt, LogSaveRequest, PositionSourceSelection,
 };
 
+pub use source_jump::{InvalidLogJump, LogJumpRequest, LogJumpTarget, UnresolvedLogJump};
+
 pub use source_search::{SourceOccurrence, SourceSearch, SourceSearchScope, SourceSearchStatus};
 
 mod anchor;
@@ -45,5 +47,6 @@ mod attachment_settings;
 mod filter;
 mod loaded_log;
 mod log_save;
+mod source_jump;
 mod source_search;
 mod test_util;
