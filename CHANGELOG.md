@@ -22,7 +22,7 @@
 - **Log Viewer:** The details panel labels exporter-reported service totals and explains that table filters do not change them.
 - **Map & Tracks:** Recorded positions are styled by navigation state, including fixes without headings or satellite reports.
 - **Map & Tracks:** Valid navigation fixes are shown in blue regardless of the used-satellite count.
-- **Interface:** Load problems retain source details and offer retry, file selection and text editing.
+- **Interface:** Load problems appear in one selectable list with source details and contextual recovery actions.
 - **Log Viewer:** Logs whose years cannot be worked out now open with their text and the timestamps as written, and the viewer states why.
 
 ### Fixed

@@ -459,8 +459,9 @@ fn load_failures_stay_after_later_loads_succeed_in_the_same_frame() {
         ]
     );
     assert_eq!(harness.state().logs.len(), 2);
-    harness.get_by_role_and_label(Role::Window, "Failed to load broken.gtd");
-    harness.get_by_role_and_label(Role::Window, "Failed to load broken.log");
+    harness.get_by_role_and_label(Role::Window, "Load problems");
+    harness.get_by_label("broken.gtd");
+    harness.get_by_label("broken.log");
 }
 
 #[rstest]

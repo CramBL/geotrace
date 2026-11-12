@@ -4,6 +4,7 @@ use gt_store::{AttachedLog, LogAttachmentError};
 
 use super::*;
 use crate::app::load_failures::LoadRetryAttempt;
+use crate::app::log_viewer::association_dialog::LogAssociationRequest;
 
 fn file_failure(path: PathBuf) -> LoadFailure {
     LoadFailure::new(
@@ -441,6 +442,68 @@ fn a_recording_retry_settings_prompt_completes_or_cancels_its_attempt(
     } else if !dismiss {
         assert!(harness.state_mut().load_failures.begin_retry(id).is_some());
     }
+}
+
+#[rstest]
+fn load_problems_consume_escape_after_explicit_activation(#[values(false, true)] activate: bool) {
+    let mut harness = harness(false);
+    harness.state_mut().load_parsed_log(
+        Some("reading.log".into()),
+        parsed_log("reading context"),
+        None,
+    );
+    harness.run_steps(3);
+    harness.ctx.memory_mut(|memory| memory.stop_text_input());
+    let selected = harness.state().log_viewer.selected_log().unwrap();
+    let reading_y = harness
+        .get(By::new().role(Role::Label).value("reading context"))
+        .rect()
+        .top();
+    harness
+        .state_mut()
+        .load_failures
+        .push(file_failure("first.log".into()));
+    harness
+        .state_mut()
+        .load_failures
+        .push(file_failure("second.log".into()));
+    harness.run_steps(3);
+    if activate {
+        harness.get_by_label("Details").click();
+        harness.run_steps(2);
+    } else {
+        assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+    }
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().load_failures.iter().count(),
+        if activate { 1 } else { 2 }
+    );
+    assert_eq!(harness.state().log_viewer.open, activate);
+    if !activate {
+        return;
+    }
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(selected));
+    assert_eq!(
+        harness
+            .get(By::new().role(Role::Label).value("reading context"))
+            .rect()
+            .top(),
+        reading_y
+    );
+    harness
+        .state_mut()
+        .log_viewer_requests
+        .open_association_dialog = Some(LogAssociationRequest::SelectSource(selected));
+    harness.state_mut().apply_log_viewer_requests();
+    harness.run_steps(3);
+    assert!(harness.state().association_dialog.is_some());
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(2);
+    assert!(harness.state().association_dialog.is_none());
+    assert_eq!(harness.state().load_failures.iter().count(), 1);
+    assert!(harness.state().log_viewer.open);
 }
 
 const READING_SCROLL_PX: f32 = 40.0;

@@ -105,11 +105,20 @@ fn replacement_file_dialogs_preserve_their_owner_beside_a_normal_open(
             assert!(harness.state_mut().load_failures.begin_input(id).is_none())
         }
         FileSelectionOutcome::Load | FileSelectionOutcome::LoadRecording => {
-            harness.get_by_role_and_label(
-                Role::Window,
-                format!("Recovered {}", replacement.display()).as_str(),
+            harness.get_by_role_and_label(Role::Window, "Load problems");
+            harness.get_by_label("Details").click_accesskit();
+            harness.run_steps(2);
+            assert!(
+                harness
+                    .query(
+                        By::new()
+                            .role(Role::Label)
+                            .predicate(|node| node.value().is_some_and(|value| value.contains(
+                                &format!("Recovered source: {}", replacement.display())
+                            )))
+                    )
+                    .is_some()
             );
-            harness.get_by_label("Original source original-label.log");
             assert!(harness.state_mut().load_failures.begin_input(id).is_none());
             assert_eq!(harness.state().load_failures.iter().count(), 0);
             assert_eq!(
@@ -239,11 +248,10 @@ fn replacement_text_stays_in_its_problem_and_preserves_the_active_reading_contex
                     .map(|failure| &failure.cause)
                     .collect::<Vec<_>>()
             );
-            harness.get_by_role_and_label(Role::Window, "Recovered pasted log text");
-            harness.get_by_label("Original source original-text.log");
+            harness.get_by_role_and_label(Role::Window, "Load problems");
         } else {
             assert_eq!(harness.state().logs.len(), 1);
-            harness.get_by_role_and_label(Role::Window, "Failed to load original-text.log");
+            harness.get_by_role_and_label(Role::Window, "Load problems");
             harness.get_by_label_contains("Copy details").click();
             harness.step();
             let copied = harness.copied_text().unwrap();

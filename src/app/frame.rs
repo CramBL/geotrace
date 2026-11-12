@@ -76,6 +76,7 @@ impl eframe::App for App {
         }
 
         self.apply_finished_background_work(ui);
+        self.load_failures.handle_keyboard(ui.ctx());
         self.wait_for_the_data_directory(ui);
         self.show_interrupted_delete_prompts(ui);
         self.retry_marking_the_data_directory_in_the_background(ui.ctx());
@@ -119,7 +120,7 @@ impl eframe::App for App {
         self.show_loading_progress_overlay(ui);
         show_drop_hint_overlay(ui.ctx());
         self.show_debug_build_and_read_only_markers(ui);
-        for request in self.load_failures.show_windows(ui.ctx()) {
+        for request in self.load_failures.show_window(ui.ctx()) {
             self.apply_load_problem_request(request);
         }
         self.apply_pending_unload_and_removal(ui);
