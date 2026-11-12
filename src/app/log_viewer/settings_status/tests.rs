@@ -2,6 +2,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_log_view::{AttachmentSettingsStatus, LoadedLog, LoadedLogs, LogAttachmentRef};
+use gt_logfile::YearResolution;
 use gt_pending_writes::WriteAccess;
 use gt_store::{DatabaseRef, LogAttachmentId};
 use gt_test_utils::{By, TestHarness};
@@ -60,9 +61,10 @@ impl StatusHarness {
                 );
             }
             if matches!(name, "failed.log" | "saving.log" | "unsaved.log") {
-                let stack = logs.filter_stack_mut_by_id(id).unwrap().0;
-                stack.set_live_filter_text("clock");
-                stack.add_live_filter_as_chip().unwrap();
+                assert!(logs.get_mut_by_id(id).unwrap().resolve_years_as(
+                    YearResolution::PlaceLastEntryInYear(2026),
+                    &recordings.view()
+                ));
             }
             if matches!(name, "failed.log" | "saving.log") {
                 let write = logs

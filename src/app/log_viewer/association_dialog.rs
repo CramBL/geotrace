@@ -22,12 +22,13 @@ use super::NO_OVERLAP_HOVER;
 pub(in crate::app) enum LogAssociationRequest {
     Save(LoadedLogId),
     SelectSource(LoadedLogId),
+    SelectSourceAfterDates(LoadedLogId),
 }
 
 impl LogAssociationRequest {
     pub(in crate::app) fn log(self) -> LoadedLogId {
         match self {
-            Self::Save(log) | Self::SelectSource(log) => log,
+            Self::Save(log) | Self::SelectSource(log) | Self::SelectSourceAfterDates(log) => log,
         }
     }
 }
@@ -56,6 +57,9 @@ impl LogAssociationDialog {
             log: request.log(),
             purpose: match request {
                 LogAssociationRequest::Save(_) => DialogPurpose::Save,
+                LogAssociationRequest::SelectSourceAfterDates(_) => {
+                    DialogPurpose::SelectSourceAfterDates
+                }
                 LogAssociationRequest::SelectSource(_) => DialogPurpose::SelectSource {
                     initial_candidates: None,
                 },
@@ -127,11 +131,13 @@ impl LogAssociationDialog {
                 initial_candidates: Some(scope),
             } => candidates.rank_with_recording_order(scope),
             DialogPurpose::Save
+            | DialogPurpose::SelectSourceAfterDates
             | DialogPurpose::SelectSource {
                 initial_candidates: None,
             } => candidates,
         };
         let saving = matches!(self.purpose, DialogPurpose::Save);
+        let after_dates = self.purpose.follows_date_application();
         let capabilities = log.capabilities(write_access);
         if !capabilities.select_position_source {
             self.selected = log.associated_recording();
@@ -175,6 +181,7 @@ impl LogAssociationDialog {
         let dialog = AnchoredDialog::new(kind, title).with_close_button(&mut open);
         let regions = dialog.regions();
         let body = DialogBody::new(|ui| {
+            self.completed_dates_ui(ui, log);
             ui.add(Label::new(log.name()).selectable(true).wrap());
             ui.label(if saving {
                 "Choose a recording in history"
@@ -278,7 +285,15 @@ impl LogAssociationDialog {
                 node.set_description(confirm_description.as_str())
             });
             confirmed = confirm.on_hover_text(confirm_description).clicked();
-            if ui.button(CANCEL_LABEL).clicked() {
+            if ui
+                .button(if after_dates { "Later" } else { CANCEL_LABEL })
+                .on_hover_text(if after_dates {
+                    "Return to reading with the applied dates"
+                } else {
+                    "Cancel this operation"
+                })
+                .clicked()
+            {
                 choice = Some(LogAssociationChoice::Cancelled);
             }
         });
@@ -398,9 +413,24 @@ impl LogAssociationDialog {
         }
         let available = match self.purpose {
             DialogPurpose::Save => capabilities.save_with_recording,
-            DialogPurpose::SelectSource { .. } => capabilities.select_position_source,
+            DialogPurpose::SelectSource { .. } | DialogPurpose::SelectSourceAfterDates => {
+                capabilities.select_position_source
+            }
         };
         (!available).then_some(OPERATION_UNAVAILABLE_HOVER)
+    }
+
+    fn completed_dates_ui(&self, ui: &mut egui::Ui, log: &LoadedLog) {
+        if self.purpose.follows_date_application() {
+            ui.strong("Dates applied");
+            if let Some(range) = log.parsed().chronology().time_range() {
+                ui.add(
+                    Label::new(gt_fmt::format_time_range(range.start, range.end))
+                        .selectable(true)
+                        .wrap(),
+                );
+            }
+        }
     }
 
     fn duplicate_attachment_of(&self, recording: &DatabaseRef) -> Option<&ExistingLogAttachment> {
@@ -416,6 +446,13 @@ enum DialogPurpose {
     SelectSource {
         initial_candidates: Option<Vec<LoadedFileId>>,
     },
+    SelectSourceAfterDates,
+}
+
+impl DialogPurpose {
+    fn follows_date_application(&self) -> bool {
+        matches!(self, Self::SelectSourceAfterDates)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

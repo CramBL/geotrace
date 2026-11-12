@@ -32,7 +32,7 @@ use line_table::{
 use log_list::{LogGroup, LogNavigationAction, LogTab};
 use restored_logs_badge::RestoredLogsBadge;
 use source_navigation_ui::SourceNavigationFeedback;
-use unresolved_years::LastEntryYearDraft;
+use unresolved_years::ChronologyDraft;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
@@ -70,7 +70,8 @@ struct LogViewerState {
     inspector_height: Option<f32>,
     association_window_unit: AssociationWindowUnit,
     association_window_edit: Option<AssociationWindowEdit>,
-    last_entry_year_draft: Option<LastEntryYearDraft>,
+    chronology_draft: Option<ChronologyDraft>,
+    chronology_apply_failed: bool,
     source_reveal: Option<SourceReveal>,
     filtered_return: Option<FilteredSourceReturn>,
     line_table_cache: Option<LineTableCache>,
@@ -139,7 +140,6 @@ pub(super) struct LogViewerRequests {
     pub retry_save: Option<LoadedLogId>,
 }
 
-/// The year resolution the user applied to a log whose years are unresolved.
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct YearsToResolve {
     pub log: LoadedLogId,
@@ -473,8 +473,8 @@ impl LogViewerWindow {
             }
             self.display_options_ui(ui);
             self.date_status_ui(ui, log, shown);
-            self.parse_summary_row_ui(ui, log, shown);
             settings_status::selected_log_ui(ui, log, shown, write_access, requests);
+            self.parse_summary_row_ui(ui, log, shown);
         });
         if let Some((id, visible)) = visibility
             && let Some(mut log) = logs.get_mut_by_id(id)

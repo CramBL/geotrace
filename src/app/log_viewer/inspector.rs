@@ -1,7 +1,8 @@
 use egui::accesskit::Role;
-use egui::{Button, CursorIcon, Label, RichText, ScrollArea, Sense};
+use egui::{Button, CursorIcon, RichText, ScrollArea, Sense};
+use egui_phosphor::regular::CALENDAR_DOTS as ICON_CALENDAR;
 use gt_log_view::{LoadedLog, LoadedLogs};
-use gt_logfile::LogChronology;
+use gt_logfile::YearResolution;
 use gt_ui_types::LoadedLogId;
 
 use super::line_table::LineTableRequests;
@@ -25,12 +26,16 @@ impl LogViewerWindow {
     pub(super) fn date_status_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog, id: LoadedLogId) {
         let resolved = log.parsed().chronology().is_resolved();
         let expanded = self.log_state_mut(id).inspector == Some(InspectorSection::ShowChronology);
-        let label = if resolved {
+        let label = if !resolved {
+            "Dates unresolved"
+        } else if log.parsed().year_resolution() == YearResolution::Infer
+            || log.parsed().format().writes_years()
+        {
             "Dates"
         } else {
-            "Dates unresolved"
+            "Dates set"
         };
-        let mut text = RichText::new(label);
+        let mut text = RichText::new(format!("{ICON_CALENDAR} {label}"));
         if !resolved {
             text = text.color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
         }
@@ -38,6 +43,8 @@ impl LogViewerWindow {
             .add(Button::new(text).selected(expanded))
             .on_hover_text("Inspect dates and year resolution");
         response.ctx.accesskit_node_builder(response.id, |node| {
+            node.set_label(label);
+            node.set_description("Inspect dates and year resolution");
             node.set_author_id(DATE_STATUS_ID);
             node.set_expanded(expanded);
         });
@@ -180,34 +187,11 @@ impl LogViewerWindow {
         id: LoadedLogId,
         requests: &mut LogViewerRequests,
     ) {
-        let parsed = log.parsed();
-        match parsed.chronology() {
-            LogChronology::Unresolved(unresolved) => {
-                if let Some(year_resolution) =
-                    self.unresolved_years_ui(ui, id, log, unresolved.unresolved_year())
-                {
-                    requests.resolve_years = Some(YearsToResolve {
-                        log: id,
-                        year_resolution,
-                    });
-                }
-            }
-            LogChronology::Resolved(_) => {
-                ui.strong("Dates");
-                if let Some(range) = parsed.chronology().time_range() {
-                    ui.add(
-                        Label::new(gt_fmt::format_time_range(range.start, range.end))
-                            .selectable(true),
-                    );
-                }
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Reference date");
-                    ui.add(
-                        Label::new(gt_fmt::format_utc_subsecond(parsed.year_reference()))
-                            .selectable(true),
-                    );
-                });
-            }
+        if let Some(year_resolution) = self.chronology_editor_ui(ui, id, log) {
+            requests.resolve_years = Some(YearsToResolve {
+                log: id,
+                year_resolution,
+            });
         }
     }
 }

@@ -1251,7 +1251,7 @@ fn hovering_a_line_of_a_log_with_unresolved_years_states_that_it_takes_no_positi
 
 #[rstest]
 #[case::apply_year(
-    unresolved_years::APPLY_YEAR_LABEL,
+    unresolved_years::SET_YEAR_LABEL,
     YearResolution::PlaceLastEntryInYear(2026)
 )]
 #[case::ignore_summary_bounds(
@@ -1269,8 +1269,8 @@ fn a_year_resolution_control_requests_its_year_resolution_for_the_shown_log(
     let shown = harness.state().first_loaded_log();
 
     open_date_inspector(&mut harness);
-    harness.get_by_label(control_label).click();
-    harness.run_steps(2);
+    select_date_policy(&mut harness, control_label);
+    click_inspector_control(&mut harness, unresolved_years::APPLY_YEAR_LABEL);
 
     assert_eq!(
         harness.state().requests.resolve_years,
@@ -1288,6 +1288,10 @@ fn ignoring_the_summary_bounds_is_disabled_for_a_log_without_them() {
         &[("journal.log", gt_test_utils::UNRESOLVED_LEAP_DAYS_LOG)],
     );
     open_date_inspector(&mut harness);
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(unresolved_years::POLICY_ID)))
+        .click();
+    harness.run_steps(2);
     let button = harness.get_by_label(unresolved_years::IGNORE_SUMMARY_BOUNDS_LABEL);
     assert!(button.accesskit_node().is_disabled());
     let center = button.rect().center();
@@ -1321,6 +1325,16 @@ fn the_summary_panel_of_a_log_with_unresolved_years_draws_em_dashes_for_its_time
 fn click_inspector_control(harness: &mut Harness<ViewerState>, label: &str) {
     harness.get_by_label(label).scroll_to_me();
     harness.run_steps(WHEEL_SETTLE_FRAMES);
+    harness.get_by_label(label).click();
+    harness.run_steps(3);
+}
+
+fn select_date_policy(harness: &mut Harness<ViewerState>, label: &str) {
+    let policy = By::new().predicate(|node| node.author_id() == Some(unresolved_years::POLICY_ID));
+    harness.get(policy.clone()).scroll_to_me();
+    harness.run_steps(3);
+    harness.get(policy).click();
+    harness.run_steps(2);
     harness.get_by_label(label).click();
     harness.run_steps(3);
 }
@@ -4288,6 +4302,7 @@ const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
 /// [`LONG_LOG_ENTRIES`] rows at any table height.
 const PAGE_STEPS_TO_THE_END: usize = 60;
 
+mod chronology_policies;
 mod exporter_totals;
 mod inspector_layout;
 mod integration;

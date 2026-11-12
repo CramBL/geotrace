@@ -20,8 +20,8 @@ impl ReadingRegions {
                         return None;
                     };
                     (text.galley.job.text == label
-                        || (label == "Format" && text.galley.job.text.starts_with("Year of line ")))
-                    .then_some(shape.clip_rect)
+                        || (label == "Format" && text.galley.job.text == "Automatic"))
+                        .then_some(shape.clip_rect)
                 })
                 .unwrap_or_else(|| panic!("painted {label}"))
         };
@@ -106,11 +106,12 @@ fn the_inspector_reserves_table_space_with_overflowing_controls(
     );
     rendering.snapshot_with_color_tolerance(snapshot);
     if section == InspectorSection::ShowChronology {
-        click_inspector_control(&mut rendering.inner, "Date diagnostics and help");
+        click_inspector_control(&mut rendering.inner, unresolved_years::DETAILS_LABEL);
         assert_eq!(
             SourceReadingPosition::of(&rendering.inner).viewport,
             regions.table
         );
+        select_date_policy(&mut rendering.inner, unresolved_years::SET_YEAR_LABEL);
         click_inspector_control(&mut rendering.inner, unresolved_years::APPLY_YEAR_LABEL);
         assert_eq!(
             rendering
@@ -152,8 +153,7 @@ fn unresolved_date_controls_open_in_the_inspector_and_disclose_full_diagnostics(
     harness.get_by_label(unresolved_years::APPLY_YEAR_LABEL);
     harness.get_by_label("May 20 11:00:00 host navsyncd: clock moved backwards");
     assert!(harness.query_by_label("Written as").is_none());
-    harness.get_by_label("Date diagnostics and help").click();
-    harness.run_steps(4);
+    click_inspector_control(harness, unresolved_years::DETAILS_LABEL);
     harness.get_by_label("Written as");
     let id = harness.state().first_loaded_log();
     assert_eq!(

@@ -271,7 +271,13 @@ fn a_log_with_unresolved_years_opens_the_viewer_on_the_line_and_the_conflict() {
 
     harness.get_by_label("Dates unresolved").click();
     harness.run_steps(3);
-    harness.get_by_label("Date diagnostics and help").click();
+    harness
+        .get_by_label(log_viewer::unresolved_years::DETAILS_LABEL)
+        .scroll_to_me();
+    harness.run_steps(3);
+    harness
+        .get_by_label(log_viewer::unresolved_years::DETAILS_LABEL)
+        .click();
     harness.run_steps(3);
 
     for label in [
@@ -286,7 +292,10 @@ fn a_log_with_unresolved_years_opens_the_viewer_on_the_line_and_the_conflict() {
         "2026-05-20 12:00:00 UTC",
         log_viewer::unresolved_years::LINES_TAKE_NO_POSITION_NOTE,
     ] {
-        harness.get_by_label(label);
+        assert!(
+            harness.query_all_by_label(label).next().is_some(),
+            "{label}"
+        );
     }
 }
 
