@@ -37,6 +37,7 @@ use restored_logs_badge::RestoredLogsBadge;
 use source_navigation_ui::SourceNavigationFeedback;
 use unresolved_years::ChronologyDraft;
 
+use crate::app::keyboard_scope::{KeyboardAccess, WindowKeyboardScope};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 pub(super) mod association_dialog;
@@ -68,6 +69,8 @@ pub(super) struct LogViewerWindow {
     picker_query: String,
     reveal_selected_tab: bool,
     source_navigation_feedback: Option<SourceNavigationFeedback>,
+    keyboard_scope: WindowKeyboardScope,
+    keyboard_access: KeyboardAccess,
 }
 
 #[derive(Default)]
@@ -182,6 +185,8 @@ impl LogViewerWindow {
             picker_query: String::new(),
             reveal_selected_tab: true,
             source_navigation_feedback: None,
+            keyboard_scope: WindowKeyboardScope::default(),
+            keyboard_access: KeyboardAccess::default(),
         }
     }
 
@@ -295,13 +300,18 @@ impl LogViewerWindow {
             self.clear_invalid_source_reveal(log, id);
         }
         if !self.open {
+            self.keyboard_scope = WindowKeyboardScope::default();
             self.commit_association_window(logs, recordings);
             return;
         }
         let groups =
             log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
         let tabs = log_list::tabs_in_session_order(logs, &groups);
-        let popup_was_open = Popup::is_any_open(ctx);
+        self.keyboard_access = if dialog_open || Popup::is_any_open(ctx) {
+            KeyboardAccess::Block
+        } else {
+            KeyboardAccess::Permit
+        };
         let mut open = self.open;
         let mut unload = None;
         let window = Window::new(LOG_VIEWER_TITLE)
@@ -310,7 +320,7 @@ impl LogViewerWindow {
             .default_height(520.0)
             .resizable(true)
             .show(ctx, |ui| {
-                self.find_shortcut_ui(ui, dialog_open);
+                self.keyboard_shortcuts_ui(ui, &tabs);
                 // The footer claims its height first: the sections above it
                 // divide what is left.
                 egui::Panel::bottom("log_viewer_footer")
@@ -347,7 +357,6 @@ impl LogViewerWindow {
                     ui,
                     logs,
                     requests,
-                    dialog_open,
                     &mut LineTableRequests {
                         map_center: map_center_request,
                         hover: log_hover,
@@ -355,11 +364,23 @@ impl LogViewerWindow {
                 );
             });
 
-        if !dialog_open
-            && !popup_was_open
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            open = false;
+        if let Some(window) = &window {
+            let owns_keyboard = self
+                .keyboard_scope
+                .owns_keyboard(ctx, window.response.layer_id);
+            if owns_keyboard
+                && self.keyboard_access.available(ctx)
+                && ctx
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                if let Some(id) = self.selected
+                    && let Some(section) = self.log_state_mut(id).inspector
+                {
+                    self.toggle_inspector(id, section);
+                } else {
+                    open = false;
+                }
+            }
         }
         self.open = open;
 

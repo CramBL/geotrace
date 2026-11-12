@@ -2,7 +2,7 @@ use std::path::Path;
 use std::{fmt, io, mem};
 
 use egui::{
-    Button, Label, Popup, RichText, ScrollArea, TextEdit, TextStyle, WidgetInfo, WidgetType, Window,
+    Button, Label, RichText, ScrollArea, TextEdit, TextStyle, WidgetInfo, WidgetType, Window,
 };
 use egui_phosphor::regular::{
     CHECK as ICON_CHECK, CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK, COPY as ICON_COPY,
@@ -14,6 +14,7 @@ use gt_logfile::{LogParseError, LogText};
 use gt_store::{DatabaseRef, DbError, LogAttachmentError, LogAttachmentReadError};
 use strum::Display;
 
+use crate::app::keyboard_scope::{KeyboardAccess, WindowKeyboardScope};
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 
 pub(super) use recovery::{LoadFailureKind, LoadReadRequest, LoadRecovery, RecordingFileRead};
@@ -214,7 +215,7 @@ pub(super) struct LoadFailures {
     selected: Option<LoadFailureId>,
     details_open: bool,
     scroll_to_selected: bool,
-    surface_activated: bool,
+    keyboard_scope: WindowKeyboardScope,
 }
 
 impl LoadFailures {
@@ -262,7 +263,7 @@ impl LoadFailures {
         self.next_failure_id += 1;
         if self.selected.is_none() {
             self.selected = Some(failure_id);
-            self.surface_activated = false;
+            self.keyboard_scope = WindowKeyboardScope::default();
         }
         self.retained.push(RetainedLoadFailure {
             failure_id,
@@ -349,7 +350,7 @@ impl LoadFailures {
         }
         if self.retained.is_empty() {
             self.details_open = false;
-            self.surface_activated = false;
+            self.keyboard_scope = WindowKeyboardScope::default();
         }
     }
 
@@ -432,27 +433,10 @@ impl LoadFailures {
             egui::Order::Middle,
             egui::Id::new(LOAD_FAILURE_WINDOW_ID_SALT),
         );
-        let pointer_pressed = ctx.input(|input| input.pointer.any_pressed());
-        let pointer_owns_surface = ctx
-            .input(|input| input.pointer.interact_pos())
-            .is_some_and(|position| ctx.layer_id_at(position) == Some(layer));
-        if pointer_pressed {
-            self.surface_activated = pointer_owns_surface;
-        }
         let focused = ctx.memory(|memory| memory.focused());
-        let child_owns_focus = focused.is_some_and(|id| {
-            ctx.read_response(id)
-                .is_some_and(|response| response.layer_id == layer)
-        }) && (!pointer_pressed || pointer_owns_surface);
-        if child_owns_focus {
-            self.surface_activated = true;
-        }
-        let owns_focus = focused.map_or(self.surface_activated, |_| child_owns_focus);
         if self.retained.is_empty()
-            || !owns_focus
-            || ctx.top_layer_id() != Some(layer)
-            || Popup::is_any_open(ctx)
-            || ctx.memory(|memory| memory.top_modal_layer()).is_some()
+            || !self.keyboard_scope.owns_keyboard(ctx, layer)
+            || !KeyboardAccess::Permit.available(ctx)
         {
             return;
         }
@@ -487,7 +471,7 @@ impl LoadFailures {
         let details_open = self.details_open;
         let mut action = None;
         let viewport = ctx.content_rect();
-        Window::new(LOAD_PROBLEMS_TITLE)
+        let window = Window::new(LOAD_PROBLEMS_TITLE)
             .id(egui::Id::new(LOAD_FAILURE_WINDOW_ID_SALT))
             .collapsible(false)
             .resizable(true)
@@ -510,7 +494,15 @@ impl LoadFailures {
                     action = self.selected.map(|id| (id, footer));
                 }
             });
+        if let Some(window) = window {
+            self.keyboard_scope
+                .remember_focus(ctx, window.response.layer_id);
+        }
         self.apply_window_action(action, ctx).into_iter().collect()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.retained.is_empty()
     }
 
     pub(super) fn file_input_is_pending(&self, attempt: LoadRetryAttempt) -> bool {
@@ -608,7 +600,7 @@ impl LoadFailures {
             self.retained.clear();
             self.selected = None;
             self.details_open = false;
-            self.surface_activated = false;
+            self.keyboard_scope = WindowKeyboardScope::default();
             return None;
         }
         if action == FailureWindowAction::Dismiss {

@@ -59,7 +59,6 @@ impl LogViewerWindow {
         ui: &mut egui::Ui,
         logs: &mut LoadedLogs,
         requests: &mut LogViewerRequests,
-        dialog_open: bool,
         table_requests: &mut LineTableRequests<'_>,
     ) {
         let content_height = ui.available_height();
@@ -114,7 +113,7 @@ impl LogViewerWindow {
                     requests,
                 );
             }
-            self.line_table_ui(ui, log, id, dialog_open, table_requests);
+            self.line_table_ui(ui, log, id, table_requests);
         });
     }
 

@@ -210,6 +210,12 @@ fn confirming_the_dialog_associates_the_log_with_the_preselected_recording() {
     );
 
     confirm(&mut harness);
+    assert!(
+        harness
+            .get_by_label("Log table")
+            .accesskit_node()
+            .is_focused()
+    );
 
     assert!(!dialog_is_open(&harness));
     assert!(
@@ -630,6 +636,12 @@ fn escape_cancels_the_dialog_and_leaves_the_viewer_open() {
     ui_tests::press_escape(&mut harness);
     harness.run_steps(3);
 
+    assert!(
+        harness
+            .get_by_label("Log table")
+            .accesskit_node()
+            .is_focused()
+    );
     assert!(!dialog_is_open(&harness));
     assert!(harness.state().log_viewer.open, "the viewer stays open");
     assert_eq!(shown_log_target(&harness), None);
@@ -2888,6 +2900,12 @@ fn date_resolution_preserves_applied_dates_when_position_selection_is_deferred(
         harness.get_by_label("Dates applied");
         harness.get_by_label("Later").click();
         harness.run_steps(3);
+        assert!(
+            harness
+                .get_by_label("Log table")
+                .accesskit_node()
+                .is_focused()
+        );
         assert_eq!(shown_log_target(&harness), None);
     } else {
         assert!(shown_log_target(&harness).is_some());

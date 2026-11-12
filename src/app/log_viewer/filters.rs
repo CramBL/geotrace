@@ -171,6 +171,17 @@ impl LogViewerWindow {
             })
             .inner;
 
+        let edit = edit.or_else(|| {
+            self.keyboard_access
+                .field_owns_keyboard(ui, egui::Id::new((LIVE_FILTER_FIELD_ID, shown)))
+                .then(|| {
+                    ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    })
+                })
+                .filter(|pressed| *pressed)
+                .map(|_| FilterEdit::CancelCondition)
+        });
         let Some(edit) = edit else {
             return;
         };

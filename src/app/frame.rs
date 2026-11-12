@@ -76,7 +76,10 @@ impl eframe::App for App {
         }
 
         self.apply_finished_background_work(ui);
-        self.load_failures.handle_keyboard(ui.ctx());
+        let load_problems_were_open = !self.load_failures.is_empty();
+        if self.association_dialog.is_none() {
+            self.load_failures.handle_keyboard(ui.ctx());
+        }
         self.wait_for_the_data_directory(ui);
         self.show_interrupted_delete_prompts(ui);
         self.retry_marking_the_data_directory_in_the_background(ui.ctx());
@@ -122,6 +125,12 @@ impl eframe::App for App {
         self.show_debug_build_and_read_only_markers(ui);
         for request in self.load_failures.show_window(ui.ctx()) {
             self.apply_load_problem_request(request);
+        }
+        if load_problems_were_open
+            && self.load_failures.is_empty()
+            && let Some(log) = self.log_viewer.selected_log()
+        {
+            self.log_viewer.return_table_focus(log, &self.logs);
         }
         self.apply_pending_unload_and_removal(ui);
 

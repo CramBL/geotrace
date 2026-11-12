@@ -1,4 +1,4 @@
-use egui::{Button, Grid, Label, RichText, Sense, WidgetInfo, WidgetType};
+use egui::{Button, Grid, Label, Popup, RichText, Sense, WidgetInfo, WidgetType};
 use egui_phosphor::regular::INFO as ICON_INFO;
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
@@ -121,8 +121,8 @@ impl LogAssociationDialog {
         write_access: WriteAccess,
         initial_position_source_policy: &mut InitialPositionSourcePolicy,
     ) -> Option<LogAssociationChoice> {
-        let escape_pressed =
-            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let escape_pressed = !Popup::is_any_open(ctx)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut choice = escape_pressed.then_some(LogAssociationChoice::Cancelled);
         let names = super::recording_names_by_id(recordings, recording_names);
         let candidates = log.rank_association_candidates(&recordings);
