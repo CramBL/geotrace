@@ -2,7 +2,6 @@ use chrono::SecondsFormat;
 use hdf5_pure::{AttrValue, DeflateLevel, FileBuilder};
 
 use crate::BootTime;
-use crate::boot_time::ABSENT_BOOT_TIME_MICROS;
 use crate::builder;
 use crate::error::{Error, FieldLocation, MARKER_LABEL_LOCATION};
 use crate::fixed_width_string::{
@@ -651,6 +650,8 @@ const MICROS_SINCE_EPOCH_UNITS: &str = "microseconds since 1970-01-01T00:00:00Z"
 
 pub(crate) const DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR: &str =
     "debug_time_repair_backward_jump_threshold_us";
+
+const ABSENT_BOOT_TIME_MICROS: u64 = u64::MAX;
 
 #[cfg(test)]
 mod tests {
