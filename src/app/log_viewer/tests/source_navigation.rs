@@ -2,7 +2,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use super::*;
-use crate::app::log_viewer::line_table::DiagnosticTarget;
+use crate::app::log_viewer::line_table::SourceRequest;
 
 #[test]
 fn physical_line_numbers_align_before_timestamps_and_select_for_copying() {
@@ -147,8 +147,8 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
     click_inspector_control(&mut harness, button);
     harness.get_by_label(target);
     let state = harness.state();
-    let reveal = state.viewer.active_state().diagnostic_reveal.unwrap();
-    assert_eq!(reveal.entry_index, expected_entry);
+    let reveal = state.viewer.active_state().source_reveal.unwrap();
+    assert_eq!(reveal.entry_index().unwrap(), expected_entry);
     let stack = state.shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
     assert_eq!(stack.to_stored_stack(), stored);
@@ -161,9 +161,9 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
     for show_source in [true, false] {
         super::set_display_option(&mut harness, "Show structural source lines", show_source);
         harness.get_by_label(target);
-        assert_eq!(harness.state().viewer.selected_log(), Some(reveal.log));
+        assert_eq!(harness.state().viewer.selected_log(), Some(reveal.log()));
         assert_eq!(
-            harness.state().viewer.active_state().diagnostic_reveal,
+            harness.state().viewer.active_state().source_reveal,
             Some(reveal)
         );
         assert_eq!(super::match_count(&harness), "1 of 6");
@@ -183,9 +183,10 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .unwrap()
-            .entry_index,
+            .entry_index()
+            .unwrap(),
         4
     );
     click_inspector_control(&mut harness, "Boot 2");
@@ -195,9 +196,10 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .unwrap()
-            .entry_index,
+            .entry_index()
+            .unwrap(),
         3
     );
     assert!(
@@ -205,12 +207,15 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
             .query_by_label(ORDER_ANOMALY_ENTRY_TIMESTAMP)
             .is_none()
     );
-    click_inspector_control(&mut harness, "Boot 1");
-    harness.run_steps(2);
-    assert_eq!(
-        harness.state().viewer.active_state().diagnostic_reveal,
-        None
+    let state = harness.state_mut();
+    let id = state.first_loaded_log();
+    state.viewer.navigate_to_source(
+        state.logs.get_by_id(id).unwrap(),
+        id,
+        SourceRequest::NavigateToEntry(1),
     );
+    harness.run_steps(2);
+    assert_eq!(harness.state().viewer.active_state().source_reveal, None);
 }
 
 #[test]
@@ -224,8 +229,8 @@ fn idle_frames_and_scan_landing_preserve_reveals_and_cached_rows() {
     let log = state.logs.get_by_id(shown).unwrap();
     state
         .viewer
-        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.active_state().diagnostic_reveal;
+        .navigate_to_source(log, shown, SourceRequest::NavigateToEntry(4));
+    let reveal = state.viewer.active_state().source_reveal;
     let rows = state.viewer.table_rows(log, shown);
     for _ in 0..3 {
         assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
@@ -238,7 +243,7 @@ fn idle_frames_and_scan_landing_preserve_reveals_and_cached_rows() {
     let log = state.logs.get_by_id(shown).unwrap();
     let landed = state.viewer.table_rows(log, shown);
     assert!(!Arc::ptr_eq(&rows, &landed));
-    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
+    assert_eq!(state.viewer.active_state().source_reveal, reveal);
     assert!(landed.row_of_exact_entry(4).is_some());
     assert!(Arc::ptr_eq(&landed, &state.viewer.table_rows(log, shown)));
 }
@@ -293,8 +298,8 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
     let log = state.logs.get_by_id(shown).unwrap();
     state
         .viewer
-        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    assert!(state.viewer.active_state().diagnostic_reveal.is_some());
+        .navigate_to_source(log, shown, SourceRequest::NavigateToEntry(4));
+    assert!(state.viewer.active_state().source_reveal.is_some());
     let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
     match edit {
         SemanticEdit::Text => stack.set_live_filter_text("starting"),
@@ -313,13 +318,13 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
     let pending = stack.is_query_pending();
     let log = state.logs.get_by_id(shown).unwrap();
     state.viewer.table_rows(log, shown);
-    assert_eq!(state.viewer.active_state().diagnostic_reveal, None);
+    assert_eq!(state.viewer.active_state().source_reveal, None);
     assert_eq!(state.viewer.active_state().scroll_to_row, None);
     assert_eq!(log.filters().is_query_pending(), pending);
 }
 
 #[test]
-fn adding_a_live_table_condition_preserves_diagnostic_reveal_and_cached_rows() {
+fn adding_a_live_table_condition_preserves_source_reveal_and_cached_rows() {
     let mut harness = harness_of(Vec::new(), &[("nav.log", LOG_WITH_EVERY_ROW_KIND)]);
     type_into_live_filter(&mut harness, "starting");
     let state = harness.state_mut();
@@ -327,8 +332,8 @@ fn adding_a_live_table_condition_preserves_diagnostic_reveal_and_cached_rows() {
     let log = state.logs.get_by_id(shown).unwrap();
     state
         .viewer
-        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.active_state().diagnostic_reveal;
+        .navigate_to_source(log, shown, SourceRequest::NavigateToEntry(4));
+    let reveal = state.viewer.active_state().source_reveal;
     assert!(reveal.is_some());
     let rows = state.viewer.table_rows(log, shown);
     let revision = log.filters().table_semantic_revision();
@@ -346,7 +351,7 @@ fn adding_a_live_table_condition_preserves_diagnostic_reveal_and_cached_rows() {
         matches
     );
     assert!(!stack.is_query_pending());
-    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
+    assert_eq!(state.viewer.active_state().source_reveal, reveal);
     assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
 }
 
@@ -365,7 +370,7 @@ enum ConditionEdit {
 #[case::operator(ConditionEdit::Operator)]
 #[case::remove_effect(ConditionEdit::RemoveEffect)]
 #[case::remove_group(ConditionEdit::RemoveGroup)]
-fn condition_edits_invalidate_diagnostic_reveals_only_with_enabled_table_participation(
+fn condition_edits_invalidate_source_reveals_only_with_enabled_table_participation(
     #[case] edit: ConditionEdit,
     #[values(false, true)] enabled: bool,
 ) {
@@ -387,8 +392,8 @@ fn condition_edits_invalidate_diagnostic_reveals_only_with_enabled_table_partici
     let log = state.logs.get_by_id(shown).unwrap();
     state
         .viewer
-        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.active_state().diagnostic_reveal;
+        .navigate_to_source(log, shown, SourceRequest::NavigateToEntry(4));
+    let reveal = state.viewer.active_state().source_reveal;
     assert!(reveal.is_some());
     let rows = state.viewer.table_rows(log, shown);
     let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
@@ -410,7 +415,7 @@ fn condition_edits_invalidate_diagnostic_reveals_only_with_enabled_table_partici
     let log = state.logs.get_by_id(shown).unwrap();
     let current_rows = state.viewer.table_rows(log, shown);
     assert_eq!(
-        state.viewer.active_state().diagnostic_reveal,
+        state.viewer.active_state().source_reveal,
         if enabled { None } else { reveal }
     );
     assert_eq!(Arc::ptr_eq(&rows, &current_rows), !enabled);
@@ -443,7 +448,7 @@ enum MapOnlyEdit {
 #[case::remembered_group(MapOnlyEdit::MoveRememberedGroup)]
 #[case::create_group(MapOnlyEdit::CreateGroup)]
 #[case::empty_destination(MapOnlyEdit::EmptyDestination)]
-fn map_only_edits_preserve_diagnostic_reveals_and_cached_rows(#[case] edit: MapOnlyEdit) {
+fn map_only_edits_preserve_source_reveals_and_cached_rows(#[case] edit: MapOnlyEdit) {
     let mut state = viewer_state(Vec::new(), &[("nav.log", LOG_WITH_EVERY_ROW_KIND)]);
     let shown = state.first_loaded_log();
     let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
@@ -467,8 +472,8 @@ fn map_only_edits_preserve_diagnostic_reveals_and_cached_rows(#[case] edit: MapO
     let log = state.logs.get_by_id(shown).unwrap();
     state
         .viewer
-        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.active_state().diagnostic_reveal;
+        .navigate_to_source(log, shown, SourceRequest::NavigateToEntry(4));
+    let reveal = state.viewer.active_state().source_reveal;
     assert!(reveal.is_some());
     let rows = state.viewer.table_rows(log, shown);
     let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
@@ -497,14 +502,14 @@ fn map_only_edits_preserve_diagnostic_reveals_and_cached_rows(#[case] edit: MapO
     stack.wait_for_queries();
     let log = state.logs.get_by_id(shown).unwrap();
     assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
-    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
+    assert_eq!(state.viewer.active_state().source_reveal, reveal);
     assert!(rows.row_of_exact_entry(4).is_some());
 }
 
 #[rstest]
 #[case::table_to_map(FilterEffect::Table, FilterEffect::Map)]
 #[case::map_to_table(FilterEffect::Map, FilterEffect::Table)]
-fn changing_an_active_draft_table_effect_clears_diagnostic_reveals(
+fn changing_an_active_draft_table_effect_clears_source_reveals(
     #[case] before: FilterEffect,
     #[case] after: FilterEffect,
 ) {
@@ -519,8 +524,8 @@ fn changing_an_active_draft_table_effect_clears_diagnostic_reveals(
     let log = state.logs.get_by_id(shown).unwrap();
     state
         .viewer
-        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    assert!(state.viewer.active_state().diagnostic_reveal.is_some());
+        .navigate_to_source(log, shown, SourceRequest::NavigateToEntry(4));
+    assert!(state.viewer.active_state().source_reveal.is_some());
     state
         .logs
         .filter_stack_mut_by_id(shown)
@@ -529,7 +534,7 @@ fn changing_an_active_draft_table_effect_clears_diagnostic_reveals(
         .set_live_filter_effect(after);
     let log = state.logs.get_by_id(shown).unwrap();
     state.viewer.table_rows(log, shown);
-    assert_eq!(state.viewer.active_state().diagnostic_reveal, None);
+    assert_eq!(state.viewer.active_state().source_reveal, None);
 }
 
 #[test]
@@ -550,15 +555,12 @@ fn switching_logs_preserves_reveals_and_reloading_clears_them() {
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .is_some()
     );
     harness.get_by_label("first.log").click();
     harness.run_steps(2);
-    assert_eq!(
-        harness.state().viewer.active_state().diagnostic_reveal,
-        None
-    );
+    assert_eq!(harness.state().viewer.active_state().source_reveal, None);
     harness.get_by_label("second.log").click();
     harness.run_steps(2);
     assert!(
@@ -566,7 +568,7 @@ fn switching_logs_preserves_reveals_and_reloading_clears_them() {
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .is_some()
     );
     click_inspector_control(&mut harness, "Line 6");
@@ -585,10 +587,7 @@ fn switching_logs_preserves_reveals_and_reloading_clears_them() {
         .id();
     assert_ne!(replacement, old);
     harness.run_steps(2);
-    assert_eq!(
-        harness.state().viewer.active_state().diagnostic_reveal,
-        None
-    );
+    assert_eq!(harness.state().viewer.active_state().source_reveal, None);
 }
 
 #[test]
@@ -645,9 +644,10 @@ fn diagnostic_navigation_scrolls_to_the_hidden_target_in_a_long_table(
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .unwrap()
-            .entry_index,
+            .entry_index()
+            .unwrap(),
         120
     );
     assert_eq!(
@@ -693,9 +693,10 @@ fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_ro
             .state()
             .viewer
             .active_state()
-            .diagnostic_reveal
+            .source_reveal
             .unwrap()
-            .entry_index,
+            .entry_index()
+            .unwrap(),
         1
     );
     harness.hover_and_settle(
@@ -711,9 +712,10 @@ fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_ro
 }
 
 #[rstest]
-#[case::entry(DiagnosticTarget::Entry(usize::MAX))]
-#[case::boot(DiagnosticTarget::BootSession(usize::MAX))]
-fn invalid_diagnostic_targets_preserve_active_navigation(#[case] target: DiagnosticTarget) {
+#[case::entry(SourceRequest::NavigateToEntry(usize::MAX))]
+#[case::boot(SourceRequest::ShowBootSession(usize::MAX))]
+#[case::physical_line(SourceRequest::NavigateToLine(9))]
+fn unavailable_source_targets_preserve_active_navigation(#[case] target: SourceRequest) {
     let mut state = viewer_state(Vec::new(), &[("source.log", SOURCE_LOG)]);
     let id = state.first_loaded_log();
     let (stack, _) = state.logs.filter_stack_mut_by_id(id).unwrap();
@@ -722,12 +724,12 @@ fn invalid_diagnostic_targets_preserve_active_navigation(#[case] target: Diagnos
     let log = state.logs.get_by_id(id).unwrap();
     state
         .viewer
-        .navigate_to_diagnostic(log, id, DiagnosticTarget::BootSession(1));
-    let reveal = state.viewer.active_state().diagnostic_reveal;
-    let scroll = state.viewer.active_state().scroll_to_row;
+        .navigate_to_source(log, id, SourceRequest::ShowBootSession(1));
+    let reveal = state.viewer.active_state().source_reveal;
+    let scroll = state.viewer.active_state().scroll_to_source_line;
     let rows = state.viewer.table_rows(log, id);
-    state.viewer.navigate_to_diagnostic(log, id, target);
-    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
-    assert_eq!(state.viewer.active_state().scroll_to_row, scroll);
+    assert!(!state.viewer.navigate_to_source(log, id, target));
+    assert_eq!(state.viewer.active_state().source_reveal, reveal);
+    assert_eq!(state.viewer.active_state().scroll_to_source_line, scroll);
     assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, id)));
 }

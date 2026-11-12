@@ -9,7 +9,7 @@ use gt_logfile::ParsedLog;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
-use super::line_table::DiagnosticTarget;
+use super::line_table::SourceRequest;
 use super::{LogViewerWindow, TIMESTAMP_FORMAT};
 
 impl LogViewerWindow {
@@ -48,10 +48,10 @@ impl LogViewerWindow {
                         .on_hover_text("Scroll the table to this boot session")
                         .clicked()
                     {
-                        self.navigate_to_diagnostic(
+                        self.navigate_to_source(
                             log,
                             log_id,
-                            DiagnosticTarget::BootSession(session_index),
+                            SourceRequest::ShowBootSession(session_index),
                         );
                     }
                     let uptime = chronology.session_uptime(session_index);
@@ -104,9 +104,6 @@ impl LogViewerWindow {
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
                 for anomaly in order_anomalies {
-                    let entry_index = parsed
-                        .entries()
-                        .partition_point(|entry| entry.line_number < anomaly.line_number);
                     if ui
                         .add(Button::new(format!(
                             "Line {}",
@@ -115,10 +112,10 @@ impl LogViewerWindow {
                         .on_hover_text("Scroll the table to this line")
                         .clicked()
                     {
-                        self.navigate_to_diagnostic(
+                        self.navigate_to_source(
                             log,
                             log_id,
-                            DiagnosticTarget::Entry(entry_index),
+                            SourceRequest::NavigateToLine(anomaly.line_number),
                         );
                     }
                     ui.add(

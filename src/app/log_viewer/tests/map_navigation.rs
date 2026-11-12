@@ -1,12 +1,12 @@
 use super::*;
-use crate::app::log_viewer::line_table::DiagnosticTarget;
+use crate::app::log_viewer::line_table::SourceRequest;
 
 #[rstest]
 #[case::single_entry(vec![CLICKED_ENTRY])]
 #[case::multiple_entries(vec![CLICKED_ENTRY, CLICKED_ENTRY + 1])]
 fn hidden_first_glyph_entries_preserve_table_scroll(
     #[case] entries: Vec<usize>,
-    #[values(false, true)] diagnostic_reveal: bool,
+    #[values(false, true)] source_reveal: bool,
 ) {
     let text = long_log(LONG_LOG_ENTRIES)
         .replace("navsyncd: entry", "navsyncd: keep entry")
@@ -15,12 +15,12 @@ fn hidden_first_glyph_entries_preserve_table_scroll(
     type_into_live_filter(&mut harness, "keep");
     let scroll = TableScroll::of(&harness);
     let id = harness.state().first_loaded_log();
-    if diagnostic_reveal {
+    if source_reveal {
         let state = harness.state_mut();
         let log = state.logs.get_by_id(id).unwrap();
         state
             .viewer
-            .navigate_to_diagnostic(log, id, DiagnosticTarget::Entry(CLICKED_ENTRY));
+            .navigate_to_source(log, id, SourceRequest::NavigateToEntry(CLICKED_ENTRY));
         harness.run_steps(3);
         harness.get_by_label("navsyncd: hidden entry 120");
     }
@@ -42,10 +42,7 @@ fn hidden_first_glyph_entries_preserve_table_scroll(
     harness.run_steps(3);
 
     assert!((scroll.offset_px(&harness) - before).abs() < SCROLL_READING_TOLERANCE_PX);
-    assert_eq!(
-        harness.state().viewer.active_state().diagnostic_reveal,
-        None
-    );
+    assert_eq!(harness.state().viewer.active_state().source_reveal, None);
     assert_eq!(harness.state().viewer.active_state().scroll_to_row, None);
     assert_eq!(
         harness
@@ -129,8 +126,5 @@ fn visible_first_glyph_entries_scroll_to_exact_source_rows(
     assert!(
         (target_y - (first_y - first_row as f32 * row_height)).abs() < SCROLL_READING_TOLERANCE_PX
     );
-    assert_eq!(
-        harness.state().viewer.active_state().diagnostic_reveal,
-        None
-    );
+    assert_eq!(harness.state().viewer.active_state().source_reveal, None);
 }
