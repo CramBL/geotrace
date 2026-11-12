@@ -16,6 +16,7 @@ use gt_logfile::ParsedLog;
 use gt_ui_types::LoadedLogId;
 
 use super::LogViewerWindow;
+use super::keyboard_navigation::TableFocusScope;
 use super::line_table::SourceRequest;
 
 pub(super) struct LogFind {
@@ -187,6 +188,7 @@ impl LogViewerWindow {
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, FIND_LABEL));
         if response.clicked() {
             self.set_find_open(id, !open);
+            self.log_state_mut(id).table_focus_requested = open;
         }
     }
 
@@ -196,6 +198,7 @@ impl LogViewerWindow {
         };
         let focused = ui.memory(|memory| memory.focused());
         let owns_keyboard = focused == Some(egui::Id::new((FIND_FIELD_ID, id)))
+            || TableFocusScope::for_log(id).has_focus(ui)
             || (focused.is_none() && ui.rect_contains_pointer(ui.max_rect()));
         if !dialog_open
             && !Popup::is_any_open(ui.ctx())
@@ -230,6 +233,7 @@ impl LogViewerWindow {
             Some(FindAction::Close) => {
                 ui.memory_mut(|memory| memory.surrender_focus(egui::Id::new((FIND_FIELD_ID, id))));
                 self.set_find_open(id, false);
+                self.log_state_mut(id).table_focus_requested = true;
                 return;
             }
             None => {}
@@ -262,6 +266,7 @@ impl LogViewerWindow {
     pub(super) fn set_find_open(&mut self, id: LoadedLogId, open: bool) {
         let state = self.log_state_mut(id);
         if open {
+            state.table_focus_requested = false;
             state.jump.close();
         }
         if open || state.find.is_some() {

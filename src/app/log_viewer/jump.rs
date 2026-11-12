@@ -157,6 +157,7 @@ impl LogViewerWindow {
                     let state = self.log_state_mut(id);
                     state.jump.mode = Some(mode);
                     state.jump.feedback = None;
+                    state.table_focus_requested = false;
                     state.jump.focus_requested = true;
                     if mode == JumpMode::GoToTime && !log.parsed().chronology().is_resolved() {
                         self.open_jump_dates(id);
@@ -188,6 +189,7 @@ impl LogViewerWindow {
                     });
                 }
                 state.jump.close();
+                state.table_focus_requested = true;
                 state.scroll_to_source_line =
                     state.scroll_to_source_line.or(state.table_reading_anchor);
             }

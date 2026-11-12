@@ -45,6 +45,7 @@ pub(super) mod filters;
 mod find;
 pub(super) mod inspector;
 mod jump;
+mod keyboard_navigation;
 mod line_table;
 pub(super) mod log_list;
 pub(super) mod restored_logs_badge;
@@ -81,6 +82,7 @@ struct LogViewerState {
     filtered_return: Option<FilteredSourceReturn>,
     line_table_cache: Option<LineTableCache>,
     table_reading_anchor: Option<TableReadingAnchor>,
+    table_focus_requested: bool,
     scroll_to_source_line: Option<TableReadingAnchor>,
     query_pending_since: Option<f64>,
     condition_edit: Option<ConditionEdit>,
@@ -308,12 +310,6 @@ impl LogViewerWindow {
             .default_height(520.0)
             .resizable(true)
             .show(ctx, |ui| {
-                // An arrow key press over the map or another window leaves
-                // the table where it is: the scrolling keys fire only while
-                // the pointer is over the window. Measured against the whole
-                // content rect, since `ui.min_rect()` is still empty this
-                // early in the layout.
-                let pointer_over_the_window = ui.rect_contains_pointer(ui.max_rect());
                 self.find_shortcut_ui(ui, dialog_open);
                 // The footer claims its height first: the sections above it
                 // divide what is left.
@@ -351,7 +347,7 @@ impl LogViewerWindow {
                     ui,
                     logs,
                     requests,
-                    pointer_over_the_window,
+                    dialog_open,
                     &mut LineTableRequests {
                         map_center: map_center_request,
                         hover: log_hover,

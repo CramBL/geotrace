@@ -313,6 +313,7 @@ impl LogViewerWindow {
                 | FilterEdit::ApplyCondition
                 | FilterEdit::CancelCondition
         ) {
+            self.log_state_mut(shown).table_focus_requested = true;
             ui.memory_mut(|memory| {
                 if let Some(focused) = memory.focused() {
                     memory.surrender_focus(focused);

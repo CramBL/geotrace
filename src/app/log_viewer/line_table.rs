@@ -1,3 +1,4 @@
+use std::mem;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock};
 
@@ -21,6 +22,7 @@ use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover, LogRowPlacement};
 use rustc_hash::FxHashMap;
 
 use super::find::FindHighlight;
+use super::keyboard_navigation::{KeyboardScrollSteps, TableFocusScope};
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
 use navigation::SourceOverlay;
@@ -909,7 +911,7 @@ impl LogViewerWindow {
         ui: &mut egui::Ui,
         log: &LoadedLog,
         log_id: LoadedLogId,
-        pointer_over_the_window: bool,
+        dialog_open: bool,
         requests: &mut LineTableRequests<'_>,
     ) {
         let parsed = log.parsed();
@@ -980,6 +982,18 @@ impl LogViewerWindow {
             // block of text and a row's index times its height is its offset.
             ui.spacing_mut().item_spacing.y = 0.0;
             let row_height = row_height(ui);
+            let focus = TableFocusScope::for_log(log_id);
+            let target = focus.register_ui(ui);
+            let keyboard_available = TableFocusScope::keyboard_available(ui) && !dialog_open;
+            if keyboard_available {
+                if mem::take(&mut state.table_focus_requested)
+                    || (ui.rect_contains_pointer(target.rect)
+                        && ui.input(|input| input.pointer.primary_pressed()))
+                {
+                    target.request_focus();
+                }
+                focus.lock_vertical_arrows(ui);
+            }
             let mut scroll_area = ScrollArea::vertical()
                 .id_salt(("log_viewer_line_table", log_id))
                 .auto_shrink([false, false])
@@ -1009,10 +1023,11 @@ impl LogViewerWindow {
                 scroll_area = scroll_area.vertical_scroll_offset(row as f32 * row_height);
             }
             let output = scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
-                if pointer_over_the_window && ui.memory(|memory| memory.focused()).is_none() {
+                if keyboard_available && target.has_focus() {
                     KeyboardScrollSteps {
                         row_height_px: row_height,
                         page_height_px: ui.clip_rect().height(),
+                        content_height_px: rows.len() as f32 * row_height,
                     }
                     .scroll_the_table(ui);
                 }
@@ -1177,6 +1192,7 @@ impl LogViewerWindow {
                     }
                 }
             });
+            focus.draw_focus(ui, output.inner_rect);
             #[expect(clippy::cast_sign_loss, reason = "Scroll offsets are nonnegative")]
             let first_visible_row = (output.state.offset.y / row_height).floor() as usize;
             state.table_reading_anchor = rows.at(first_visible_row).and_then(|row| {
@@ -1204,38 +1220,6 @@ impl LogViewerWindow {
 pub(super) fn row_height(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Monospace)
         .max(ui.spacing().interact_size.y)
-}
-
-struct KeyboardScrollSteps {
-    row_height_px: f32,
-    page_height_px: f32,
-}
-
-impl KeyboardScrollSteps {
-    /// Scrolls the table by the arrow and page keys pressed this frame. Each
-    /// press is consumed, which leaves nothing for another widget to act on.
-    /// An auto-repeat counts as a press of its own: holding a key keeps
-    /// scrolling.
-    fn scroll_the_table(&self, ui: &egui::Ui) {
-        let distance_px: f32 = [
-            (egui::Key::ArrowDown, self.row_height_px),
-            (egui::Key::ArrowUp, -self.row_height_px),
-            (egui::Key::PageDown, self.page_height_px),
-            (egui::Key::PageUp, -self.page_height_px),
-        ]
-        .into_iter()
-        .map(|(key, step_px)| {
-            let presses = ui
-                .ctx()
-                .input_mut(|input| input.count_and_consume_key(egui::Modifiers::NONE, key));
-            presses as f32 * step_px
-        })
-        .sum();
-        // egui reads the delta as a movement of the content, which runs
-        // against the scroll offset: a step towards the end of the log is
-        // negative.
-        ui.scroll_with_delta(egui::vec2(0.0, -distance_px));
-    }
 }
 
 /// The gutter left of the table: the order-anomaly column, then one column per
@@ -1603,7 +1587,7 @@ impl EntryRow<'_> {
         let row = ui.interact_opt(
             row.rect,
             row.id,
-            egui::Sense::click(),
+            egui::Sense::CLICK,
             InteractOptions { move_to_top: true },
         );
         let mut context_requested = false;

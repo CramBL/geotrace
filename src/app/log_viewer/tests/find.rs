@@ -227,7 +227,7 @@ fn find_preserves_queries_occurrences_and_source_text_across_tabs_and_chronology
     harness.run_steps(3);
     assert!(harness.state().viewer.open);
     assert!(!harness.state().active_find().open);
-    assert_eq!(harness.ctx.memory(|memory| memory.focused()), None);
+    table_focus::assert_table_focused(&harness);
 }
 
 #[test]
