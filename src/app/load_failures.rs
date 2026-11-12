@@ -11,8 +11,10 @@ use gt_store::{DatabaseRef, DbError, LogAttachmentError, LogAttachmentReadError}
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 
 pub(super) use recovery::{LoadFailureKind, LoadReadRequest, LoadRecovery, RecordingFileRead};
+pub(super) use retry::{LoadFailureId, LoadRetry, LoadRetryAttempt};
 
 mod recovery;
+mod retry;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum LoadSource {
@@ -189,36 +191,110 @@ impl fmt::Display for LoadFailureCause {
 pub(super) struct LoadFailures {
     retained: Vec<RetainedLoadFailure>,
     next_failure_id: u64,
+    next_retry_id: u64,
 }
 
 impl LoadFailures {
-    pub(super) fn push(&mut self, failure: LoadFailure) {
-        self.retained.push(RetainedLoadFailure {
-            failure_id: self.next_failure_id,
-            failure,
-        });
+    pub(super) fn push(&mut self, failure: LoadFailure) -> LoadFailureId {
+        let failure_id = LoadFailureId(self.next_failure_id);
         self.next_failure_id += 1;
+        self.retained.push(RetainedLoadFailure {
+            failure_id,
+            failure,
+            pending: None,
+        });
+        failure_id
+    }
+
+    pub(super) fn begin_retry(&mut self, failure: LoadFailureId) -> Option<LoadRetry> {
+        let retained = self
+            .retained
+            .iter_mut()
+            .find(|row| row.failure_id == failure)?;
+        if retained.pending.is_some() {
+            return None;
+        }
+        let LoadRecovery::Retry(request) = retained.failure.recovery() else {
+            return None;
+        };
+        let request = request.clone();
+        let attempt = LoadRetryAttempt::new(failure, self.next_retry_id);
+        self.next_retry_id += 1;
+        retained.pending = Some(attempt);
+        Some(LoadRetry {
+            attempt,
+            request,
+            source: retained.failure.source.clone(),
+        })
+    }
+
+    pub(super) fn finish_retry(
+        &mut self,
+        attempt: LoadRetryAttempt,
+        result: Result<(), LoadFailure>,
+    ) -> bool {
+        let Some(index) = self
+            .retained
+            .iter()
+            .position(|row| row.pending == Some(attempt))
+        else {
+            return false;
+        };
+        match result {
+            Ok(()) => {
+                self.retained.remove(index);
+            }
+            Err(failure) => {
+                if let Some(retained) = self.retained.get_mut(index) {
+                    retained.failure = failure;
+                    retained.pending = None;
+                }
+            }
+        }
+        true
+    }
+
+    pub(super) fn dismiss(&mut self, failure: LoadFailureId) {
+        self.retained.retain(|row| row.failure_id != failure);
+    }
+
+    pub(super) fn cancel_retry(&mut self, attempt: LoadRetryAttempt) {
+        if let Some(retained) = self
+            .retained
+            .iter_mut()
+            .find(|row| row.pending == Some(attempt))
+        {
+            retained.pending = None;
+        }
     }
 
     /// Shows one error window per failure, and removes the failures the user
     /// dismissed on this frame.
-    pub(super) fn show_windows(&mut self, ctx: &egui::Context) {
+    pub(super) fn show_windows(&mut self, ctx: &egui::Context) -> Vec<LoadFailureId> {
         let failure_count = self.retained.len();
-        let mut dismissed: Vec<u64> = Vec::new();
+        let mut dismissed = Vec::new();
+        let mut retries = Vec::new();
         let mut dismiss_all = false;
         for retained in &self.retained {
             match retained.show_window(ctx, failure_count) {
                 FailureWindowAction::Dismiss => dismissed.push(retained.failure_id),
                 FailureWindowAction::DismissAll => dismiss_all = true,
                 FailureWindowAction::Keep => {}
+                FailureWindowAction::Retry => retries.push(retained.failure_id),
             }
         }
         if dismiss_all {
             self.retained.clear();
         } else {
-            self.retained
-                .retain(|retained| !dismissed.contains(&retained.failure_id));
+            for failure in dismissed {
+                self.dismiss(failure);
+            }
         }
+        retries
+    }
+
+    pub(super) fn retry_is_pending(&self, attempt: LoadRetryAttempt) -> bool {
+        self.retained.iter().any(|row| row.pending == Some(attempt))
     }
 
     #[cfg(test)]
@@ -230,8 +306,9 @@ impl LoadFailures {
 struct RetainedLoadFailure {
     /// The window id of the failure: egui derives a window id from the title
     /// otherwise, and two failures of one source have the same title.
-    failure_id: u64,
+    failure_id: LoadFailureId,
     failure: LoadFailure,
+    pending: Option<LoadRetryAttempt>,
 }
 
 impl RetainedLoadFailure {
@@ -254,6 +331,19 @@ impl RetainedLoadFailure {
                         );
                     }),
                     DialogActionRow::buttons(|ui| {
+                        if matches!(failure.recovery(), LoadRecovery::Retry(_)) {
+                            let retry = ui
+                                .add_enabled(self.pending.is_none(), Button::new("Retry"))
+                                .on_hover_text("Read the original source again")
+                                .on_disabled_hover_text("The original source is being read");
+                            if retry.clicked() {
+                                action = FailureWindowAction::Retry;
+                            }
+                            if self.pending.is_some() {
+                                ui.spinner();
+                                ui.label("Retrying…");
+                            }
+                        }
                         if ui.button(DISMISS_BUTTON_LABEL).clicked() {
                             action = FailureWindowAction::Dismiss;
                         }
@@ -287,6 +377,7 @@ enum FailureWindowAction {
     Dismiss,
     DismissAll,
     Keep,
+    Retry,
 }
 
 const DISMISS_BUTTON_LABEL: &str = "Dismiss";
@@ -339,7 +430,9 @@ mod tests {
             retained.push(failure);
         }
         let mut harness = TestHarness::builder().size(viewport).ui_state(
-            |ui: &mut egui::Ui, failures: &mut LoadFailures| failures.show_windows(ui.ctx()),
+            |ui: &mut egui::Ui, failures: &mut LoadFailures| {
+                let _retries = failures.show_windows(ui.ctx());
+            },
             retained,
         );
         harness.run();
@@ -485,13 +578,26 @@ mod tests {
     #[rstest]
     fn the_window_keeps_its_actions_reachable_with_oversized_text(
         #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
+        #[values(false, true)] retrying: bool,
     ) {
-        let failure = LoadFailure::new(
-            LoadSource::Filename(gt_test_utils::oversized_text('f')),
-            unrecognised_log(&gt_test_utils::oversized_text('d')),
-        );
+        let failure = if retrying {
+            LoadFailure::new(
+                LoadSource::Filename(gt_test_utils::oversized_text('f')),
+                LoadFailureCause::ReadLogFile(io::Error::other(gt_test_utils::oversized_text('d'))),
+            )
+            .with_original_read(Some(LoadReadRequest::ReadLogFile("original.log".into())))
+        } else {
+            LoadFailure::new(
+                LoadSource::Filename(gt_test_utils::oversized_text('f')),
+                unrecognised_log(&gt_test_utils::oversized_text('d')),
+            )
+        };
         let title = failure.title();
         let mut harness = harness_showing_at(vec![failure], viewport);
+        if retrying {
+            let id = harness.state().retained.first().unwrap().failure_id;
+            assert!(harness.state_mut().begin_retry(id).is_some());
+        }
         harness.inner.run_steps(8);
         let window_id = harness
             .state()
@@ -502,6 +608,18 @@ mod tests {
 
         let window = AuditedWindow::identified(&title, window_id);
         harness.inner.assert_window_fits_the_viewport(window);
+        if retrying {
+            harness
+                .inner
+                .assert_control_is_reachable(window, ControlLabel("Retry"));
+            assert!(
+                harness
+                    .inner
+                    .get_by_label("Retry")
+                    .accesskit_node()
+                    .is_disabled()
+            );
+        }
         let copy_label = format!("{ICON_COPY} {COPY_DETAILS_BUTTON_LABEL}");
         for control in [
             DISMISS_BUTTON_LABEL,

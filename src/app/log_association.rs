@@ -58,6 +58,9 @@ impl App {
                 && years_resolved
                 && !ranked.ranked().is_empty()
             {
+                if self.log_viewer.restored_logs.is_new(id) {
+                    continue;
+                }
                 if self.association_dialog.is_some() {
                     break;
                 }
@@ -323,10 +326,11 @@ impl App {
         requested_by: loader::AttachedLogRequester,
     ) {
         match log {
-            Ok(attached) => self
-                .loader
-                .spawn_attached_log(attached, attachment, requested_by),
-            Err(error @ LogAttachmentError::Database(DbError::UnreadableLogAttachment { .. })) => {
+            Ok(attached) => {
+                self.loader
+                    .spawn_attached_log(attached, attachment, requested_by);
+            }
+            Err(error) => {
                 let request = LoadReadRequest::ReadAttachment(attachment.clone());
                 self.load_failures.push(
                     LoadFailure::new(
@@ -339,12 +343,6 @@ impl App {
                     .with_original_read(Some(request)),
                 );
             }
-            Err(LogAttachmentError::MissingLog { .. }) => self.log_viewer.report_warning(format!(
-                "{name} {EM_DASH} log missing from recording history"
-            )),
-            Err(err) => self
-                .log_viewer
-                .report_warning(format!("{name} {EM_DASH} {err}")),
         }
     }
 
