@@ -63,9 +63,9 @@ impl LogViewerWindow {
     ) {
         let hover = match request {
             SourceRequest::ShowBootSession(_) => "Show this boot session in the table",
-            SourceRequest::NavigateToEntry(_) | SourceRequest::NavigateToLine(_) => {
-                "Show this source line in the table"
-            }
+            SourceRequest::NavigateToEntry(_)
+            | SourceRequest::NavigateToLine(_)
+            | SourceRequest::ShowSurroundingLines(_) => "Show this source line in the table",
         };
         let response = ui.add(button).on_hover_text(hover);
         if response.clicked() {
@@ -101,15 +101,33 @@ impl LogViewerWindow {
         else {
             return;
         };
+        let reveal = self.log_state_mut(id).source_reveal;
+        let additional = self.table_rows(log, id).additional_source_count();
         ui.push_id(("log_source_navigation", id), |ui| {
             ui.horizontal(|ui| {
                 let chip = ui
-                    .add(Button::new(REVEAL_LABEL).small())
+                    .add(Button::new(format!("{additional} revealed")).small())
                     .on_hover_text(&reason);
                 chip.ctx
                     .accesskit_node_builder(chip.id, |node| node.set_description(reason.as_str()));
                 Popup::menu(&chip).show(|ui| {
                     ui.add(Label::new(&reason).selectable(true));
+                    if let Some(reveal) = reveal {
+                        let enabled = reveal.can_extend(log.parsed());
+                        if ui
+                            .add_enabled(enabled, Button::new("Show surrounding lines"))
+                            .on_hover_text(
+                                "Add nearby physical source lines within the context limit",
+                            )
+                            .on_disabled_hover_text(
+                                "The complete source range or context limit is shown",
+                            )
+                            .clicked()
+                        {
+                            self.navigate_to_source(log, id, reveal.context_request());
+                            ui.close();
+                        }
+                    }
                 });
                 let back = ui
                     .add(Button::new(RichText::new(ICON_RETURN)).small())
@@ -124,6 +142,7 @@ impl LogViewerWindow {
     }
 }
 
+#[cfg(test)]
 pub(super) const REVEAL_LABEL: &str = "1 revealed";
 pub(super) const RETURN_LABEL: &str = "Return to filtered results";
 pub(super) const UNAVAILABLE_SOURCE_LABEL: &str = "Source line unavailable";

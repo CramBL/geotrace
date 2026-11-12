@@ -12,7 +12,7 @@
 
 ### Changed
 
-- **Log Viewer:** Map, diagnostic and chronology links reveal exact source lines with a separate count and an action to return to filtered results.
+- **Log Viewer:** Source links reveal exact lines and expandable surrounding context with a separate count and an action to return to filtered results.
 - **Log Viewer:** Loaded logs use a single row of tabs, a searchable picker and separate new indicators for restored logs.
 - **Log Viewer:** The View menu includes structural source line visibility and service and level color preferences.
 - **Log Viewer:** Summary and date details open in a resizable inspector with separate scrolling while the table retains reading space.

@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use gt_loaded_files::LoadedFiles;
 use gt_logfile::YearResolution;
 use rstest::rstest;
@@ -226,4 +228,147 @@ fn semantic_invalidation_preserves_the_return_origin_before_replacement_navigati
     assert!(viewer.navigate_to_source(log, id, SourceRequest::NavigateToEntry(3)));
     viewer.return_to_filtered_results(id);
     assert_eq!(viewer.log_state_mut(id).scroll_to_source_line, prior);
+}
+
+#[rstest]
+#[case::first(1, 1..=6)]
+#[case::middle(9, 4..=14)]
+#[case::last(18, 13..=18)]
+fn bounded_context_merges_physical_rows_without_duplicates(
+    #[case] target: u32,
+    #[case] expected: RangeInclusive<u32>,
+    #[values(false, true)] structural: bool,
+) {
+    let text = "2026-01-01 23:59:59 keep\n\n--- Device reboot ---\n2026-01-02 00:00:01 hidden\n \t\n2026-01-02 00:01:01 keep\n".repeat(3);
+    let mut logs = LoadedLogs::default();
+    let id = logs.push(source_log(&text)).id();
+    let (filters, _) = logs.filter_stack_mut_by_id(id).unwrap();
+    filters.set_live_filter_text("absent");
+    filters.wait_for_queries();
+    let log = logs.get_by_id(id).unwrap();
+    let mut viewer = LogViewerWindow::new();
+    viewer.show_structural_lines = structural;
+    assert!(viewer.navigate_to_source(log, id, SourceRequest::ShowSurroundingLines(target)));
+    let rows = viewer.table_rows(log, id);
+    let mut physical = (0..rows.len())
+        .filter_map(|row| match rows.at(row).unwrap() {
+            LineTableRow::Entry { .. }
+            | LineTableRow::Structural { .. }
+            | LineTableRow::RenderRawSource { .. } => {
+                rows.at(row).unwrap().source_line(log.parsed())
+            }
+            LineTableRow::BootDivider {
+                structural_index: Some(index),
+                ..
+            } => Some(
+                log.parsed()
+                    .structural_lines()
+                    .get(index)
+                    .unwrap()
+                    .line_number,
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(physical.windows(2).all(|pair| pair.first() < pair.get(1)));
+    if structural {
+        physical.retain(|line| expected.contains(line));
+    }
+    assert_eq!(physical, expected.clone().collect::<Vec<_>>());
+    assert_eq!(
+        rows.additional_source_count(),
+        expected
+            .filter(|line| !structural || !matches!(line, 3 | 9 | 15))
+            .count()
+    );
+    assert_eq!(
+        rows.at(rows
+            .row_of_identity(TableRowIdentity::RenderRawSource(5))
+            .unwrap_or(usize::MAX)),
+        if (target.saturating_sub(5)..=target + 5).contains(&5) {
+            Some(LineTableRow::RenderRawSource { line_number: 5 })
+        } else {
+            None
+        }
+    );
+}
+
+#[test]
+fn raw_source_requests_preserve_return_origins_and_reject_missing_lines() {
+    let mut logs = LoadedLogs::default();
+    let id = logs
+        .push(source_log(
+            "2026-01-01 00:00:00 keep\n \t\n2026-01-01 00:00:01 hidden\n",
+        ))
+        .id();
+    let log = logs.get_by_id(id).unwrap();
+    let mut viewer = LogViewerWindow::new();
+    let prior = TableReadingAnchor {
+        log: id,
+        source_line: 1,
+        row: TableRowIdentity::Entry(0),
+        offset_within_row_px: 2.0,
+    };
+    viewer.log_state_mut(id).table_reading_anchor = Some(prior);
+    assert!(viewer.navigate_to_source(log, id, SourceRequest::NavigateToLine(2)));
+    assert_eq!(
+        viewer.log_state_mut(id).source_reveal.unwrap().source(),
+        SourceRow::RenderRawLine(2)
+    );
+    let pending = viewer.log_state_mut(id).scroll_to_source_line;
+    for line in [0, 4] {
+        assert!(!viewer.navigate_to_source(log, id, SourceRequest::NavigateToLine(line)));
+        assert_eq!(viewer.log_state_mut(id).scroll_to_source_line, pending);
+    }
+    assert!(viewer.navigate_to_source(log, id, SourceRequest::ShowSurroundingLines(2)));
+    viewer.return_to_filtered_results(id);
+    assert_eq!(viewer.log_state_mut(id).scroll_to_source_line, Some(prior));
+    assert_eq!(viewer.table_rows(log, id).additional_source_count(), 0);
+}
+
+#[test]
+fn context_extensions_remain_bounded_across_pending_scans_and_chronology_rebuilds() {
+    let files = LoadedFiles::new();
+    let text = (0..200)
+        .map(|index| format!("Jan 01 00:00:00 kernel: entry {index}\n"))
+        .collect::<String>();
+    let mut logs = LoadedLogs::default();
+    let id = logs.push(source_log(&text)).id();
+    let (filters, _) = logs.filter_stack_mut_by_id(id).unwrap();
+    filters.set_live_filter_text("absent");
+    let mut viewer = LogViewerWindow::new();
+    assert!(viewer.navigate_to_source(
+        logs.get_by_id(id).unwrap(),
+        id,
+        SourceRequest::ShowSurroundingLines(100)
+    ));
+    logs.filter_stack_mut_by_id(id)
+        .unwrap()
+        .0
+        .wait_for_queries();
+    for _ in 0..20 {
+        let log = logs.get_by_id(id).unwrap();
+        assert!(viewer.navigate_to_source(log, id, SourceRequest::ShowSurroundingLines(100)));
+    }
+    let log = logs.get_by_id(id).unwrap();
+    let reveal = viewer.log_state_mut(id).source_reveal.unwrap();
+    assert!(!reveal.can_extend(log.parsed()));
+    assert_eq!(viewer.table_rows(log, id).additional_source_count(), 101);
+    viewer.preserve_source_position_after_chronology_change(log, id);
+    assert!(
+        logs.get_mut_by_id(id)
+            .unwrap()
+            .resolve_years_as(YearResolution::PlaceLastEntryInYear(2024), &files.view())
+    );
+    assert_eq!(viewer.log_state_mut(id).source_reveal, Some(reveal));
+    assert_eq!(
+        viewer
+            .table_rows(logs.get_by_id(id).unwrap(), id)
+            .additional_source_count(),
+        101
+    );
+    let (filters, _) = logs.filter_stack_mut_by_id(id).unwrap();
+    filters.set_live_filter_text("entry");
+    viewer.table_rows(logs.get_by_id(id).unwrap(), id);
+    assert_eq!(viewer.log_state_mut(id).source_reveal, None);
 }

@@ -7,9 +7,10 @@ use super::*;
 
 #[derive(Debug, PartialEq, Eq)]
 enum RowIdentity {
-    Entry(usize),
-    Day(usize),
     Boot(usize, Option<usize>),
+    Day(usize),
+    Entry(usize),
+    RenderRaw(u32),
     Structural(usize),
 }
 
@@ -22,6 +23,7 @@ impl From<LineTableRow> for RowIdentity {
                 session_index,
                 structural_index,
             } => Self::Boot(session_index, structural_index),
+            LineTableRow::RenderRawSource { line_number } => Self::RenderRaw(line_number),
             LineTableRow::Structural { structural_index } => Self::Structural(structural_index),
         }
     }
@@ -274,7 +276,7 @@ fn large_row_plans_share_entry_indices_and_ticks_with_one_reveal_overlay() {
         &before.ticks.filtered,
         &revealed.ticks.filtered
     ));
-    let overlay = revealed.entries.reveal.as_ref().unwrap();
+    let overlay = revealed.entries.reveals.first().unwrap();
     assert_eq!(overlay.entry_index, 50_001);
     assert_eq!(overlay.visible_row, 25_001);
     assert_eq!(revealed.row_of_exact_entry(50_001), Some(25_002));
@@ -413,4 +415,37 @@ fn revealing_an_eligible_entry_before_visible_device_clock_rows_replaces_the_lat
             Entry(4)
         ]
     );
+}
+
+#[test]
+fn context_overlays_recompute_adjacent_and_separated_entry_clock_boundaries() {
+    let source = "2026-01-01 23:59:59 keep\n2026-01-02 00:00:01 hidden\n2026-01-02 00:01:01 hidden\n2026-01-02 00:01:02 keep\n2026-01-03 00:00:01 hidden\n2026-01-03 00:01:01 keep\n";
+    let mut logs = LoadedLogs::default();
+    let id = logs.push(source_log(source)).id();
+    let (filters, _) = logs.filter_stack_mut_by_id(id).unwrap();
+    filters.set_live_filter_text("keep");
+    filters.wait_for_queries();
+    let log = logs.get_by_id(id).unwrap();
+    let mut viewer = LogViewerWindow::new();
+    assert!(viewer.navigate_to_source(log, id, SourceRequest::ShowSurroundingLines(3)));
+    let rows = viewer.table_rows(log, id);
+    let reference = ClockTicks::of(log.parsed(), &VisibleEntries::All { entry_count: 6 });
+    assert_eq!(
+        (0..6).map(|row| rows.ticks.tick(row)).collect::<Vec<_>>(),
+        (0..6).map(|row| reference.tick(row)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        (0..rows.len())
+            .filter_map(|row| match rows.at(row).unwrap() {
+                LineTableRow::DayDivider { entry_index } => Some(entry_index),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![1, 4]
+    );
+    assert_eq!(rows.additional_source_count(), 3);
+    assert!(Arc::ptr_eq(
+        &rows.entries.filtered,
+        &log.filters().shared_visible_entries()
+    ));
 }

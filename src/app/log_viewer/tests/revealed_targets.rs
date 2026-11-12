@@ -208,3 +208,60 @@ May 20 12:00:00 host svc: anchor
 Logs begin at: Wed 20-May-2026 12:00:00 UTC
 Logs end at: Wed 20-May-2026 12:00:10 UTC
 ";
+
+#[rstest]
+#[case::default(VIEWER_SIZE, "log_viewer_source_context")]
+#[case::narrow(NARROW_VIEWPORT, "log_viewer_source_context_narrow")]
+#[case::short(SHORT_VIEWPORT, "log_viewer_source_context_short")]
+fn entry_context_menus_extend_source_ranges_and_keep_the_selected_target_visible(
+    #[case] viewport: egui::Vec2,
+    #[case] snapshot: &str,
+) {
+    let text = super::long_log(LONG_LOG_ENTRIES).replace(
+        &format!(
+            "{} navsyncd: entry 99\n",
+            super::long_log_entry_timestamp(99)
+        ),
+        " \t\n",
+    );
+    let mut rendering = TestHarness::builder().size(viewport).ui_state(
+        super::viewer_ui,
+        super::viewer_state(Vec::new(), &[("context.log", &text)]),
+    );
+    let harness = &mut rendering.inner;
+    harness.run_steps(3);
+    super::type_into_live_filter(harness, "entry 100");
+    let prior = SourceReadingPosition::of(harness);
+    harness
+        .get_by_label("navsyncd: entry 100")
+        .click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Show surrounding lines").click();
+    harness.run_steps(3);
+    harness.get_by_label("10 revealed");
+    let selected = harness.get_by_label("navsyncd: entry 100").rect();
+    assert!(
+        SourceReadingPosition::of(harness)
+            .viewport
+            .contains_rect(selected)
+    );
+    harness.assert_window_fits_the_viewport(AuditedWindow::titled(LOG_VIEWER_TITLE));
+    harness.get_by_label("10 revealed").click();
+    harness.run_steps(2);
+    harness.get_by_label("Show surrounding lines").click();
+    harness.run_steps(3);
+    harness.get_by_label("20 revealed");
+    assert!(
+        SourceReadingPosition::of(harness)
+            .viewport
+            .contains_rect(harness.get_by_label("navsyncd: entry 100").rect())
+    );
+    rendering.snapshot_with_color_tolerance(snapshot);
+    let harness = &mut rendering.inner;
+    harness
+        .get_by_label(source_navigation_ui::RETURN_LABEL)
+        .click();
+    harness.run_steps(3);
+    prior.assert_retained(harness);
+    assert!(harness.query_by_label("navsyncd: entry 98").is_none());
+}
