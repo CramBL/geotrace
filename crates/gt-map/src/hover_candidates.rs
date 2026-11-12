@@ -1,5 +1,5 @@
 use gt_types::DataCategory;
-use gt_ui_types::{MapElementRef, PresentElementRef};
+use gt_ui_types::{MapElementRef, MapPresence, MapPresenceResult, PresentElementRef};
 
 /// The nearest element present on the map per category group under the cursor.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -59,6 +59,16 @@ impl HoverCandidates {
     /// cannot resolve which one the user meant.
     pub(crate) fn is_ambiguous(&self) -> bool {
         self.iter().count() > 1
+    }
+
+    pub(crate) fn retaining_present(self, scope: MapPresence<'_>) -> Self {
+        let mut result = Self::default();
+        for candidate in self.iter() {
+            if let MapPresenceResult::Present(present) = scope.resolve(candidate) {
+                result.keep_nearest(present);
+            }
+        }
+        result
     }
 
     pub(crate) fn every_category_filled(&self) -> bool {

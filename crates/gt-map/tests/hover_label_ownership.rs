@@ -260,7 +260,10 @@ enum PopupOverTheMap {
 impl PopupOverTheMap {
     fn open_on(self, map: &mut RenderedMap, target: egui::Pos2) {
         match self {
-            Self::Disambiguation => map.click_at(target),
+            Self::Disambiguation => {
+                map.click_at(target);
+                map.finish_primary_click();
+            }
             Self::ContextMenu => map.secondary_click_at(target),
         }
     }

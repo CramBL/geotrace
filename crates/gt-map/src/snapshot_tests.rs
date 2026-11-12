@@ -1092,6 +1092,7 @@ fn clicking_a_hexagon_hands_its_log_and_lines_to_the_viewer() {
     let mut map = log_hover_harness();
 
     map.click_at(test_util::viewport_center());
+    map.finish_primary_click();
 
     let clicked = map
         .clicked_log_glyph()

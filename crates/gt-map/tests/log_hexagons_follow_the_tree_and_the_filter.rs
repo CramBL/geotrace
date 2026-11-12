@@ -78,6 +78,7 @@ fn pointing_at_the_hexagon_on_fix(
     map.render_one_more_frame();
     let hovered = map.hovered_log_glyph();
     map.click_at(target);
+    map.finish_primary_click();
     PointedGlyphs {
         hovered,
         clicked: map.clicked_log_glyph(),
@@ -326,5 +327,6 @@ fn log_hexagon_uses_entry_time_when_track_lines_are_hidden(
     map.render_one_more_frame();
     assert_eq!(map.hovered_log_glyph().is_some(), present);
     map.click_at(target);
+    map.finish_primary_click();
     assert_eq!(map.clicked_log_glyph().is_some(), present);
 }
