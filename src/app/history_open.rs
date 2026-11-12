@@ -450,6 +450,13 @@ impl App {
         placement: LoadedRecordingPlacement,
         result: Result<OpenedRecording, DbError>,
     ) {
+        let retry = match &origin {
+            RecordingOperationOrigin::Retry(attempt) => Some(*attempt),
+            _ => None,
+        };
+        if retry.is_some_and(|attempt| !self.load_failures.retry_is_pending(attempt)) {
+            return;
+        }
         match result {
             Ok(opened) => {
                 self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
@@ -461,13 +468,16 @@ impl App {
                     recording: db_ref.clone(),
                     placement,
                 };
-                self.load_failures.push(
-                    LoadFailure::new(
-                        LoadSource::StoredRecording(db_ref),
-                        LoadFailureCause::OpenStoredRecording(Box::new(e)),
-                    )
-                    .with_original_read(Some(request)),
-                );
+                let failure = LoadFailure::new(
+                    LoadSource::StoredRecording(db_ref),
+                    LoadFailureCause::OpenStoredRecording(Box::new(e)),
+                )
+                .with_original_read(Some(request));
+                if let Some(attempt) = retry {
+                    self.load_failures.finish_retry(attempt, Err(failure));
+                } else {
+                    self.load_failures.push(failure);
+                }
             }
         }
     }
@@ -542,8 +552,15 @@ impl App {
             Response::AttachedLogLoaded {
                 attachment,
                 name,
+                retry,
                 log,
-            } => self.load_the_attachment_the_user_opened(attachment, &name, log),
+            } => {
+                if let Some(attempt) = retry {
+                    self.finish_attachment_retry_read(attempt, attachment, name, log);
+                } else {
+                    self.load_the_attachment_the_user_opened(attachment, &name, log);
+                }
+            }
             Response::LogDetached {
                 attachment,
                 log,
@@ -734,6 +751,11 @@ impl App {
         else {
             return;
         };
+        if let RecordingOperationOrigin::Retry(attempt) = &prompt.origin
+            && !self.load_failures.retry_is_pending(*attempt)
+        {
+            return;
+        }
         let current = loader::stored_segmentation_from_config(&self.processing_config);
         let stored = prompt.stored;
         let recalculation_warning = MarksDroppedByRecalculating::of_the_prompted_recording(
@@ -878,7 +900,11 @@ impl App {
                     prompt.origin,
                 );
             }
-            Some(ResegmentChoice::Cancel) => {}
+            Some(ResegmentChoice::Cancel) => {
+                if let RecordingOperationOrigin::Retry(attempt) = prompt.origin {
+                    self.load_failures.cancel_retry(attempt);
+                }
+            }
             // No choice yet: keep the prompt open for the next frame.
             None => self.pending_resegment = Some(prompt),
         }

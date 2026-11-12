@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::PathBuf,
     sync::{Arc, mpsc},
@@ -19,7 +20,7 @@ use gt_types::{LoadedFile, TrackAggregates};
 
 use super::association_batches::{LogArrival, RecordingOperationOrigin};
 use super::load_failures::{
-    LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource, RecordingFileRead,
+    LoadFailure, LoadFailureCause, LoadReadRequest, LoadRetryAttempt, LoadSource, RecordingFileRead,
 };
 use crate::app::background_thread;
 
@@ -86,13 +87,26 @@ pub(super) enum LoadCompletion {
 }
 
 impl LoadCompletion {
+    pub(super) fn into_retry_result(self) -> Result<Self, LoadFailure> {
+        match self {
+            Self::LooseLog {
+                result: Err(failure),
+                ..
+            }
+            | Self::Recording {
+                result: Err(failure),
+                ..
+            }
+            | Self::SavedLog {
+                result: Err(failure),
+            } => Err(failure),
+            completion => Ok(completion),
+        }
+    }
+
     #[cfg(test)]
     fn failure(self) -> Option<LoadFailure> {
-        match self {
-            Self::LooseLog { result, .. } => result.err(),
-            Self::Recording { result, .. } => result.err(),
-            Self::SavedLog { result } => result.err(),
-        }
+        self.into_retry_result().err()
     }
 }
 
@@ -138,6 +152,7 @@ pub(super) struct CompletedLoad {
     pub filename: String,
     pub elapsed_secs: f32,
     pub completion: LoadCompletion,
+    pub retry: Option<LoadRetryAttempt>,
 }
 
 /// Where the app puts a recording a load finished: in an entry of its own, or
@@ -256,6 +271,7 @@ pub(super) struct LoadJobs {
     pub loading_jobs: Vec<LoadingJob>,
     pub finishing_jobs: Vec<FinishedJob>,
     next_id: u64,
+    retries: BTreeMap<u64, LoadRetryAttempt>,
     file_dialog_rx: Option<mpsc::Receiver<Option<(PathBuf, GtdLoadMode)>>>,
     /// Path to the history database file, forwarded to background load threads
     /// so they can insert recordings after parsing.  `None` when storage is
@@ -280,6 +296,7 @@ impl LoadJobs {
             loading_jobs: Vec::new(),
             finishing_jobs: Vec::new(),
             next_id: 0,
+            retries: BTreeMap::new(),
             file_dialog_rx: None,
             db_path: None,
             analysis_config: AnalysisConfig::default(),
@@ -357,6 +374,9 @@ impl LoadJobs {
             open,
         } = request.clone();
         let id = self.alloc_id();
+        if let RecordingOperationOrigin::Retry(attempt) = &origin {
+            self.retries.insert(id, *attempt);
+        }
         let started_at = self.frame_time();
         let filename = path
             .file_name()
@@ -474,6 +494,9 @@ impl LoadJobs {
                 placement: open.placement(),
             });
         let id = self.alloc_id();
+        if let RecordingOperationOrigin::Retry(attempt) = &origin {
+            self.retries.insert(id, *attempt);
+        }
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
             id,
@@ -556,7 +579,7 @@ impl LoadJobs {
         });
     }
 
-    pub fn spawn_log_path(&mut self, path: PathBuf, arrival: LogArrival) {
+    pub fn spawn_log_path(&mut self, path: PathBuf, arrival: LogArrival) -> u64 {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         let filename = path
@@ -613,6 +636,7 @@ impl LoadJobs {
             .ok();
             ctx.request_repaint();
         });
+        id
     }
 
     /// Loads the bytes of a dropped log, which need not be valid UTF-8.
@@ -646,7 +670,7 @@ impl LoadJobs {
         }: AttachedLog,
         attachment: LogAttachmentRef,
         requested_by: AttachedLogRequester,
-    ) {
+    ) -> u64 {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
@@ -693,6 +717,7 @@ impl LoadJobs {
             .ok();
             ctx.request_repaint();
         });
+        id
     }
 
     /// Spawn a background thread that shows the OS file-picker dialog.
@@ -726,6 +751,12 @@ impl LoadJobs {
         path_opt
     }
 
+    pub(super) fn mark_retry(&mut self, job: u64, attempt: LoadRetryAttempt) {
+        debug_assert!(self.loading_jobs.iter().any(|loading| loading.id == job));
+        let previous = self.retries.insert(job, attempt);
+        debug_assert!(previous.is_none());
+    }
+
     /// Drain all pending channel messages. Updates `loading_jobs` for progress
     /// messages, returns one `CompletedLoad` per finished job.
     pub fn drain(&mut self) -> Vec<CompletedLoad> {
@@ -753,6 +784,7 @@ impl LoadJobs {
                         filename: job.filename,
                         elapsed_secs: (frame_time - job.started_at) as f32,
                         completion,
+                        retry: self.retries.remove(&id),
                     });
                 }
             }
@@ -1746,21 +1778,23 @@ mod tests {
         fn spawn(self, jobs: &mut LoadJobs, dir: &Path, arrival: LogArrival) {
             let junk = "no recording and no timestamp";
             match self {
-                Self::AttachedLog => jobs.spawn_attached_log(
-                    AttachedLog {
-                        name: "broken.log".to_owned(),
-                        text: junk.to_owned(),
-                        settings: StoredLogSettings {
-                            association_window: None,
-                            filters: Default::default(),
-                            year_reference: None,
-                            year_resolution: StoredYearResolution::Infer,
+                Self::AttachedLog => {
+                    jobs.spawn_attached_log(
+                        AttachedLog {
+                            name: "broken.log".to_owned(),
+                            text: junk.to_owned(),
+                            settings: StoredLogSettings {
+                                association_window: None,
+                                filters: Default::default(),
+                                year_reference: None,
+                                year_resolution: StoredYearResolution::Infer,
+                            },
+                            parse_year_reference: Utc::now(),
                         },
-                        parse_year_reference: Utc::now(),
-                    },
-                    FAILING_ATTACHMENT.clone(),
-                    AttachedLogRequester::RecordingLoad,
-                ),
+                        FAILING_ATTACHMENT.clone(),
+                        AttachedLogRequester::RecordingLoad,
+                    );
+                }
                 Self::GtdBytes => jobs.spawn_gtd_bytes(
                     Arc::from(junk.as_bytes()),
                     "broken.gtd".to_owned(),
@@ -1810,7 +1844,9 @@ mod tests {
                     fs::write(&path, junk).expect("write the junk log");
                     jobs.spawn_log_path(path, arrival);
                 }
-                Self::MissingLogPath => jobs.spawn_log_path(dir.join("broken.log"), arrival),
+                Self::MissingLogPath => {
+                    jobs.spawn_log_path(dir.join("broken.log"), arrival);
+                }
                 Self::PastedText => jobs.spawn_pasted_log_text(junk.to_owned(), arrival),
             }
         }

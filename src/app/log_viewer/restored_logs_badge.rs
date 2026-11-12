@@ -65,7 +65,7 @@ impl RestoredLogsBadge {
         self.unseen.len()
     }
 
-    pub(super) fn is_new(&self, id: LoadedLogId) -> bool {
+    pub(in crate::app) fn is_new(&self, id: LoadedLogId) -> bool {
         self.unseen.contains(&id)
     }
 

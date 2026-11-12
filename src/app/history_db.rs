@@ -32,6 +32,7 @@ use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
 
 use super::association_batches::RecordingOperationOrigin;
+use super::load_failures::LoadRetryAttempt;
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
 use crate::app::loader::{self, LoadedRecordingPlacement};
@@ -114,6 +115,7 @@ enum ReadRequest {
     LoadAttachedLog {
         attachment: LogAttachmentRef,
         name: String,
+        retry: Option<LoadRetryAttempt>,
     },
     /// Read back every log attached to a recording that just opened.
     LoadAttachedLogs(DatabaseRef),
@@ -248,6 +250,7 @@ pub enum Response {
     AttachedLogLoaded {
         attachment: LogAttachmentRef,
         name: String,
+        retry: Option<LoadRetryAttempt>,
         log: Result<AttachedLog, LogAttachmentError>,
     },
     AttachedLogSettingsStored(AttachmentSettingsCompletion),
@@ -530,7 +533,43 @@ impl HistoryWorker {
     }
 
     pub fn load_attached_log(&self, attachment: LogAttachmentRef, name: String) {
-        self.send_read(ReadRequest::LoadAttachedLog { attachment, name });
+        self.send_read(ReadRequest::LoadAttachedLog {
+            attachment,
+            name,
+            retry: None,
+        });
+    }
+
+    pub(super) fn retry_attached_log(
+        &self,
+        attachment: LogAttachmentRef,
+        name: String,
+        attempt: LoadRetryAttempt,
+    ) -> bool {
+        self.req_tx.as_ref().is_some_and(|tx| {
+            tx.send(Request::Read(ReadRequest::LoadAttachedLog {
+                attachment,
+                name,
+                retry: Some(attempt),
+            }))
+            .is_ok()
+        })
+    }
+
+    pub(super) fn retry_recording(
+        &self,
+        recording: DatabaseRef,
+        placement: LoadedRecordingPlacement,
+        attempt: LoadRetryAttempt,
+    ) -> bool {
+        self.req_tx.as_ref().is_some_and(|tx| {
+            tx.send(Request::Read(ReadRequest::Open {
+                origin: RecordingOperationOrigin::Retry(attempt),
+                db_ref: recording,
+                placement,
+            }))
+            .is_ok()
+        })
     }
 
     pub fn detach_log(&self, attachment: LogAttachmentRef, log: LoadedLogId, name: String) {
@@ -719,11 +758,16 @@ fn handle_read_request(
                 attachments,
             }
         }
-        ReadRequest::LoadAttachedLog { attachment, name } => {
+        ReadRequest::LoadAttachedLog {
+            attachment,
+            name,
+            retry,
+        } => {
             let log = db.load_attached_log(&attachment.recording, attachment.id);
             Response::AttachedLogLoaded {
                 attachment,
                 name,
+                retry,
                 log,
             }
         }

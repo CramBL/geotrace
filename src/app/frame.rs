@@ -119,7 +119,9 @@ impl eframe::App for App {
         self.show_loading_progress_overlay(ui);
         show_drop_hint_overlay(ui.ctx());
         self.show_debug_build_and_read_only_markers(ui);
-        self.load_failures.show_windows(ui.ctx());
+        for failure in self.load_failures.show_windows(ui.ctx()) {
+            self.retry_load_failure(failure);
+        }
         self.apply_pending_unload_and_removal(ui);
 
         modals::show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);

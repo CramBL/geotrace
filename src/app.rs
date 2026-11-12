@@ -71,6 +71,7 @@ mod history_open;
 mod instance_wait;
 mod jamming;
 mod load_failures;
+mod load_recovery;
 mod loader;
 mod log_association;
 mod log_viewer;
@@ -166,6 +167,7 @@ impl SharedAppState {
 
 enum ParsedLogOrigin<'a> {
     Loose(&'a LogArrival),
+    RecoverLoose(&'a LogArrival),
     Saved(AttachedLogRestore),
 }
 
@@ -952,6 +954,9 @@ impl App {
     }
 
     fn handle_completed_load(&mut self, completed: CompletedLoad, now: f64) {
+        let Some(completed) = self.complete_load_retry(completed) else {
+            return;
+        };
         match completed.completion {
             LoadCompletion::Recording {
                 origin,
@@ -1053,7 +1058,12 @@ impl App {
                 arrival,
                 result: Ok(LooseLogResult { filename, parsed }),
             } => {
-                self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Loose(&arrival));
+                let origin = if completed.retry.is_some() {
+                    ParsedLogOrigin::RecoverLoose(&arrival)
+                } else {
+                    ParsedLogOrigin::Loose(&arrival)
+                };
+                self.integrate_parsed_log(filename, parsed, origin);
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
                     elapsed_secs: completed.elapsed_secs,
@@ -1139,6 +1149,7 @@ impl App {
         let log = LoadedLog::new(filename, parsed, window);
         let requested_by = match &origin {
             ParsedLogOrigin::Loose(_) => None,
+            ParsedLogOrigin::RecoverLoose(_) => Some(loader::AttachedLogRequester::RecordingLoad),
             ParsedLogOrigin::Saved(restore) => Some(restore.requested_by),
         };
         let entry_count = log.parsed().entries().len();
@@ -1151,7 +1162,7 @@ impl App {
                 restore.settings,
                 &shared.loaded_files.view(),
             ),
-            ParsedLogOrigin::Loose(arrival) => {
+            ParsedLogOrigin::Loose(arrival) | ParsedLogOrigin::RecoverLoose(arrival) => {
                 let outcome = self.logs.push(log);
                 if let LogPushOutcome::NewlyLoaded(id) = outcome {
                     self.association_batches.register_log(arrival, id);

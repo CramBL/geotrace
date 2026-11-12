@@ -2020,9 +2020,8 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
     }
 }
 
-/// The stored log is gone from the store, and the recording still opens.
 #[test]
-fn an_attachment_whose_log_file_is_gone_is_reported_in_the_viewer() {
+fn an_attachment_whose_log_file_is_gone_is_retained_as_a_load_failure() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
@@ -2040,10 +2039,8 @@ fn an_attachment_whose_log_file_is_gone_is_reported_in_the_viewer() {
     );
 
     assert!(
-        harness.step_until(|harness| harness
-            .query_by_label_contains("log missing from recording history")
-            .is_some()),
-        "the viewer says the attachment did not come back"
+        harness.step_until(|harness| harness.state().load_failures.iter().count() == 1),
+        "the attachment failure is retained"
     );
     assert_eq!(
         harness.state().shared.borrow().loaded_files.len(),

@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use gt_loaded_files::LoadedFileId;
 use gt_ui_types::LoadedLogId;
 
+use super::load_failures::LoadRetryAttempt;
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct AssociationBatchId(u64);
 
@@ -92,6 +94,7 @@ pub(super) struct AssociationBatches(BatchRegistry);
 pub enum RecordingOperationOrigin {
     Arrival(RecordingArrival),
     Independent,
+    Retry(LoadRetryAttempt),
 }
 
 /// The app transfers each recording operation through screening, prompts and loading.
