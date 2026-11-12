@@ -62,6 +62,7 @@ fn build_loaded_file_carries_file_meta() {
         device: Some("uBlox F9P".to_owned()),
         notes: Some("cross-town".to_owned()),
         travel_mode: Some(TravelMode::Bicycle),
+        debug_time_repair_threshold: None,
     };
     let f = segment::build_loaded_file(
         "ride.gtd".to_owned(),

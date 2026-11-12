@@ -780,6 +780,7 @@ pub struct FileMetadata {
     pub notes: Option<String>,
     /// Optional declared travel mode from the recording's SDK metadata.
     pub travel_mode: Option<TravelMode>,
+    pub debug_time_repair_threshold: Option<Duration>,
 }
 
 impl FileMetadata {

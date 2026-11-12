@@ -5,7 +5,9 @@ use uom::si::velocity::kilometer_per_hour;
 
 use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
 use crate::time_types::{FixTimestamp, GpsTime, SysTime};
-use crate::{BootTime, SystemBootTimePair};
+use crate::{
+    BootClockBackwardStep, BootTime, SystemBootComparison, SystemBootDelta, SystemBootTimePair,
+};
 
 pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64> {
     tpvs.iter().map(Coord::from).collect()
@@ -38,6 +40,9 @@ pub struct TimePositionVelocity {
     /// `None` when the host did not record a system timestamp.
     pub(crate) sys_time: Option<SysTime>,
     pub(crate) boot_time: Option<BootTime>,
+    pub(crate) system_boot_comparison: Option<SystemBootComparison>,
+    pub(crate) boot_clock_backward_step: Option<BootClockBackwardStep>,
+    pub(crate) debug_time_repair_threshold: Option<Duration>,
     pub(crate) eph_m: Option<f32>,
 }
 
@@ -105,6 +110,23 @@ impl TimePositionVelocity {
 
     pub fn boot_time(&self) -> Option<BootTime> {
         self.boot_time
+    }
+
+    pub fn system_boot_comparison(&self) -> Option<SystemBootComparison> {
+        self.system_boot_comparison
+    }
+
+    pub fn system_boot_delta(&self) -> Option<SystemBootDelta> {
+        self.system_boot_comparison
+            .map(|comparison| comparison.delta)
+    }
+
+    pub fn boot_clock_backward_step(&self) -> Option<BootClockBackwardStep> {
+        self.boot_clock_backward_step
+    }
+
+    pub fn debug_time_repair_threshold(&self) -> Option<Duration> {
+        self.debug_time_repair_threshold
     }
 
     pub fn system_boot_time_pair(&self) -> Option<SystemBootTimePair> {

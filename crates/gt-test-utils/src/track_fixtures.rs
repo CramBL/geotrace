@@ -45,6 +45,7 @@ pub fn empty_file_metadata() -> FileMetadata {
         device: None,
         notes: None,
         travel_mode: None,
+        debug_time_repair_threshold: None,
     }
 }
 

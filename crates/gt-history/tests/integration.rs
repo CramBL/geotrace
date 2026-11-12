@@ -2,8 +2,8 @@ use std::path::Path;
 use std::{env, fs};
 
 use geotrace_sdk::{
-    Angle, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix, NavFixTime,
-    PositionProvenance, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity,
+    Angle, BootTime, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix,
+    NavFixTime, PositionProvenance, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity,
     SatelliteMembership, SatelliteObservationReport, SatelliteReportPlacement, SatelliteScope,
     SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionState,
 };
@@ -24,7 +24,7 @@ use gt_history_types::{
 };
 use gt_test_utils::navigation_evidence_fixtures::{self, NavigationDetail};
 use gt_track_builder::{FixPlacementRule, SegmentationConfig};
-use gt_types::{LoadedTrack, SatelliteQueryScope};
+use gt_types::{LoadedFile, LoadedTrack, SatelliteQueryScope};
 use hdf5::File as NativeFile;
 use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceStrategy};
 use rstest::rstest;
@@ -4507,4 +4507,94 @@ fn navigation_only_source_facts_and_inferred_positions_survive_history() {
                 .is_none()
         );
     }
+}
+
+#[rstest]
+#[case::insert(false)]
+#[case::replacement(true)]
+fn boot_clock_readings_and_reference_survive_history_reopening_and_shelving(
+    #[case] replacement: bool,
+) {
+    let start = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let mut recorder = NavFileBuilder::new().open();
+    for (index, boot_us) in [Some(0), None, Some(u64::MAX - 1)].into_iter().enumerate() {
+        let time = start + Duration::seconds(index as i64 * 600);
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(NavFixTime::Host(time))
+                .lat(Angle::degrees(55.0))
+                .lon(Angle::degrees(12.0))
+                .maybe_boot_time(boot_us.map(|value| BootTime::from_micros(value).unwrap()))
+                .build(),
+        );
+    }
+    let original = recorder.finish().unwrap();
+    let mut bytes = Vec::new();
+    original.write(&mut bytes).unwrap();
+    let direct = gt_loader::load_bytes(&bytes, "boot.gtd".to_owned()).unwrap();
+    assert_eq!(direct.tracks.len(), 3);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("history.h5");
+    let reference = {
+        let mut database = Database::open_or_create(&path).unwrap();
+        let meta = gt_history::extract_meta(&bytes).unwrap();
+        let tracks: Vec<_> = (0..3)
+            .map(|index| TrackRange {
+                start: index,
+                end: index + 1,
+                state: TrackState::Live,
+            })
+            .collect();
+        let reference = if replacement {
+            let previous = make_gtd_bytes(1_000, 4);
+            let previous_meta = gt_history::extract_meta(&previous).unwrap();
+            let reference = database
+                .insert_simple("boot", &previous_meta, &previous)
+                .unwrap();
+            database
+                .replace_recording_in_place(
+                    &reference,
+                    &meta,
+                    &tracks,
+                    fixtures::default_segmentation(),
+                    &bytes,
+                )
+                .unwrap();
+            reference
+        } else {
+            database
+                .insert(
+                    "boot",
+                    &meta,
+                    &tracks,
+                    fixtures::default_segmentation(),
+                    &bytes,
+                )
+                .unwrap()
+        };
+        database.set_tracks_shelved(&reference, &[0], true).unwrap();
+        reference
+    };
+    let database = Database::open_or_create(&path).unwrap();
+    let stored = database.load_full(&reference).unwrap();
+    assert_eq!(stored.tracks[0].state, TrackState::Shelved);
+    let exported = NavFile::read(stored.bytes.as_slice()).unwrap();
+    assert_eq!(exported.nav_points(), original.nav_points());
+    let reopened = gt_loader::load_bytes(&stored.bytes, "boot.gtd".to_owned()).unwrap();
+    let comparisons = |file: &LoadedFile| {
+        file.tracks
+            .iter()
+            .flat_map(|track| &track.points)
+            .map(|point| point.tpv.system_boot_comparison())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(comparisons(&reopened), comparisons(&direct));
+    assert_ne!(
+        reopened.tracks[2].points[0]
+            .tpv
+            .system_boot_delta()
+            .unwrap()
+            .as_micros(),
+        0
+    );
 }

@@ -17,9 +17,10 @@ use gt_types::load_warning;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
 use gt_types::{
-    AlterationWording, Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude,
-    LoadWarning, LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude,
-    RecordedLongitude, TimePositionVelocity, TravelMode,
+    AlterationWording, BootClockBackwardStep, Channel, CustomMarker, EventMarker, EventMarkerStyle,
+    FileSource, Latitude, LoadWarning, LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint,
+    RecordedLatitude, RecordedLongitude, SystemBootComparison, SystemBootTimePair,
+    TimePositionVelocity, TravelMode,
 };
 
 pub use error::LoadError;
@@ -146,7 +147,7 @@ fn load_gtd_file_with_progress_and_time_repair(
     };
     let nav_file = NavFile::read_with_mode(file, open_mode)?;
     let source = FileSource::GtdPath(path.to_path_buf());
-    build_loaded_gtd(&nav_file, filename, source, progress, config)
+    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
 }
 
 fn build_loaded_gtd(
@@ -155,9 +156,17 @@ fn build_loaded_gtd(
     source: FileSource,
     progress: impl Fn(f32, &'static str),
     config: &gt_track_builder::SegmentationConfig,
+    time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
+    let debug_time_repair_threshold = time_repair
+        .map(|config| config.backward_jump_threshold)
+        .or_else(|| {
+            nav_file
+                .debug_time_repair_tag()
+                .map(SdkDebugTimeRepair::backward_jump_threshold)
+        });
     progress(0.65, STAGE_CONVERTING);
-    let contents = from_nav_file(nav_file)?;
+    let contents = from_nav_file(nav_file, debug_time_repair_threshold)?;
     progress(0.90, STAGE_SEGMENTING);
     let identity = derive_identity(
         nav_file.meta().identity(),
@@ -174,7 +183,7 @@ fn build_loaded_gtd(
         &contents.channels,
         config,
         source,
-        file_meta_from_nav(nav_file),
+        file_meta_from_nav(nav_file, debug_time_repair_threshold),
         contents.load_warnings,
     );
     Ok(LoadedGtd { file, identity })
@@ -183,13 +192,17 @@ fn build_loaded_gtd(
 /// Capture the recording's SDK file metadata (title/device/notes/travel mode)
 /// for display in the app. The identity is handled separately by
 /// [`derive_identity`].
-fn file_meta_from_nav(nav_file: &NavFile) -> gt_track_builder::FileMeta {
+fn file_meta_from_nav(
+    nav_file: &NavFile,
+    debug_time_repair_threshold: Option<Duration>,
+) -> gt_track_builder::FileMeta {
     let meta = nav_file.meta();
     gt_track_builder::FileMeta {
         title: meta.title().map(str::to_owned),
         device: meta.device().map(str::to_owned),
         notes: meta.notes().map(str::to_owned),
         travel_mode: meta.travel_mode().map(convert_travel_mode),
+        debug_time_repair_threshold,
     }
 }
 
@@ -259,7 +272,7 @@ fn load_gtd_bytes_with_progress_and_time_repair(
     };
     let nav_file = NavFile::read_with_mode(bytes, open_mode)?;
     let source = FileSource::GtdBytes(Arc::from(bytes));
-    build_loaded_gtd(&nav_file, filename, source, progress, config)
+    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
 }
 
 /// Re-encode a `.gtd` recording with the nav points in `drop_ranges` removed.
@@ -338,6 +351,9 @@ pub fn reencode_dropping_ranges(
     retained.sort_by_key(|point| point.fix.time.effective());
     for (point, original) in rebuilt.nav_points_mut().iter_mut().zip(retained) {
         point.set_satellite_evidence(original.satellite_evidence().clone());
+    }
+    if let Some(tag) = nav_file.debug_time_repair_tag() {
+        rebuilt.set_debug_time_repair_tag(tag);
     }
     let mut out = Vec::new();
     rebuilt.write(&mut out)?;
@@ -581,7 +597,18 @@ struct NavFileContents {
     load_warnings: Vec<LoadWarning>,
 }
 
-fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
+fn from_nav_file(
+    nav_file: &NavFile,
+    debug_time_repair_threshold: Option<Duration>,
+) -> Result<NavFileContents, LoadError> {
+    let reference = nav_file.nav_points().iter().find_map(|point| {
+        Some(SystemBootTimePair {
+            system_time: SysTime::from_utc(point.fix.sys_time()?),
+            boot_time: point.fix.boot_time?,
+        })
+    });
+    let mut previous_boot_reading = None;
+    let mut boot_backward_steps = Vec::new();
     let mut nav_points = Vec::with_capacity(nav_file.nav_points().len());
     let mut latitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
     let mut longitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
@@ -598,6 +625,27 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
             NavFixTime::Host(host) => FixTimestamp::FromHostClock(SysTime::from_utc(host)),
         };
 
+        let boot_clock_backward_step = sdk_point.fix.boot_time.and_then(|boot_time| {
+            let previous = previous_boot_reading.replace((record, boot_time));
+            let (previous_record, previous_boot_time) = previous?;
+            (boot_time < previous_boot_time).then_some(BootClockBackwardStep {
+                previous_record,
+                record,
+                previous_boot_time,
+                boot_time,
+            })
+        });
+        boot_backward_steps.extend(boot_clock_backward_step);
+        let comparison = reference.and_then(|reference| {
+            let pair = SystemBootTimePair {
+                system_time: SysTime::from_utc(sdk_point.fix.sys_time()?),
+                boot_time: sdk_point.fix.boot_time?,
+            };
+            Some(SystemBootComparison {
+                reference,
+                delta: pair.system_boot_delta_since(reference),
+            })
+        });
         let tpv = TimePositionVelocity::builder()
             .time(time)
             .lat(lat)
@@ -605,6 +653,10 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
             .maybe_heading(sdk_point.fix.heading.map(to_uom_angle))
             .maybe_velocity(sdk_point.fix.speed.map(to_uom_velocity))
             .maybe_sys_time(sdk_point.fix.sys_time().map(SysTime::from_utc))
+            .maybe_boot_time(sdk_point.fix.boot_time)
+            .maybe_system_boot_comparison(comparison)
+            .maybe_boot_clock_backward_step(boot_clock_backward_step)
+            .maybe_debug_time_repair_threshold(debug_time_repair_threshold)
             .maybe_eph_m(sdk_point.fix.eph_m.map(|v| v as f32))
             .build();
 
@@ -683,6 +735,7 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
         REPLACED_EVENT_MARKER_ICONS.load_warning(&style_alterations.unrecognized_icons),
         REPLACED_EVENT_MARKER_COLORS.load_warning(&style_alterations.unrecognized_colors),
         channels_with_backward_time_steps_warning(&channels_with_backward_time_steps),
+        BOOT_CLOCK_BACKWARD_STEPS.load_warning(&boot_backward_steps),
     ]
     .into_iter()
     .flatten()
@@ -913,6 +966,11 @@ fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
     }
 }
 
+const BOOT_CLOCK_BACKWARD_STEPS: AlterationWording = AlterationWording {
+    issue: "fix(es) with a boot-clock backward step",
+    consequence: "Boot readings are preserved. The reference remains the first complete system/boot pair.",
+};
+
 const STAGE_READING: &str = "Reading…";
 const STAGE_PARSING: &str = "Parsing…";
 const STAGE_CONVERTING: &str = "Converting…";
@@ -984,7 +1042,7 @@ mod tests {
     }
 
     fn build(nav_file: &NavFile) -> (Vec<NavPoint>, Vec<CustomMarker>) {
-        let contents = from_nav_file(nav_file).expect("the recording converts");
+        let contents = from_nav_file(nav_file, None).expect("the recording converts");
         (contents.nav_points, contents.markers)
     }
 

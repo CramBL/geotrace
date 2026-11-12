@@ -41,7 +41,9 @@ pub use satellite_evidence::{
 };
 pub use sky_evidence::{NearbySkyEvidence, SkyCounts, SkyEvidence, SkyGeometry, SkySatellite};
 pub use solar_position::SunlitSide;
-pub use system_boot_clock::{SystemBootDelta, SystemBootTimePair};
+pub use system_boot_clock::{
+    BootClockBackwardStep, SystemBootComparison, SystemBootDelta, SystemBootTimePair,
+};
 pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;

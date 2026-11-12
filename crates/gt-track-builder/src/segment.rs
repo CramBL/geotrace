@@ -635,6 +635,7 @@ pub struct FileMeta {
     pub device: Option<String>,
     pub notes: Option<String>,
     pub travel_mode: Option<TravelMode>,
+    pub debug_time_repair_threshold: Option<Duration>,
 }
 
 impl From<&FileMetadata> for FileMeta {
@@ -646,6 +647,7 @@ impl From<&FileMetadata> for FileMeta {
             device: metadata.device.clone(),
             notes: metadata.notes.clone(),
             travel_mode: metadata.travel_mode.clone(),
+            debug_time_repair_threshold: metadata.debug_time_repair_threshold,
         }
     }
 }
@@ -882,6 +884,7 @@ pub fn build_loaded_file(
             device: file_meta.device,
             notes: file_meta.notes,
             travel_mode: file_meta.travel_mode,
+            debug_time_repair_threshold: file_meta.debug_time_repair_threshold,
         },
         tracks: loaded_tracks,
         event_marker_styles,
