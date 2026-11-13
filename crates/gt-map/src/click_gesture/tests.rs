@@ -4,6 +4,7 @@ use gt_ui_types::{DisplayCategory, LogMatchColor, LogMatches, MapElementRef};
 use rstest::rstest;
 
 use crate::test_util::{self, CENTRE_FIX, MapScene, RenderedMap};
+use crate::{DoubleClickBehavior, MapControls};
 
 #[derive(Clone, Copy)]
 enum Target {
@@ -37,6 +38,12 @@ impl GestureScene {
             })
             .render();
         map.release_camera_overrides();
+        map.map_mut()
+            .expect("the rendered map")
+            .set_controls(MapControls {
+                double_click: DoubleClickBehavior::FitVisible,
+                ..MapControls::default()
+            });
         let position = egui::Rect::from_min_size(egui::Pos2::ZERO, VIEWPORT).center();
         let target = if matches!(target, Target::Bare) {
             position + egui::vec2(0.0, -BARE_MAP_OFFSET)
@@ -82,8 +89,18 @@ impl GestureScene {
 fn a_navigation_double_click_preserves_selection_on_both_releases(
     #[case] target: Target,
     #[case] pinned: Option<usize>,
+    #[values(DoubleClickBehavior::FitVisible, DoubleClickBehavior::ZoomAndCenter)]
+    double_click: DoubleClickBehavior,
 ) {
     let mut scene = GestureScene::new(target);
+    scene
+        .map
+        .map_mut()
+        .expect("the rendered map")
+        .set_controls(MapControls {
+            double_click,
+            ..MapControls::default()
+        });
     let selected = pinned.map(|index| test_util::point_ref(DataCategory::Tpv, index));
     if let Some(point) = selected {
         assert!(scene.map.pin(point));
@@ -100,7 +117,11 @@ fn a_navigation_double_click_preserves_selection_on_both_releases(
     assert!(!scene.map.disambiguation_popup_is_open());
     assert_eq!(scene.map.clicked_log_glyph(), None);
     let fitted_zoom = scene.zoom();
-    assert!(fitted_zoom < INITIAL_ZOOM);
+    if double_click == DoubleClickBehavior::FitVisible {
+        assert!(fitted_zoom < INITIAL_ZOOM);
+    } else {
+        assert_eq!(fitted_zoom.to_bits(), (INITIAL_ZOOM + 1.0).to_bits());
+    }
 
     scene.map.finish_primary_click();
     assert_eq!(scene.sticky(), selected);
@@ -305,6 +326,11 @@ fn escape_cancels_pending_disambiguation() {
 #[test]
 fn secondary_clicks_open_the_context_menu_without_fitting_or_selecting() {
     let mut scene = GestureScene::new(Target::Fix);
+    scene
+        .map
+        .map_mut()
+        .expect("the rendered map")
+        .set_controls(MapControls::default());
     scene.release(PointerButton::Secondary);
     let now = scene.map.harness.inner.ctx.input(|input| input.time);
     scene.map.harness.inner.input_mut().time = Some(now + RELEASE_INTERVAL);
