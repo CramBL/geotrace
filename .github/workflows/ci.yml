@@ -64,7 +64,7 @@ jobs:
           save-if: false
 
       - name: check
-        run: cargo check --workspace --features geotrace/self-update
+        run: cargo check --workspace --features geotrace/self-update,geotrace-sdk/nmea
 
       # One run reports every command that failed. `!cancelled()` keeps the
       # steps below a failed one running.
@@ -75,6 +75,7 @@ jobs:
           cargo clippy --workspace --no-deps --tests -- -D warnings
           cargo clippy --workspace --no-deps --examples -- -D warnings
           cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
+          cargo clippy -p geotrace-sdk --features nmea --all-targets -- -D warnings
 
       - name: Examples
         if: ${{ !cancelled() }}
@@ -168,7 +169,7 @@ jobs:
           echo "WGPU_BACKEND=gl" >> "$GITHUB_ENV"
 
       - name: Tests
-        run: cargo nextest run --workspace --features geotrace/self-update --profile ci
+        run: cargo nextest run --workspace --features geotrace/self-update,geotrace-sdk/nmea --profile ci
 
       - name: Tests (pure backend)
         if: ${{ !cancelled() }}

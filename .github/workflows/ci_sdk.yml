@@ -379,7 +379,7 @@ jobs:
       - name: Build docs
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc -p geotrace-sdk --no-deps
+        run: cargo doc -p geotrace-sdk --features nmea --no-deps
 
   c-sdk:
     name: C SDK / ${{ matrix.os }} / ${{ matrix.label }}

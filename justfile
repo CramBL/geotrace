@@ -72,6 +72,7 @@ clippy:
     cargo clippy --workspace --no-deps --benches -- -D warnings
     # The dist-only self-update code is feature-gated, so lint it explicitly too.
     cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
+    cargo clippy -p geotrace-sdk --features nmea --all-targets -- -D warnings
 
 # The workspaces outside the root declare their own lints at `warn` level in
 # their manifests: `-D warnings` is where CI turns those into errors.
@@ -89,7 +90,7 @@ clippy-all: clippy clippy-sdk
 # The fuzz targets set `test = false`.
 [group("native")]
 test *ARGS:
-    cargo nextest run --workspace --features geotrace/self-update {{ ARGS }}
+    cargo nextest run --workspace --features geotrace/self-update,geotrace-sdk/nmea {{ ARGS }}
 
 [group("native")]
 test-backends:
@@ -126,12 +127,12 @@ snap-live-test:
 
 [group("native")]
 sdk-doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc -p geotrace-sdk --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc -p geotrace-sdk --features nmea --no-deps
 
 # Build every workspace's docs, failing on broken intra-doc links.
 [group("native")]
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --features geotrace-sdk/nmea --no-deps
     RUSTDOCFLAGS="-D warnings" PYO3_BUILD_EXTENSION_MODULE=1 cargo doc --manifest-path sdk/python/geotrace-py/Cargo.toml --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path crates/gt-logfile/fuzz/Cargo.toml --workspace --no-deps
