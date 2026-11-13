@@ -18,6 +18,7 @@ impl App {
         }
         self.map
             .set_layer(super::map_layer_from_setting(s.map.layer));
+        self.map.set_controls(s.map.controls);
         // One value behind both the plot's off-scale indicators and the
         // excursion markers, clamped here so a hand-edited config cannot put
         // the threshold outside what the settings control can reach back.
@@ -184,6 +185,7 @@ impl App {
             map: crate::settings::MapSettings {
                 layer: super::map_layer_to_setting(self.map.layer()),
                 mapbox_token: self.map.mapbox_token().to_owned(),
+                controls: self.map.controls(),
                 sync_to_map: s.plot_state.sync_to_map,
                 display_mask: s.display_mask,
                 sky_glyph_variant: s.sky_glyph_variant,
@@ -341,13 +343,88 @@ const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use egui_kittest::Harness;
-    use gt_test_utils::HarnessInteraction as _;
+    use gt_map::{DoubleClickBehavior, DragPanButton, MapControls, ScrollBehavior};
+    use gt_test_utils::{HarnessInteraction as _, TestHarness};
     use gt_types::MetricKind;
     use gt_ui_types::{DisplayCategory, DisplayMask};
+    use rstest::rstest;
+    use strum::IntoEnumIterator as _;
 
+    use crate::app::settings_autosave::SettingsAutosaver;
     use crate::app::test_util::harness;
     use crate::settings::Settings;
+
+    #[test]
+    fn map_controls_survive_startup_and_flush_through_toml() {
+        let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        for scroll in ScrollBehavior::iter() {
+            for double_click in DoubleClickBehavior::iter() {
+                for drag_pan in DragPanButton::iter() {
+                    let controls = MapControls {
+                        scroll,
+                        double_click,
+                        drag_pan,
+                    };
+                    let mut settings = Settings::default();
+                    settings.map.controls = controls;
+                    let stored = toml::to_string(&settings).expect("settings serialize");
+                    let loaded: Settings = toml::from_str(&stored).expect("settings parse");
+                    harness.state_mut().apply_startup_settings(&loaded);
+                    assert_eq!(harness.state().map.controls(), controls);
+                    let flushed = harness.state().collect_settings_for_flush();
+                    assert_eq!(flushed.map.controls, controls);
+                }
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::scroll(MapControls { scroll: ScrollBehavior::Pan, ..MapControls::default() })]
+    #[case::double_click(MapControls {
+        double_click: DoubleClickBehavior::FitVisible, ..MapControls::default()
+    })]
+    #[case::drag(MapControls { drag_pan: DragPanButton::Middle, ..MapControls::default() })]
+    fn a_map_control_edit_triggers_debounced_settings_saving(#[case] controls: MapControls) {
+        let (mut harness, config_path) = TestHarness::builder().eframe(harness::build_app);
+        harness.inner.run_steps(3);
+        {
+            let app = harness.inner.state_mut();
+            app.flush_settings();
+            app.config = SettingsAutosaver::new(app.collect_snapshot());
+            app.map.set_controls(controls);
+        }
+        let before = fs::read_to_string(&config_path).expect("initial settings");
+        let initial: Settings = toml::from_str(&before).expect("initial settings parse");
+        assert_eq!(initial.map.controls, MapControls::default());
+        harness.inner.step();
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("settings before debounce"),
+            before
+        );
+        assert!(
+            harness.inner.step_until(|_| {
+                let text = fs::read_to_string(&config_path).expect("saved settings");
+                let settings: Settings = toml::from_str(&text).expect("saved settings parse");
+                settings.map.controls == controls
+            }),
+            "the controls-only edit was not saved"
+        );
+        let text = fs::read_to_string(&config_path).expect("saved settings");
+        let reloaded: Settings = toml::from_str(&text).expect("saved settings parse");
+        harness
+            .inner
+            .state_mut()
+            .map
+            .set_controls(MapControls::default());
+        harness.inner.state_mut().apply_startup_settings(&reloaded);
+        assert_eq!(harness.inner.state().map.controls(), controls);
+    }
 
     /// An added TEC mirror reaches the settings file and points the scheduler at
     /// the whole list on the way back in.

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-#[cfg(feature = "self-update")]
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
+use gt_map::{DoubleClickBehavior, DragPanButton, MapControls, ScrollBehavior};
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use strum::IntoEnumIterator as _;
 
@@ -24,7 +24,7 @@ impl SettingsPage {
             | Self::IonosphericTec
             | Self::SolarFlares => crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL,
             Self::SnapToRoad => "GPS accuracy",
-            Self::Interface => "Mapbox token",
+            Self::Interface => "Drag to pan",
             Self::Application => crate::app::environment_storage_ui::AUTO_PRUNE_LABEL,
         }
     }
@@ -127,6 +127,98 @@ fn settings_window_keeps_one_size_across_pages() {
             "{page:?} resized the window"
         );
     }
+}
+
+struct MapControlSelection {
+    label: &'static str,
+    choice: &'static str,
+    expected: MapControls,
+}
+
+#[rstest::rstest]
+#[case::scroll(MapControlSelection {
+    label: "Scroll wheel / trackpad",
+    choice: "Pan — Ctrl/Cmd + scroll zooms",
+    expected: MapControls { scroll: ScrollBehavior::Pan, ..MapControls::default() },
+})]
+#[case::fit(MapControlSelection {
+    label: "Double-click",
+    choice: "Fit visible data",
+    expected: MapControls {
+        double_click: DoubleClickBehavior::FitVisible, ..MapControls::default()
+    },
+})]
+#[case::no_navigation(MapControlSelection {
+    label: "Double-click",
+    choice: "Do nothing",
+    expected: MapControls { double_click: DoubleClickBehavior::None, ..MapControls::default() },
+})]
+#[case::middle(MapControlSelection {
+    label: "Drag to pan",
+    choice: "Middle button",
+    expected: MapControls { drag_pan: DragPanButton::Middle, ..MapControls::default() },
+})]
+#[case::either_button(MapControlSelection {
+    label: "Drag to pan",
+    choice: "Primary or middle button",
+    expected: MapControls { drag_pan: DragPanButton::PrimaryOrMiddle, ..MapControls::default() },
+})]
+fn interface_map_controls_update_the_live_map(#[case] selection: MapControlSelection) {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    harness.inner.state_mut().settings_page = SettingsPage::Interface;
+    harness.run();
+    let before = harness
+        .inner
+        .state()
+        .map
+        .viewport_geo_bounds()
+        .expect("map viewport");
+    harness
+        .inner
+        .get_by_role_and_label(Role::ComboBox, selection.label)
+        .click();
+    harness.inner.run_steps(3);
+    harness.inner.get_by_label(selection.choice).click();
+    harness.inner.step();
+    let after = harness
+        .inner
+        .state()
+        .map
+        .viewport_geo_bounds()
+        .expect("map viewport");
+    assert_eq!(
+        [
+            before.lat_min,
+            before.lat_max,
+            before.lon_min,
+            before.lon_max
+        ]
+        .map(f64::to_bits),
+        [after.lat_min, after.lat_max, after.lon_min, after.lon_max].map(f64::to_bits),
+        "editing controls preserves the camera",
+    );
+    assert_eq!(harness.inner.state().map.controls(), selection.expected);
+    assert_eq!(
+        harness
+            .inner
+            .state()
+            .collect_settings_for_flush()
+            .map
+            .controls,
+        selection.expected
+    );
+    let window = harness
+        .inner
+        .get_by_role_and_label(Role::Window, "Settings")
+        .rect();
+    let control = harness
+        .inner
+        .get_by_role_and_label(Role::ComboBox, selection.label)
+        .rect();
+    assert!(
+        window.contains_rect(control),
+        "the selected value fits the settings window"
+    );
 }
 
 #[cfg(feature = "self-update")]

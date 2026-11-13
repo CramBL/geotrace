@@ -1,6 +1,5 @@
 ---
 source: src/settings.rs
-assertion_line: 1025
 expression: toml
 ---
 version = 1
@@ -29,6 +28,11 @@ display_mask = []
 sky_glyph_variant = "ring"
 sky_trail_opacity_percent = 40.0
 tec_heatmap_opacity_percent = 40.0
+
+[map.controls]
+scroll = "zoom"
+double_click = "zoom_and_center"
+drag_pan = "primary"
 
 [map.point_window_folds]
 plot = false

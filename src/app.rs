@@ -831,6 +831,7 @@ impl App {
             always_show_solar_flare_spans: s.plot_state.always_show_solar_flare_spans,
             layer: settings_ui::map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
+            map_controls: self.map.controls(),
             sync_to_map: s.plot_state.sync_to_map,
             display_mask: s.display_mask,
             sky_glyph_variant: s.sky_glyph_variant,
