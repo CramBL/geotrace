@@ -80,7 +80,8 @@ impl Tiles for TestTileSource {
 }
 
 /// A piece covers its texture entirely: both sources serve whole tiles.
-const FULL_TILE_UV: Rect = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+pub(crate) const FULL_TILE_UV: Rect =
+    Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
 #[cfg(test)]
 mod tests {

@@ -22,7 +22,7 @@ use gt_ui_types::{
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
-use walkers::{HttpTiles, Map, MapMemory, MercatorProjection, Projector};
+use walkers::{HttpTiles, Map, MapMemory, MercatorProjection, Projector, Tiles};
 
 use crate::click_gesture::{MapClickGesture, PrimaryClickState, PrimaryMapClick};
 use crate::controls::MapPointerSource;
@@ -404,7 +404,7 @@ pub struct NavMap {
     /// Built under [`TileAccess::Network`] alone: every other access draws
     /// its base layer from [`NavMap::test_tiles`] or leaves it blank.
     osm_tiles: Option<HttpTiles>,
-    mapbox_tiles: Option<HttpTiles>,
+    mapbox_tiles: Option<Box<dyn Tiles>>,
     /// The base layer under [`TileAccess::Synthetic`] and
     /// [`TileAccess::Captured`], drawn in place of both fetchers.
     test_tiles: Option<TestTileSource>,
@@ -599,10 +599,10 @@ impl NavMap {
             self.mapbox_token = String::new();
             self.mapbox_tiles = None;
         } else {
-            self.mapbox_tiles = Some(HttpTiles::new(
+            self.mapbox_tiles = Some(Box::new(HttpTiles::new(
                 mapbox_tiles::satellite_source(token.clone()),
                 self.egui_ctx.clone(),
-            ));
+            )));
             self.mapbox_token = token;
         }
     }
@@ -926,23 +926,6 @@ impl NavMap {
         plan
     }
 
-    /// Whether the satellite layer may draw Mapbox tiles at the current zoom.
-    ///
-    /// Mapbox serves 512px tiles, and walkers' `tile_id` adjusts the integer
-    /// zoom level by `log2(tile_size / 256)` - 1 for 512px tiles - by plain
-    /// `u8` subtraction with no underflow check (walkers 0.53.0
-    /// `mercator::tile_id`, src/mercator.rs:50). That panics with "attempt to
-    /// subtract with overflow" once the zoom rounds down to 0, i.e. once it
-    /// drops below 0.5. OSM's 256px tiles need no adjustment
-    /// (`log2(256/256) == 0`) and so are immune at any zoom. Stay on OSM with
-    /// enough margin below that line that no single frame's zoom delta can
-    /// cross it.
-    fn use_mapbox_tiles(&self) -> bool {
-        self.layer == MapLayer::Satellite
-            && self.mapbox_tiles.is_some()
-            && self.map_memory.zoom() >= f64::from(MAPBOX_MIN_SAFE_ZOOM)
-    }
-
     /// Build the base tile layer plus every enabled overlay plugin, then hand
     /// the map to the UI.
     ///
@@ -961,17 +944,17 @@ impl NavMap {
         animation: FrameAnimation,
         popups: OpenPopups,
     ) -> egui::Response {
-        let use_mapbox_tiles = self.use_mapbox_tiles();
-        let tiles: Option<&mut dyn walkers::Tiles> = if let Some(tiles) = self.test_tiles.as_mut() {
+        let use_mapbox_tiles = self.layer == MapLayer::Satellite && self.mapbox_tiles.is_some();
+        let tiles: Option<&mut dyn Tiles> = if let Some(tiles) = self.test_tiles.as_mut() {
             Some(tiles)
         } else if use_mapbox_tiles {
             self.mapbox_tiles
                 .as_mut()
-                .map(|tiles| -> &mut dyn walkers::Tiles { tiles })
+                .map(|tiles| -> &mut dyn Tiles { tiles.as_mut() })
         } else {
             self.osm_tiles
                 .as_mut()
-                .map(|tiles| -> &mut dyn walkers::Tiles { tiles })
+                .map(|tiles| -> &mut dyn Tiles { tiles })
         };
         ui.input(|input| self.pointer_source.update(input));
         let drag_pan_buttons = self
@@ -1650,10 +1633,6 @@ pub const SATELLITE_LAYER_NEEDS_TOKEN: &str = "Enter a Mapbox token to use the s
 const DOUBLE_CLICK_ZOOM_INCREMENT: f64 = 1.0;
 const MAP_ZOOM_SPEED: f64 = 2.0;
 const MAX_MAP_ZOOM: f64 = 26.0;
-
-/// Lowest zoom the satellite layer draws Mapbox tiles at. See
-/// [`NavMap::use_mapbox_tiles`] for what happens below it.
-pub(crate) const MAPBOX_MIN_SAFE_ZOOM: u8 = 2;
 
 const BLINK_DURATION_SEC: f32 = 3.0;
 const BLINK_PULSE_HZ: f32 = 2.0;

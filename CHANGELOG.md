@@ -30,6 +30,7 @@
 
 ### Fixed
 
+- **Map & Tracks:** Fixed the Satellite layer switching to OpenStreetMap when zoomed out.
 - **Map & Tracks:** Fixed navigation double-clicks changing selection or opening log entries.
 - **Log Viewer:** Fixed dimmed messages and missing service colors for entries without an associated position.
 - **Log Viewer:** Fixed table conditions changing meaning when removing their group.
