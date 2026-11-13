@@ -22,9 +22,10 @@ use gt_ui_types::{
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
-use walkers::{HttpTiles, Map, MapMemory, MercatorProjection};
+use walkers::{HttpTiles, Map, MapMemory, MercatorProjection, Projector};
 
 use crate::click_gesture::{MapClickGesture, PrimaryClickState, PrimaryMapClick};
+use crate::controls::MapPointerSource;
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
 use crate::hover_candidates::HoverCandidates;
@@ -38,6 +39,7 @@ use crate::tpv_renderer::FixPlacement;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 
+pub use controls::{DoubleClickBehavior, DragPanButton, MapControls, ScrollBehavior};
 pub use display_toggle::{DISPLAY_TOGGLE_BUTTON_AREA_ID, DISPLAY_TOGGLE_POPUP_AREA_ID};
 pub use sky_trails_window::SkyTrailsWindow;
 pub use space_weather_indicator::SpaceWeatherIndicator;
@@ -50,6 +52,7 @@ pub mod benchmark_support;
 
 mod click_gesture;
 mod collision_grid;
+mod controls;
 pub mod display_counts;
 mod display_toggle;
 pub mod event_marker_renderer;
@@ -473,6 +476,8 @@ pub struct NavMap {
     /// plugins draw and handed to the caller at the end of the frame.
     hovered_log_glyph: RefCell<Option<LogMatchGlyph>>,
     primary_click: PrimaryClickState,
+    controls: MapControls,
+    pointer_source: MapPointerSource,
     /// How strongly the TEC heatmap is drawn, as the opacity control's
     /// percentage. A persisted preference, seeded from settings via
     /// [`NavMap::set_tec_heatmap_opacity_percent`].
@@ -526,8 +531,21 @@ impl NavMap {
             hover_label_stack: HoverLabelStack::default(),
             hovered_log_glyph: RefCell::new(None),
             primary_click: PrimaryClickState::default(),
+            controls: MapControls::default(),
+            pointer_source: MapPointerSource::default(),
             tec_heatmap_opacity_percent: gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT,
         }
+    }
+
+    pub fn set_controls(&mut self, controls: MapControls) {
+        if self.controls != controls {
+            self.primary_click = PrimaryClickState::default();
+            self.controls = controls;
+        }
+    }
+
+    pub const fn controls(&self) -> MapControls {
+        self.controls
     }
 
     /// The TEC heatmap's opacity percentage, for the app to persist to
@@ -686,6 +704,7 @@ impl NavMap {
         let highlight = ctx.highlight.resolve(plan.presence());
         let animation = self.tick_animations(ui, &ctx, &highlight, now);
         let map_response = self.show_map(ui, &ctx, &plan, &highlight, animation, popups);
+        let response_camera = self.map_memory.clone();
         ctx.log_hover.glyph = self.hovered_log_glyph.take();
         *ctx.clicked_log_glyph = None;
 
@@ -698,14 +717,16 @@ impl NavMap {
 
         let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
 
-        let gesture =
-            self.primary_click
-                .classify(ui, &map_response, hover, ctx.log_hover.glyph.as_ref());
+        let gesture = self.primary_click.classify(
+            ui,
+            &map_response,
+            hover,
+            ctx.log_hover.glyph.as_ref(),
+            self.controls.double_click,
+        );
         let just_opened_disambig = match gesture {
             MapClickGesture::Double => {
-                if let Some(bbox) = ctx.visible_bounding_box() {
-                    self.fit_to_bounds(map_rect, bbox);
-                }
+                self.apply_double_click_navigation(&map_response, &response_camera, &ctx);
                 false
             }
             MapClickGesture::Single(click) => self.apply_click(click, &mut ctx, &plan),
@@ -730,6 +751,39 @@ impl NavMap {
         self.an_egui_popup_was_open_last_frame = ui.ctx().any_popup_open();
 
         action
+    }
+
+    fn apply_double_click_navigation(
+        &mut self,
+        map_response: &egui::Response,
+        response_camera: &MapMemory,
+        ctx: &MapDrawContext<'_>,
+    ) {
+        match self.controls.double_click {
+            DoubleClickBehavior::FitVisible => {
+                if let Some(bbox) = ctx.visible_bounding_box() {
+                    self.fit_to_bounds(map_response.rect, bbox);
+                }
+            }
+            DoubleClickBehavior::None => {}
+            DoubleClickBehavior::ZoomAndCenter => {
+                if let Some(pointer) = map_response.interact_pointer_pos() {
+                    let projector = Projector::new(
+                        map_response.rect,
+                        &MercatorProjection,
+                        response_camera,
+                        default_map_center(),
+                    );
+                    let center = projector.unproject(pointer.to_vec2());
+                    let zoom =
+                        (response_camera.zoom() + DOUBLE_CLICK_ZOOM_INCREMENT).min(MAX_MAP_ZOOM);
+                    self.map_memory.center_at(center);
+                    if let Err(error) = self.map_memory.set_zoom(zoom) {
+                        log::error!("Could not zoom map: {error}");
+                    }
+                }
+            }
+        }
     }
 
     /// Apply the caller's camera requests: an explicit center, a position for
@@ -919,7 +973,19 @@ impl NavMap {
                 .as_mut()
                 .map(|tiles| -> &mut dyn walkers::Tiles { tiles })
         };
-        let mut map = Map::new(tiles, &mut self.map_memory, default_map_center());
+        ui.input(|input| self.pointer_source.update(input));
+        let drag_pan_buttons = self
+            .controls
+            .drag_pan
+            .effective_buttons(self.pointer_source);
+        let mut map = Map::new(tiles, &mut self.map_memory, default_map_center())
+            .zoom_gesture(true)
+            .zoom_speed(MAP_ZOOM_SPEED)
+            .panning(true)
+            .zoom_with_ctrl(self.controls.scroll == ScrollBehavior::Pan)
+            .drag_pan_buttons(drag_pan_buttons)
+            .double_click_to_zoom(false)
+            .double_click_to_zoom_out(false);
         // The overlays go on first so every track renderer draws over them,
         // and the global TEC grid goes under the interference cells.
         if ctx.display_mask.is_visible(DisplayCategory::TecHeatmap)
@@ -1580,6 +1646,10 @@ fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: 
 }
 
 pub const SATELLITE_LAYER_NEEDS_TOKEN: &str = "Enter a Mapbox token to use the satellite layer";
+
+const DOUBLE_CLICK_ZOOM_INCREMENT: f64 = 1.0;
+const MAP_ZOOM_SPEED: f64 = 2.0;
+const MAX_MAP_ZOOM: f64 = 26.0;
 
 /// Lowest zoom the satellite layer draws Mapbox tiles at. See
 /// [`NavMap::use_mapbox_tiles`] for what happens below it.
