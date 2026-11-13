@@ -24,7 +24,10 @@ use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
 use walkers::{HttpTiles, Map, MapMemory, MercatorProjection, Projector, Tiles};
 
-use crate::click_gesture::{MapClickGesture, PrimaryClickState, PrimaryMapClick};
+use crate::click_gesture::{
+    ClickSelection, DISAMBIGUATION_POPUP_ID, MapClickContext, MapClickGesture, PINNED_POPUP_ID,
+    PrimaryClickState, PrimaryMapClick,
+};
 use crate::controls::MapPointerSource;
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
@@ -724,17 +727,29 @@ impl NavMap {
             self.fit_to_bounds(map_rect, bbox);
         }
 
-        let gesture = self.primary_click.classify(
+        let selection = self.click_selection(ctx.highlight);
+        let classified = self.primary_click.classify(
             ui,
             &map_response,
-            hover,
-            ctx.log_hover.glyph.as_ref(),
-            self.controls.double_click,
+            MapClickContext {
+                candidates: hover,
+                log_glyph: ctx.log_hover.glyph.as_ref(),
+                double_click: self.controls.double_click,
+                selection,
+                camera: &response_camera,
+            },
         );
-        let just_opened_disambig = match gesture {
-            MapClickGesture::Double => {
-                self.apply_double_click_navigation(&map_response, &response_camera, &ctx);
-                false
+        if let Some(glyph) = classified.confirmed_log
+            && ctx.display_mask.is_visible(DisplayCategory::LogMatches)
+        {
+            *ctx.clicked_log_glyph = Self::present_log_glyph(glyph, &ctx, &plan);
+        }
+        let clicked = matches!(classified.gesture, MapClickGesture::Single(_));
+        let just_opened_disambig = match classified.gesture {
+            MapClickGesture::Double { position, restore } => {
+                self.restore_click_selection(restore, ctx.highlight, scope);
+                self.apply_double_click_navigation(map_rect, position, &response_camera, &ctx);
+                self.disambiguation_is_open()
             }
             MapClickGesture::Single(click) => self.apply_click(click, &mut ctx, &plan),
             MapClickGesture::None => false,
@@ -753,6 +768,10 @@ impl NavMap {
             action = Some(MapAction::OpenReferenceDocument(document));
         }
 
+        if clicked {
+            let selection = self.click_selection(ctx.highlight);
+            self.primary_click.record_selection(selection);
+        }
         ctx.highlight.hover = hover.primary().map(HighlightScope::Point);
         self.hover_candidates = hover;
         self.an_egui_popup_was_open_last_frame = ui.ctx().any_popup_open();
@@ -762,32 +781,30 @@ impl NavMap {
 
     fn apply_double_click_navigation(
         &mut self,
-        map_response: &egui::Response,
+        map_rect: egui::Rect,
+        pointer: egui::Pos2,
         response_camera: &MapMemory,
         ctx: &MapDrawContext<'_>,
     ) {
         match self.controls.double_click {
             DoubleClickBehavior::FitVisible => {
                 if let Some(bbox) = ctx.visible_bounding_box() {
-                    self.fit_to_bounds(map_response.rect, bbox);
+                    self.fit_to_bounds(map_rect, bbox);
                 }
             }
             DoubleClickBehavior::None => {}
             DoubleClickBehavior::ZoomAndCenter => {
-                if let Some(pointer) = map_response.interact_pointer_pos() {
-                    let projector = Projector::new(
-                        map_response.rect,
-                        &MercatorProjection,
-                        response_camera,
-                        default_map_center(),
-                    );
-                    let center = projector.unproject(pointer.to_vec2());
-                    let zoom =
-                        (response_camera.zoom() + DOUBLE_CLICK_ZOOM_INCREMENT).min(MAX_MAP_ZOOM);
-                    self.map_memory.center_at(center);
-                    if let Err(error) = self.map_memory.set_zoom(zoom) {
-                        log::error!("Could not zoom map: {error}");
-                    }
+                let projector = Projector::new(
+                    map_rect,
+                    &MercatorProjection,
+                    response_camera,
+                    default_map_center(),
+                );
+                let center = projector.unproject(pointer.to_vec2());
+                let zoom = (response_camera.zoom() + DOUBLE_CLICK_ZOOM_INCREMENT).min(MAX_MAP_ZOOM);
+                self.map_memory.center_at(center);
+                if let Err(error) = self.map_memory.set_zoom(zoom) {
+                    log::error!("Could not zoom map: {error}");
                 }
             }
         }
@@ -1236,22 +1253,40 @@ impl NavMap {
         )
     }
 
+    fn click_selection(&self, highlight: &MapHighlight) -> ClickSelection {
+        ClickSelection {
+            sticky: highlight.sticky(),
+            sticky_pos: self.sticky_pos,
+            candidates: self.disambiguation_candidates,
+            disambiguation_pos: self.disambiguation_pos,
+        }
+    }
+
+    fn restore_click_selection(
+        &mut self,
+        selection: ClickSelection,
+        highlight: &mut MapHighlight,
+        scope: MapPresence<'_>,
+    ) {
+        highlight.clear_sticky();
+        if let Some(sticky) = selection.sticky {
+            highlight.toggle_sticky_if_drawn(scope, sticky);
+        }
+        self.sticky_pos = selection.sticky_pos;
+        self.disambiguation_candidates = selection.candidates.retaining_present(scope);
+        self.disambiguation_pos = selection.disambiguation_pos;
+    }
+
     fn apply_click(
         &mut self,
         PrimaryMapClick {
             position,
             candidates,
-            log_glyph,
         }: PrimaryMapClick,
         ctx: &mut MapDrawContext<'_>,
         plan: &viewport::MapFramePlan<'_>,
     ) -> bool {
         let scope = plan.presence();
-        if let Some(glyph) = log_glyph
-            && ctx.display_mask.is_visible(DisplayCategory::LogMatches)
-        {
-            *ctx.clicked_log_glyph = Self::present_log_glyph(glyph, ctx, plan);
-        }
         let present = candidates.retaining_present(scope);
         if candidates.primary().is_some() && present.primary().is_none() {
             return false;
@@ -1310,7 +1345,7 @@ impl NavMap {
             return;
         }
         let popup_pos = self.disambiguation_pos;
-        let area_resp = Area::new(egui::Id::unique("map_disambig"))
+        let area_resp = Area::new(egui::Id::unique(DISAMBIGUATION_POPUP_ID))
             .fixed_pos(popup_pos)
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
@@ -1511,7 +1546,7 @@ fn show_sticky_popup(
     };
 
     let window = Window::new(title)
-        .id(egui::Id::unique(("sticky_popup", sticky_ref)))
+        .id(egui::Id::unique((PINNED_POPUP_ID, sticky_ref)))
         .default_pos(default_pos)
         .collapsible(false);
     let window = if sticky_uses_point_layout(sticky_ref.category()) {

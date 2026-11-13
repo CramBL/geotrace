@@ -323,26 +323,28 @@ fn disabling_double_click_navigation_applies_single_selection_immediately() {
 #[rstest]
 #[case::changed(ScrollBehavior::Pan, false)]
 #[case::unchanged(ScrollBehavior::Zoom, true)]
-fn control_updates_preserve_the_camera_and_cancel_pending_selection_only_on_changes(
+fn control_updates_preserve_the_camera_and_cancel_click_rollback_only_on_changes(
     #[case] scroll: ScrollBehavior,
-    #[case] selected: bool,
+    #[case] navigation: bool,
 ) {
     let mut scene = ControlScene::new(MapControls::default());
     scene.release(PointerButton::Primary);
+    let selected = scene.harness.state().draw.highlight.sticky();
+    assert!(selected.is_some());
     let center = scene.center();
     let controls = MapControls {
         scroll,
         ..MapControls::default()
     };
     scene.map_mut().set_controls(controls);
-    scene.harness.inner.run_steps(8);
+    scene.harness.inner.run_steps(2);
     assert_eq!(scene.map().controls(), controls);
     assert_eq!(scene.center(), center);
     assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
-    assert_eq!(
-        scene.harness.state().draw.highlight.sticky().is_some(),
-        selected
-    );
+    assert_eq!(scene.harness.state().draw.highlight.sticky(), selected);
+    scene.release(PointerButton::Primary);
+    let expected_zoom = INITIAL_ZOOM + f64::from(u8::from(navigation));
+    assert_eq!(scene.zoom().to_bits(), expected_zoom.to_bits());
 }
 
 #[rstest]
