@@ -1,5 +1,7 @@
 use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
 
+use gt_map::MapControls;
+
 mod legacy_position_source_policy;
 
 /// One variant per plot metric.
@@ -473,6 +475,7 @@ impl Default for PlotSettings {
 pub struct MapSettings {
     pub layer: MapLayerSetting,
     pub mapbox_token: String,
+    pub controls: MapControls,
     pub sync_to_map: bool,
     /// The display toggles' per-category visibility. Serialized as the
     /// list of hidden categories: an absent key or empty list shows
@@ -500,6 +503,7 @@ impl Default for MapSettings {
         Self {
             layer: MapLayerSetting::Osm,
             mapbox_token: String::new(),
+            controls: MapControls::default(),
             sync_to_map: true,
             display_mask: gt_ui_types::DisplayMask::default(),
             sky_glyph_variant: gt_ui_types::SkyGlyphVariant::default(),
@@ -662,9 +666,44 @@ pub(crate) const DEFAULT_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_SECONDS: u32 
 
 #[cfg(test)]
 mod tests {
+    use gt_map::{DoubleClickBehavior, DragPanButton, ScrollBehavior};
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::without_map("version = 1", MapControls::default())]
+    #[case::without_controls("[map]\nsync_to_map = false", MapControls::default())]
+    #[case::empty_controls("[map.controls]", MapControls::default())]
+    #[case::scroll_only(
+        "[map.controls]\nscroll = 'pan'",
+        MapControls { scroll: ScrollBehavior::Pan, ..MapControls::default() }
+    )]
+    #[case::double_click_only(
+        "[map.controls]\ndouble_click = 'fit_visible'",
+        MapControls { double_click: DoubleClickBehavior::FitVisible, ..MapControls::default() }
+    )]
+    #[case::drag_only(
+        "[map.controls]\ndrag_pan = 'middle'",
+        MapControls { drag_pan: DragPanButton::Middle, ..MapControls::default() }
+    )]
+    fn absent_map_control_fields_use_navigation_defaults(
+        #[case] stored: &str,
+        #[case] expected: MapControls,
+    ) {
+        let settings: Settings = toml::from_str(stored).expect("settings parse");
+        assert_eq!(settings.map.controls, expected);
+        assert_eq!(settings.version, 1);
+    }
+
+    #[rstest]
+    #[case("scroll = 'none'")]
+    #[case("double_click = 'zoom_out'")]
+    #[case("drag_pan = 'secondary'")]
+    fn unsupported_map_control_values_fail_settings_parsing(#[case] field: &str) {
+        let stored = format!("[map.controls]\n{field}");
+        toml::from_str::<Settings>(&stored).expect_err("unsupported navigation policy");
+    }
 
     /// Every advanced option flows into the run parameters - [`SnapSettings::params`]
     /// is the single source, so a field forgotten here would leave a setting that

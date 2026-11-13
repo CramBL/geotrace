@@ -1,11 +1,11 @@
-//! Presentation settings: the names GeoTrace derives from a recording, the
-//! theme, and the map's tile layer with the Mapbox token it needs.
+use std::fmt::Display;
 
-use egui::Grid;
+use egui::{ComboBox, Grid};
 use egui_phosphor::regular::KEY as ICON_KEY;
 use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
 use egui_phosphor::regular::PAINT_BRUSH as ICON_PAINT_BRUSH;
 use gt_map::SatelliteLayerAccess;
+use strum::IntoEnumIterator;
 
 use crate::app::settings_ui::SettingsPage;
 use crate::app::{self, App, mapbox_token, recording_name_template};
@@ -54,16 +54,49 @@ impl App {
                     );
                 });
                 ui.end_row();
+
+                let mut controls = self.map.controls();
+                map_control_ui(ui, SCROLL_LABEL, &mut controls.scroll)
+                    .on_hover_text("Pinch gestures always zoom");
+                map_control_ui(ui, DOUBLE_CLICK_LABEL, &mut controls.double_click);
+                map_control_ui(ui, DRAG_PAN_LABEL, &mut controls.drag_pan)
+                    .on_hover_text("Single-finger touch dragging always pans");
+                self.map.set_controls(controls);
             });
     }
 }
 
+fn map_control_ui<T: Copy + Display + IntoEnumIterator + PartialEq>(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut T,
+) -> egui::Response {
+    let caption = ui.label(label);
+    let response = ComboBox::from_id_salt(label)
+        .selected_text(value.to_string())
+        .show_ui(ui, |ui| {
+            for choice in T::iter() {
+                ui.selectable_value(value, choice, choice.to_string());
+            }
+        })
+        .response
+        .labelled_by(caption.id);
+    ui.end_row();
+    response
+}
+
 const THEME_LABEL: &str = "Theme";
 const MAP_LAYER_LABEL: &str = "Map layer";
+const SCROLL_LABEL: &str = "Scroll wheel / trackpad";
+const DOUBLE_CLICK_LABEL: &str = "Double-click";
+const DRAG_PAN_LABEL: &str = "Drag to pan";
 
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     recording_name_template::RECORDING_NAME_LABEL,
     THEME_LABEL,
     MAP_LAYER_LABEL,
     mapbox_token::TOKEN_LABEL,
+    SCROLL_LABEL,
+    DOUBLE_CLICK_LABEL,
+    DRAG_PAN_LABEL,
 ];

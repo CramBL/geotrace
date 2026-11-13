@@ -1,4 +1,6 @@
 use std::time::{Duration, Instant};
+
+use gt_map::MapControls;
 use strum::EnumCount;
 
 use crate::settings::InitialPositionSourcePolicy;
@@ -57,6 +59,7 @@ pub(super) struct AppSnapshot {
     pub always_show_solar_flare_spans: bool,
     pub layer: crate::settings::MapLayerSetting,
     pub mapbox_token: String,
+    pub map_controls: MapControls,
     pub sync_to_map: bool,
     pub display_mask: gt_ui_types::DisplayMask,
     pub sky_glyph_variant: gt_ui_types::SkyGlyphVariant,
@@ -128,6 +131,7 @@ impl Default for AppSnapshot {
                 .always_show_solar_flare_spans,
             layer: crate::settings::MapLayerSetting::Osm,
             mapbox_token: String::new(),
+            map_controls: MapControls::default(),
             sync_to_map: true,
             display_mask: gt_ui_types::DisplayMask::default(),
             sky_glyph_variant: gt_ui_types::SkyGlyphVariant::default(),

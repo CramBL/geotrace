@@ -1,6 +1,6 @@
 use egui::{DragPanButtons, Event, InputState, PointerButton};
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{Display, EnumIter};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -10,29 +10,37 @@ pub struct MapControls {
     pub drag_pan: DragPanButton,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, EnumIter, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumIter, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollBehavior {
+    #[strum(to_string = "Pan — Ctrl/Cmd + scroll zooms")]
     Pan,
     #[default]
+    #[strum(to_string = "Zoom")]
     Zoom,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, EnumIter, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumIter, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DoubleClickBehavior {
+    #[strum(to_string = "Fit visible data")]
     FitVisible,
+    #[strum(to_string = "Do nothing")]
     None,
     #[default]
+    #[strum(to_string = "Center and zoom in")]
     ZoomAndCenter,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, EnumIter, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumIter, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DragPanButton {
+    #[strum(to_string = "Middle button")]
     Middle,
     #[default]
+    #[strum(to_string = "Primary button")]
     Primary,
+    #[strum(to_string = "Primary or middle button")]
     PrimaryOrMiddle,
 }
 

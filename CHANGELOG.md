@@ -16,7 +16,8 @@
 
 ### Changed
 
-- **Map & Tracks:** Unmodified scrolling zooms the map, and primary double-clicks center the clicked position and zoom in one level.
+- **Map & Tracks:** Map scrolling, double-click navigation and drag buttons are configurable in Settings.
+- **Map & Tracks:** Unmodified scrolling zooms the map by default, and primary double-clicks center the clicked position and zoom in one level.
 - **Log Viewer:** Source links reveal exact lines and expandable surrounding context with a separate count and an action to return to filtered results.
 - **Log Viewer:** Loaded logs use a single row of tabs, a searchable picker and separate new indicators for restored logs.
 - **Log Viewer:** The View menu includes structural source line visibility and service and level color preferences.
