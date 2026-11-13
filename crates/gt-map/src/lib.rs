@@ -717,6 +717,13 @@ impl NavMap {
 
         let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
 
+        if map_response.clicked_by(PointerButton::Middle)
+            && ui.input(|input| input.modifiers.is_none())
+            && let Some(bbox) = ctx.visible_bounding_box()
+        {
+            self.fit_to_bounds(map_rect, bbox);
+        }
+
         let gesture = self.primary_click.classify(
             ui,
             &map_response,

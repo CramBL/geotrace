@@ -59,8 +59,9 @@ impl App {
                 map_control_ui(ui, SCROLL_LABEL, &mut controls.scroll)
                     .on_hover_text("Pinch gestures always zoom");
                 map_control_ui(ui, DOUBLE_CLICK_LABEL, &mut controls.double_click);
-                map_control_ui(ui, DRAG_PAN_LABEL, &mut controls.drag_pan)
-                    .on_hover_text("Single-finger touch dragging always pans");
+                map_control_ui(ui, DRAG_PAN_LABEL, &mut controls.drag_pan).on_hover_text(
+                    "Middle-click fits visible data. Single-finger touch dragging always pans.",
+                );
                 self.map.set_controls(controls);
             });
     }
