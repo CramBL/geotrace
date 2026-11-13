@@ -75,12 +75,19 @@ impl ControlScene {
     }
 
     fn release(&mut self, button: PointerButton) {
-        self.frame([Event::PointerMoved(self.pointer)]);
+        self.release_with_modifiers(button, Modifiers::NONE);
+    }
+
+    fn release_with_modifiers(&mut self, button: PointerButton, modifiers: Modifiers) {
+        self.frame([
+            Event::ModifiersChanged(modifiers),
+            Event::PointerMoved(self.pointer),
+        ]);
         self.frame([true, false].map(|pressed| Event::PointerButton {
             pos: self.pointer,
             button,
             pressed,
-            modifiers: Modifiers::NONE,
+            modifiers,
         }));
     }
 
@@ -217,6 +224,61 @@ fn semantic_controls_roundtrip_with_defaults_and_closed_input_policies() {
 struct ZoomChange {
     before: f64,
     after: f64,
+}
+
+#[rstest]
+#[case::visible(true, Modifiers::NONE)]
+#[case::hidden(false, Modifiers::NONE)]
+#[case::modified(true, Modifiers::CTRL)]
+fn default_middle_click_fits_visible_data_without_selecting_points_or_logs(
+    #[case] visible: bool,
+    #[case] modifiers: Modifiers,
+) {
+    let mut scene = ControlScene::new(MapControls::default());
+    let files = &scene.harness.state().files;
+    let first = test_util::fix_position(files, 0);
+    let last = test_util::fix_position(files, test_util::WALKING_FIX_COUNT - 1);
+    let log = test_util::a_log_over(files);
+    let matches = test_util::matches_over(files, &log, CENTRE_FIX..CENTRE_FIX + 1);
+    let state = scene.harness.state_mut();
+    state.draw.log_matches = matches;
+    state
+        .visibility
+        .files
+        .first_mut()
+        .expect("the recording")
+        .enabled = visible;
+    scene
+        .map_mut()
+        .map_memory
+        .set_zoom(CLOSE_ZOOM)
+        .expect("a supported zoom");
+    let center = scene.center();
+
+    scene.release_with_modifiers(PointerButton::Middle, modifiers);
+
+    if visible && modifiers.is_none() {
+        assert!(scene.zoom() < CLOSE_ZOOM);
+        assert!((scene.center().x() - (first.1 + last.1) / 2.0).abs() < COORDINATE_EPSILON);
+        assert!((scene.center().y() - first.0).abs() < COORDINATE_EPSILON);
+        let camera = scene.camera();
+        let projector = Projector::new(MAP_RECT, &MercatorProjection, &camera, scene.center());
+        for position in [first, last] {
+            assert!(
+                MAP_RECT.contains(
+                    projector
+                        .project(walkers::lat_lon(position.0, position.1))
+                        .to_pos2()
+                )
+            );
+        }
+    } else {
+        assert_eq!(scene.center(), center);
+        assert_eq!(scene.zoom().to_bits(), CLOSE_ZOOM.to_bits());
+    }
+    let draw = &scene.harness.state().draw;
+    assert_eq!(draw.highlight.sticky(), None);
+    assert_eq!(draw.clicked_log_glyph, None);
 }
 
 #[rstest]
@@ -414,6 +476,7 @@ const VIEWPORT: egui::Vec2 = egui::vec2(1100.0, 800.0);
 const MAP_RECT: egui::Rect =
     egui::Rect::from_min_max(egui::pos2(120.0, 70.0), egui::pos2(880.0, 590.0));
 const INITIAL_ZOOM: f64 = 12.0;
+const CLOSE_ZOOM: f64 = 18.0;
 const FRAME_DURATION: f32 = 0.05;
 const POINTER_OFFSET: egui::Vec2 = egui::vec2(120.0, -80.0);
 const DRAG_DELTA: egui::Vec2 = egui::vec2(100.0, 40.0);
