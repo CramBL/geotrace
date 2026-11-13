@@ -1,7 +1,11 @@
+use egui::accesskit::Role;
 use egui::{Event, Modifiers, PointerButton};
+use egui_kittest::kittest::Queryable as _;
+use gt_test_utils::By;
 use gt_types::DataCategory;
 use gt_ui_types::{DisplayCategory, LogMatchColor, LogMatches, MapElementRef};
 use rstest::rstest;
+use walkers::{MercatorProjection, Projector};
 
 use crate::test_util::{self, CENTRE_FIX, MapScene, RenderedMap};
 use crate::{DoubleClickBehavior, MapControls};
@@ -71,6 +75,13 @@ impl GestureScene {
         self.map.harness.inner.input_mut().time = None;
     }
 
+    fn layout_popup(&mut self) {
+        let now = self.map.harness.inner.ctx.input(|input| input.time);
+        self.map.harness.inner.input_mut().time = Some(now);
+        self.map.render_one_more_frame();
+        self.map.harness.inner.input_mut().time = None;
+    }
+
     fn sticky(&mut self) -> Option<MapElementRef> {
         self.map.draw_state().highlight.sticky()
     }
@@ -86,7 +97,7 @@ impl GestureScene {
 #[case::empty_map(Target::Bare, Some(CENTRE_FIX))]
 #[case::overlapping_elements(Target::Ambiguous, None)]
 #[case::log_glyph(Target::Log, None)]
-fn a_navigation_double_click_preserves_selection_on_both_releases(
+fn a_navigation_double_click_restores_selection_after_the_second_release(
     #[case] target: Target,
     #[case] pinned: Option<usize>,
     #[values(DoubleClickBehavior::FitVisible, DoubleClickBehavior::ZoomAndCenter)]
@@ -107,8 +118,18 @@ fn a_navigation_double_click_preserves_selection_on_both_releases(
     }
 
     scene.release(PointerButton::Primary);
-    assert_eq!(scene.sticky(), selected);
-    assert!(!scene.map.disambiguation_popup_is_open());
+    let immediately_selected = match target {
+        Target::Fix | Target::Log if selected.is_none() => {
+            Some(test_util::point_ref(DataCategory::Tpv, CENTRE_FIX))
+        }
+        Target::Ambiguous => selected,
+        Target::Bare | Target::Fix | Target::Log => None,
+    };
+    assert_eq!(scene.sticky(), immediately_selected);
+    assert_eq!(
+        scene.map.disambiguation_popup_is_open(),
+        matches!(target, Target::Ambiguous)
+    );
     assert_eq!(scene.map.clicked_log_glyph(), None);
     assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
 
@@ -142,7 +163,7 @@ struct SingleClickEffect {
 #[case::deselect(Target::Bare, Some(CENTRE_FIX), SingleClickEffect {selected: None, disambiguation: false, log: false})]
 #[case::disambiguate(Target::Ambiguous, None, SingleClickEffect {selected: None, disambiguation: true, log: false})]
 #[case::open_log(Target::Log, None, SingleClickEffect {selected: Some(CENTRE_FIX), disambiguation: false, log: true})]
-fn a_single_click_applies_its_action_after_the_double_click_window(
+fn a_single_click_applies_point_actions_on_the_first_release(
     #[case] target: Target,
     #[case] pinned: Option<usize>,
     #[case] expected: SingleClickEffect,
@@ -153,11 +174,7 @@ fn a_single_click_applies_its_action_after_the_double_click_window(
         assert!(scene.map.pin(point));
     }
     scene.release(PointerButton::Primary);
-    assert_eq!(scene.sticky(), selected);
-    assert!(!scene.map.disambiguation_popup_is_open());
     assert_eq!(scene.map.clicked_log_glyph(), None);
-
-    scene.map.finish_primary_click();
     assert_eq!(
         scene.sticky(),
         expected
@@ -168,27 +185,27 @@ fn a_single_click_applies_its_action_after_the_double_click_window(
         scene.map.disambiguation_popup_is_open(),
         expected.disambiguation
     );
+    if expected.selected.is_some() {
+        scene.layout_popup();
+        scene.map.harness.inner.get(By::new().role(Role::Window));
+    }
+    scene.map.finish_primary_click();
     assert_eq!(scene.map.clicked_log_glyph().is_some(), expected.log);
     assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
 }
 
 #[test]
-fn two_distant_clicks_commit_the_first_target_and_defer_the_second() {
+fn two_distant_clicks_apply_each_point_action_immediately() {
     let mut scene = GestureScene::new(Target::Fix);
     scene.release(PointerButton::Primary);
     scene.target += egui::vec2(BARE_MAP_OFFSET, -BARE_MAP_OFFSET);
     scene.release(PointerButton::Primary);
-    assert_eq!(
-        scene.sticky(),
-        Some(test_util::point_ref(DataCategory::Tpv, CENTRE_FIX))
-    );
-    scene.map.finish_primary_click();
     assert_eq!(scene.sticky(), None);
     assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
 }
 
 #[test]
-fn a_pending_click_keeps_its_original_target_after_the_camera_and_pointer_change() {
+fn a_point_selection_remains_after_the_camera_and_pointer_change() {
     let mut scene = GestureScene::new(Target::Fix);
     scene.release(PointerButton::Primary);
     let map = scene.map.map_mut().expect("the rendered map");
@@ -201,24 +218,16 @@ fn a_pending_click_keeps_its_original_target_after_the_camera_and_pointer_change
     );
 }
 
-#[rstest]
-#[case::fix(Target::Fix, DisplayCategory::TrackPoints)]
-#[case::log(Target::Log, DisplayCategory::LogMatches)]
-fn pending_click_targets_require_current_display_presence(
-    #[case] target: Target,
-    #[case] hidden: DisplayCategory,
-) {
-    let mut scene = GestureScene::new(target);
+#[test]
+fn pending_log_activation_requires_current_display_presence() {
+    let mut scene = GestureScene::new(Target::Log);
     scene.release(PointerButton::Primary);
     scene
         .map
         .draw_state()
         .display_mask
-        .set_visible(hidden, false);
+        .set_visible(DisplayCategory::LogMatches, false);
     scene.map.finish_primary_click();
-    if matches!(target, Target::Fix) {
-        assert_eq!(scene.sticky(), None);
-    }
     assert_eq!(scene.map.clicked_log_glyph(), None);
 }
 
@@ -229,7 +238,6 @@ fn pending_log_activation_requires_an_entry_inside_the_time_filter() {
     scene.map.draw_state().filter = test_util::window_ending_at(CENTRE_FIX - 1);
     scene.map.finish_primary_click();
     assert_eq!(scene.map.clicked_log_glyph(), None);
-    assert_eq!(scene.sticky(), None);
 }
 
 #[test]
@@ -278,25 +286,29 @@ fn pending_log_activation_is_preserved_after_a_shared_color_flag_change() {
 }
 
 #[test]
-fn rebuilding_the_spatial_index_cancels_a_pending_click() {
+fn rebuilding_the_spatial_index_cancels_a_pending_navigation_restore() {
     let files = test_util::a_walking_recording();
     let mut scene = GestureScene::new(Target::Fix);
+    assert!(
+        scene
+            .map
+            .pin(test_util::point_ref(DataCategory::Tpv, CENTRE_FIX - 1))
+    );
     scene.release(PointerButton::Primary);
     scene
         .map
         .map_mut()
         .expect("the rendered map")
         .rebuild_spatial_index(&files);
-    scene.map.finish_primary_click();
+    scene.release(PointerButton::Primary);
     assert_eq!(scene.sticky(), None);
+    assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
 }
 
 #[rstest]
 #[case::navigation(true)]
 #[case::single_click(false)]
-fn disambiguation_popup_dismissal_is_deferred_until_gesture_classification(
-    #[case] navigation: bool,
-) {
+fn double_click_restores_an_immediately_dismissed_disambiguation_popup(#[case] navigation: bool) {
     let mut scene = GestureScene::new(Target::Ambiguous);
     scene.release(PointerButton::Primary);
     scene.map.finish_primary_click();
@@ -304,7 +316,7 @@ fn disambiguation_popup_dismissal_is_deferred_until_gesture_classification(
     scene.target += egui::vec2(0.0, -BARE_MAP_OFFSET);
     scene.map.move_pointer_to(scene.target);
     scene.release(PointerButton::Primary);
-    assert!(scene.map.disambiguation_popup_is_open());
+    assert!(!scene.map.disambiguation_popup_is_open());
     if navigation {
         scene.release(PointerButton::Primary);
         assert!(scene.map.disambiguation_popup_is_open());
@@ -341,6 +353,220 @@ fn secondary_clicks_open_the_context_menu_without_fitting_or_selecting() {
     scene.release(PointerButton::Secondary);
     assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
     assert_eq!(scene.sticky(), None);
+}
+
+#[rstest]
+#[case::point(Target::Fix)]
+#[case::disambiguation(Target::Ambiguous)]
+fn double_click_restores_selection_when_the_immediate_popup_covers_the_pointer(
+    #[case] target: Target,
+    #[values(false, true)] near_edge: bool,
+) {
+    let mut scene = GestureScene::new(target);
+    if near_edge {
+        let destination = egui::pos2(VIEWPORT.x - 40.0, VIEWPORT.y - 150.0);
+        let map = scene.map.map_mut().expect("the rendered map");
+        let projector = Projector::new(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, VIEWPORT),
+            &MercatorProjection,
+            &map.map_memory,
+            crate::default_map_center(),
+        );
+        let center = projector.unproject(scene.target.to_vec2() - (destination - scene.target));
+        map.map_memory.center_at(center);
+        scene.target = destination;
+        scene.map.move_pointer_to(scene.target);
+        scene.map.render_one_more_frame();
+    }
+    scene.release(PointerButton::Primary);
+    scene.layout_popup();
+    let layer = scene
+        .map
+        .harness
+        .inner
+        .ctx
+        .layer_id_at(scene.target)
+        .expect("the popup layer");
+    assert_ne!(layer.order, egui::Order::Background);
+    assert_eq!(
+        layer.id,
+        if matches!(target, Target::Ambiguous) {
+            egui::Id::unique("map_disambig")
+        } else {
+            egui::Id::unique((
+                "sticky_popup",
+                test_util::point_ref(DataCategory::Tpv, CENTRE_FIX),
+            ))
+        }
+    );
+    scene.release(PointerButton::Primary);
+    assert_eq!(scene.sticky(), None);
+    assert!(!scene.map.disambiguation_popup_is_open());
+    assert!(scene.zoom() < INITIAL_ZOOM);
+}
+
+#[test]
+fn a_popup_covered_double_click_restores_the_previous_disambiguation_popup() {
+    let mut scene = GestureScene::new(Target::Ambiguous);
+    scene.release(PointerButton::Primary);
+    scene.layout_popup();
+    scene.map.finish_primary_click();
+    let map = scene.map.map().expect("the rendered map");
+    let original_candidates = map.disambiguation_candidates;
+    let original_position = map.disambiguation_pos;
+
+    let destination = egui::pos2(VIEWPORT.x - 40.0, VIEWPORT.y - 150.0);
+    let point_index = CENTRE_FIX + 1;
+    let (latitude, longitude) =
+        test_util::fix_position(&test_util::a_walking_recording(), point_index);
+    let map = scene.map.map_mut().expect("the rendered map");
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, VIEWPORT);
+    let projector = Projector::new(
+        viewport,
+        &MercatorProjection,
+        &map.map_memory,
+        crate::default_map_center(),
+    );
+    let point_position = projector.project(walkers::lat_lon(latitude, longitude));
+    let center =
+        projector.unproject(viewport.center().to_vec2() + point_position - destination.to_vec2());
+    map.map_memory.center_at(center);
+    map.set_controls(MapControls::default());
+    scene.target = destination;
+    scene.map.move_pointer_to(scene.target);
+    scene.map.render_one_more_frame();
+
+    scene.release(PointerButton::Primary);
+    scene.layout_popup();
+    let point = test_util::point_ref(DataCategory::Tpv, point_index);
+    assert_eq!(scene.sticky(), Some(point));
+    assert!(!scene.map.disambiguation_popup_is_open());
+    assert_eq!(
+        scene.map.harness.inner.ctx.layer_id_at(scene.target),
+        Some(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::unique((super::PINNED_POPUP_ID, point)),
+        ))
+    );
+
+    scene.release(PointerButton::Primary);
+    let map = scene.map.map().expect("the rendered map");
+    assert_eq!(map.disambiguation_candidates, original_candidates);
+    assert_eq!(map.disambiguation_pos, original_position);
+    assert!(scene.map.disambiguation_popup_is_open());
+    scene
+        .map
+        .harness
+        .inner
+        .get_by_label_contains(test_util::EVENT_MARKER_ON_A_FIX_PATH);
+    let expected_zoom = (INITIAL_ZOOM + 1.0).to_bits();
+    assert_eq!(scene.zoom().to_bits(), expected_zoom);
+    scene.map.finish_primary_click();
+    assert_eq!(scene.zoom().to_bits(), expected_zoom);
+    assert!(scene.map.disambiguation_popup_is_open());
+}
+
+#[test]
+fn restoring_a_pin_preserves_the_popup_position_and_current_hover_state() {
+    let mut scene = GestureScene::new(Target::Bare);
+    let point = test_util::point_ref(DataCategory::Tpv, CENTRE_FIX);
+    assert!(scene.map.pin(point));
+    let position = egui::pos2(35.0, 55.0);
+    scene.map.map_mut().expect("the rendered map").sticky_pos = position;
+    scene.layout_popup();
+    scene.layout_popup();
+    let popup_id = egui::Id::unique((super::PINNED_POPUP_ID, point));
+    let original_rect = scene
+        .map
+        .harness
+        .inner
+        .ctx
+        .memory(|memory| memory.area_rect(popup_id));
+    assert!(original_rect.is_some());
+    scene.release(PointerButton::Primary);
+    assert_eq!(scene.sticky(), None);
+    let plot_time = chrono::DateTime::UNIX_EPOCH;
+    scene.map.draw_state().highlight.plot_hover_time = Some(plot_time);
+    scene.release(PointerButton::Primary);
+    assert_eq!(scene.sticky(), Some(point));
+    assert_eq!(
+        scene.map.map().expect("the rendered map").sticky_pos,
+        position
+    );
+    assert_eq!(
+        scene.map.draw_state().highlight.plot_hover_time,
+        Some(plot_time)
+    );
+    assert_eq!(
+        scene
+            .map
+            .harness
+            .inner
+            .ctx
+            .memory(|memory| memory.area_rect(popup_id)),
+        original_rect
+    );
+}
+
+#[test]
+fn an_external_selection_change_cancels_navigation_rollback() {
+    let mut scene = GestureScene::new(Target::Fix);
+    scene.release(PointerButton::Primary);
+    let other = test_util::point_ref(DataCategory::Tpv, CENTRE_FIX - 1);
+    assert!(scene.map.pin(other));
+    scene.release(PointerButton::Primary);
+    assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
+    assert_eq!(
+        scene.sticky(),
+        Some(test_util::point_ref(DataCategory::Tpv, CENTRE_FIX))
+    );
+}
+
+#[test]
+fn navigation_rollback_rechecks_the_original_pins_presence() {
+    let mut scene = GestureScene::new(Target::Bare);
+    assert!(
+        scene
+            .map
+            .pin(test_util::point_ref(DataCategory::Tpv, CENTRE_FIX))
+    );
+    scene.release(PointerButton::Primary);
+    scene
+        .map
+        .draw_state()
+        .display_mask
+        .set_visible(DisplayCategory::TrackPoints, false);
+    scene.release(PointerButton::Primary);
+    assert_eq!(scene.sticky(), None);
+    assert!(scene.zoom() < INITIAL_ZOOM);
+}
+
+#[test]
+fn immediate_disambiguation_rows_remain_interactive_during_the_double_click_window() {
+    let mut scene = GestureScene::new(Target::Ambiguous);
+    scene.release(PointerButton::Primary);
+    scene.layout_popup();
+    scene.target = scene
+        .map
+        .harness
+        .inner
+        .get_by_label_contains(test_util::EVENT_MARKER_ON_A_FIX_PATH)
+        .rect()
+        .center();
+    scene
+        .map
+        .harness
+        .inner
+        .input_mut()
+        .events
+        .push(Event::PointerMoved(scene.target));
+    scene.release(PointerButton::Primary);
+    assert_eq!(
+        scene.sticky(),
+        Some(test_util::point_ref(DataCategory::EventMarker, 0))
+    );
+    assert!(!scene.map.disambiguation_popup_is_open());
+    assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
 }
 
 const VIEWPORT: egui::Vec2 = egui::vec2(1600.0, 1200.0);
