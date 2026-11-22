@@ -12,57 +12,28 @@ use egui::{
     CursorIcon, Event, Galley, InputOptions, Key, Label, Modifiers, OutputCommand, PointerButton,
     Pos2, Role, Sense, Shape, WidgetInfo,
 };
-use strum::{EnumIter, IntoEnumIterator as _};
+
+use super::row_cells::{CellIndex, RowCells};
 
 use keyboard::{SelectionMotion, VerticalMotion};
 
 mod keyboard;
 
-/// Ordered by field position in each displayed row.
-#[derive(Clone, Copy, EnumIter, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum TextField {
-    Number,
-    Timestamp,
-    Content,
-    Divider,
-}
-
-#[derive(Default)]
-pub(super) struct RowTextFields<'a> {
-    pub(super) number: Option<String>,
-    pub(super) timestamp: Option<String>,
-    pub(super) content: Option<&'a str>,
-    pub(super) divider: Option<String>,
-}
-
-impl RowTextFields<'_> {
-    fn field(&self, field: TextField) -> Option<&str> {
-        match field {
-            TextField::Number => self.number.as_deref(),
-            TextField::Timestamp => self.timestamp.as_deref(),
-            TextField::Content => self.content,
-            TextField::Divider => self.divider.as_deref(),
-        }
-    }
-
-    fn present(&self) -> impl DoubleEndedIterator<Item = (TextField, &str)> {
-        TextField::iter().filter_map(|field| Some((field, self.field(field)?)))
-    }
-
+impl RowCells<'_> {
     fn range_at(&self, row: usize) -> Option<TextRange> {
-        let mut fields = self.present();
-        let first = fields.next()?;
-        let last = fields.next_back().unwrap_or(first);
+        let mut cells = self.indexed();
+        let first = cells.next()?;
+        let last = cells.next_back().unwrap_or(first);
         Some(TextRange {
             anchor: TextPosition {
                 row,
-                field: first.0,
+                cell: first.0,
                 character: CharIndex::ZERO,
             },
             endpoint: TextPosition {
                 row,
-                field: last.0,
-                character: CharIndex(last.1.chars().count()),
+                cell: last.0,
+                character: CharIndex(last.1.clipboard_text().chars().count()),
             },
         })
     }
@@ -71,7 +42,7 @@ impl RowTextFields<'_> {
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct TextPosition {
     row: usize,
-    field: TextField,
+    cell: CellIndex,
     character: CharIndex,
 }
 
@@ -108,16 +79,16 @@ impl TextRange {
         self.anchor.min(self.endpoint)..self.anchor.max(self.endpoint)
     }
 
-    fn field_characters(
+    fn cell_characters(
         self,
         row: usize,
-        field: TextField,
+        cell: CellIndex,
         end: CharIndex,
     ) -> Option<Range<CharIndex>> {
         let range = self.ordered();
-        let key = (row, field);
-        let first = (range.start.row, range.start.field);
-        let last = (range.end.row, range.end.field);
+        let key = (row, cell);
+        let first = (range.start.row, range.start.cell);
+        let last = (range.end.row, range.end.cell);
         if range.is_empty() || key < first || key > last {
             return None;
         }
@@ -213,7 +184,7 @@ impl TableTextSelection {
     fn settled_primary<'a>(
         &mut self,
         ui: &egui::Ui,
-        row_fields: impl Fn(usize) -> Option<RowTextFields<'a>>,
+        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
     ) -> Option<OutputCommand> {
         let selection = self.nonempty_range();
         let range = selection.map(TextRange::ordered);
@@ -223,7 +194,7 @@ impl TableTextSelection {
         if settle {
             self.primary_reported = range;
             if let Some(selection) = selection {
-                let text = Self::selected_text(selection, row_fields);
+                let text = Self::selected_text(selection, row_cells);
                 return (!text.is_empty()).then_some(OutputCommand::TextSelectionSettled(text));
             }
         }
@@ -233,11 +204,11 @@ impl TableTextSelection {
     fn select_all<'a>(
         &mut self,
         row_count: usize,
-        row_fields: impl Fn(usize) -> Option<RowTextFields<'a>>,
+        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
     ) {
         if let Some(last_row) = row_count.checked_sub(1)
-            && let Some(first) = row_fields(0).and_then(|fields| fields.range_at(0))
-            && let Some(last) = row_fields(last_row).and_then(|fields| fields.range_at(last_row))
+            && let Some(first) = row_cells(0).and_then(|cells| cells.range_at(0))
+            && let Some(last) = row_cells(last_row).and_then(|cells| cells.range_at(last_row))
         {
             self.selected = Some(SelectedText {
                 anchor: TextRange::point(first.anchor),
@@ -260,28 +231,29 @@ impl TableTextSelection {
 
     fn selected_text<'a>(
         selection: TextRange,
-        row_fields: impl Fn(usize) -> Option<RowTextFields<'a>>,
+        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
     ) -> String {
         let range = selection.ordered();
         let mut output = String::new();
         for row in range.start.row..=range.end.row {
-            let Some(fields) = row_fields(row) else {
+            let Some(cells) = row_cells(row) else {
                 continue;
             };
             if row != range.start.row {
                 output.push('\n');
             }
-            let mut first_field = true;
-            for (field, text) in fields.present() {
+            let mut first_cell = true;
+            for (index, cell) in cells.indexed() {
+                let text = cell.clipboard_text();
                 let Some(characters) =
-                    selection.field_characters(row, field, CharIndex(text.chars().count()))
+                    selection.cell_characters(row, index, CharIndex(text.chars().count()))
                 else {
                     continue;
                 };
-                if !first_field {
+                if !first_cell {
                     output.push(' ');
                 }
-                first_field = false;
+                first_cell = false;
                 output.extend(
                     text.chars()
                         .skip(characters.start.0)
@@ -295,7 +267,7 @@ impl TableTextSelection {
 
 struct PlacedText {
     row: usize,
-    field: TextField,
+    cell: CellIndex,
     origin: Pos2,
     galley: Arc<Galley>,
     shape: Option<ShapeIdx>,
@@ -310,7 +282,7 @@ impl PlacedText {
     fn position(&self, character: CharIndex) -> TextPosition {
         TextPosition {
             row: self.row,
-            field: self.field,
+            cell: self.cell,
             character,
         }
     }
@@ -380,7 +352,7 @@ impl PlacedText {
         };
         let mut galley = self.galley;
         if let Some(characters) = selection
-            .and_then(|selection| selection.field_characters(self.row, self.field, text_end))
+            .and_then(|selection| selection.cell_characters(self.row, self.cell, text_end))
             .filter(|characters| !characters.is_empty())
         {
             let start = if galley.elided && characters.end > displayed_end {
@@ -414,7 +386,7 @@ impl RowTextUi<'_> {
     pub(super) fn label(
         &mut self,
         ui: &mut egui::Ui,
-        field: TextField,
+        cell: CellIndex,
         label: Label,
     ) -> egui::Response {
         let label = if ui.is_visible() {
@@ -437,7 +409,7 @@ impl RowTextUi<'_> {
         }
         self.fields.push(PlacedText {
             row: self.row,
-            field,
+            cell,
             origin,
             galley,
             shape,
@@ -500,7 +472,7 @@ impl SelectionCommands {
     fn emit<'a>(
         self,
         ui: &egui::Ui,
-        row_fields: impl Fn(usize) -> Option<RowTextFields<'a>>,
+        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
         clear_label_selection: bool,
         primary: Option<OutputCommand>,
     ) {
@@ -517,7 +489,7 @@ impl SelectionCommands {
         }
         let mut after_labels = Vec::new();
         for (index, range) in self.copies {
-            let text = TableTextSelection::selected_text(range, &row_fields);
+            let text = TableTextSelection::selected_text(range, &row_cells);
             if !text.is_empty() {
                 if self
                     .last_label_copy
@@ -626,7 +598,7 @@ impl TableTextUi {
             .min(((visible_height / self.row_height).ceil() as usize).saturating_sub(1));
         let row =
             (self.visible_rows.start + row_offset).min(self.visible_rows.end.saturating_sub(1));
-        Some(self.field_at_x(self.row_fields(row), x)?.hit_at(x))
+        Some(self.field_at_x(self.placed_in_row(row), x)?.hit_at(x))
     }
 
     fn field_at_x<'a>(&self, fields: &'a [PlacedText], x: f32) -> Option<&'a PlacedText> {
@@ -646,7 +618,7 @@ impl TableTextUi {
             })
     }
 
-    fn row_fields(&self, row: usize) -> &[PlacedText] {
+    fn placed_in_row(&self, row: usize) -> &[PlacedText] {
         let start = self.fields.partition_point(|field| field.row < row);
         let end = self.fields.partition_point(|field| field.row <= row);
         self.fields.get(start..end).unwrap_or_default()
@@ -659,7 +631,7 @@ impl TableTextUi {
         render_row: &impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
         read: impl FnOnce(&[PlacedText]) -> R,
     ) -> R {
-        let placed = self.row_fields(row);
+        let placed = self.placed_in_row(row);
         if !placed.is_empty() {
             return read(placed);
         }
@@ -692,7 +664,7 @@ impl TableTextUi {
         } else {
             let previous = motion.previous;
             let x = self.with_row_geometry(ui, previous.row, render_row, |fields| {
-                let field = fields.iter().find(|field| field.field == previous.field)?;
+                let field = fields.iter().find(|field| field.cell == previous.cell)?;
                 Some(field.caret_x(previous.character))
             })?;
             let preferred = HorizontalPosition(x - left);
@@ -708,7 +680,7 @@ impl TableTextUi {
 
     fn selection_unit(&self, unit: SelectionUnit, hit: TextHit) -> TextRange {
         let position = hit.caret;
-        let fields = self.row_fields(position.row);
+        let fields = self.placed_in_row(position.row);
         match unit {
             SelectionUnit::Character => {}
             SelectionUnit::Line => {
@@ -720,7 +692,7 @@ impl TableTextUi {
                 }
             }
             SelectionUnit::Word => {
-                if let Some(field) = fields.iter().find(|field| field.field == position.field) {
+                if let Some(field) = fields.iter().find(|field| field.cell == position.cell) {
                     return field.word_at(hit);
                 }
             }
@@ -733,7 +705,7 @@ impl TableTextUi {
         ui: &mut egui::Ui,
         selection: &mut TableTextSelection,
         focus: TableInputFocus<'_>,
-        row_fields: impl Fn(usize) -> Option<RowTextFields<'a>>,
+        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
         render_row: &impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
     ) -> SelectionOutcome {
         let available = focus.available;
@@ -862,13 +834,13 @@ impl TableTextUi {
                     modifiers,
                     ..
                 } if keyboard && modifiers.matches_logically(Modifiers::COMMAND) => {
-                    selection.select_all(self.row_count, &row_fields);
+                    selection.select_all(self.row_count, &row_cells);
                     outcome.commands.consumed.push(input_index);
                 }
                 Event::Key { key, modifiers, .. } if keyboard => {
                     if let Some(motion) = SelectionMotion::of(key, modifiers)
                         && let Some(endpoint) =
-                            selection.move_endpoint(motion, self.row_count, &row_fields, |motion| {
+                            selection.move_endpoint(motion, self.row_count, &row_cells, |motion| {
                                 self.vertical_endpoint(ui, motion, render_row)
                             })
                     {
@@ -1063,12 +1035,12 @@ impl TableTextUi {
         ui: &mut egui::Ui,
         selection: &mut TableTextSelection,
         focus: TableInputFocus<'_>,
-        row_fields: impl Fn(usize) -> Option<RowTextFields<'a>>,
+        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
         render_row: impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
     ) -> bool {
         let available = focus.available && self.drag_target.rect.is_positive();
         let focus = TableInputFocus { available, ..focus };
-        let outcome = self.update_selection(ui, selection, focus, &row_fields, &render_row);
+        let outcome = self.update_selection(ui, selection, focus, &row_cells, &render_row);
         if outcome.request_focus {
             focus.target.request_focus();
         }
@@ -1086,10 +1058,10 @@ impl TableTextUi {
                 );
             }
         }
-        let primary = selection.settled_primary(ui, &row_fields);
+        let primary = selection.settled_primary(ui, &row_cells);
         outcome
             .commands
-            .emit(ui, row_fields, outcome.clear_label_selection, primary);
+            .emit(ui, row_cells, outcome.clear_label_selection, primary);
         let text = selection.selected.as_ref();
         if available
             && (text.is_some_and(|text| text.gesture.is_some())
@@ -1109,3 +1081,86 @@ impl TableTextUi {
 
 const SCROLL_SPEED_PER_POINT: f32 = 12.0;
 const MAX_SCROLL_SPEED: f32 = 900.0;
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use rstest::rstest;
+
+    use super::super::row_cells::RowCell;
+    use super::super::{ICON_DEVICE_CLOCK, TimestampText};
+    use super::{CellIndex, CharIndex, RowCells, TableTextSelection, TextPosition, TextRange};
+
+    #[test]
+    fn copy_uses_cell_order_across_rows_with_optional_cells() {
+        let requested_rows = RefCell::new(Vec::new());
+        let row_cells = |row: usize| {
+            requested_rows.borrow_mut().push(row);
+            Some(RowCells([
+                Some(RowCell::Source {
+                    text: "αβ",
+                    boot: false,
+                }),
+                None,
+                Some(RowCell::Number(row.to_string())),
+            ]))
+        };
+        let selection = TextRange {
+            anchor: TextPosition {
+                row: 102,
+                cell: CellIndex(2),
+                character: CharIndex(2),
+            },
+            endpoint: TextPosition {
+                row: 100,
+                cell: CellIndex(0),
+                character: CharIndex(1),
+            },
+        };
+
+        assert_eq!(
+            TableTextSelection::selected_text(selection, row_cells),
+            "β 100\nαβ 101\nαβ 10"
+        );
+        assert_eq!(requested_rows.into_inner(), [100, 101, 102]);
+    }
+
+    #[rstest]
+    #[case::device_clock(0, " ")]
+    #[case::date_after_clock(1, "2")]
+    fn copy_projects_device_clock_at_display_character_boundaries(
+        #[case] character: usize,
+        #[case] expected: &str,
+    ) {
+        let start = TextPosition {
+            row: 0,
+            cell: CellIndex(0),
+            character: CharIndex(character),
+        };
+        let selection = TextRange {
+            anchor: start,
+            endpoint: TextPosition {
+                character: CharIndex(character + 1),
+                ..start
+            },
+        };
+        let row_cells = |_| {
+            Some(RowCells([
+                Some(RowCell::Timestamp(TimestampText {
+                    prefix: ICON_DEVICE_CLOCK,
+                    date: "2026-01-01 ".to_owned(),
+                    hour_minute: "14:02".to_owned(),
+                    seconds: ":11".to_owned(),
+                })),
+                None,
+                None,
+            ]))
+        };
+
+        assert_eq!(
+            TableTextSelection::selected_text(selection, row_cells),
+            expected
+        );
+    }
+}
