@@ -70,8 +70,16 @@ impl KeyboardScrollSteps {
         ]
         .into_iter()
         .map(|(key, step_px)| {
-            let presses =
-                ui.input_mut(|input| input.count_and_consume_key(egui::Modifiers::NONE, key));
+            let presses = ui.input_mut(|input| {
+                let mut presses = 0;
+                input.events.retain(|event| {
+                    let scroll = matches!(event, egui::Event::Key { key: pressed_key, pressed: true, modifiers, .. }
+                        if *pressed_key == key && !modifiers.any());
+                    presses += usize::from(scroll);
+                    !scroll
+                });
+                presses
+            });
             if presses > 0 {
                 ui.memory_mut(|memory| memory.move_focus(FocusDirection::None));
             }
