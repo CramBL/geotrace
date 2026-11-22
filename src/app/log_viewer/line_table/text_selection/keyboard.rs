@@ -2,8 +2,9 @@ use egui::text::{CCursor, CharIndex};
 use egui::text_selection::text_cursor_state;
 use egui::{Key, Modifiers};
 
-use super::super::row_cells::RowCells;
-use super::{HorizontalPosition, TableTextSelection, TextPosition, TextRange};
+use super::super::LineTableRows;
+use super::super::selection_document::{Caret, DocumentRow};
+use super::{CaretRange, HorizontalPosition, TableTextSelection};
 
 #[derive(Clone, Copy)]
 pub(super) enum Direction {
@@ -12,17 +13,20 @@ pub(super) enum Direction {
 }
 
 impl Direction {
-    fn adjacent_row(self, position: TextPosition, row_count: usize) -> Option<usize> {
+    fn adjacent_row(self, position: Caret, document: &LineTableRows) -> Option<usize> {
         match self {
-            Self::Backward => position.row.checked_sub(1),
-            Self::Forward => position.row.checked_add(1).filter(|&row| row < row_count),
+            Self::Backward => position.row().checked_sub(1),
+            Self::Forward => position
+                .row()
+                .checked_add(1)
+                .filter(|&row| row < document.len()),
         }
     }
 
-    fn boundary(self, range: TextRange) -> TextPosition {
+    fn boundary(self, range: CaretRange) -> Caret {
         match self {
-            Self::Backward => range.anchor,
-            Self::Forward => range.endpoint,
+            Self::Backward => range.anchor(),
+            Self::Forward => range.endpoint(),
         }
     }
 }
@@ -37,7 +41,7 @@ pub(super) enum SelectionMotion {
 }
 
 pub(super) struct VerticalMotion<'a> {
-    pub(super) previous: TextPosition,
+    pub(super) previous: Caret,
     pub(super) row: usize,
     pub(super) preferred_x: &'a mut Option<HorizontalPosition>,
 }
@@ -76,46 +80,43 @@ impl SelectionMotion {
 }
 
 impl TableTextSelection {
-    pub(super) fn move_endpoint<'a>(
+    pub(super) fn move_endpoint(
         &mut self,
         motion: SelectionMotion,
-        row_count: usize,
-        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
-        vertical_endpoint: impl FnOnce(&mut VerticalMotion<'_>) -> Option<TextPosition>,
-    ) -> Option<TextPosition> {
+        document: &LineTableRows,
+        vertical_endpoint: impl FnOnce(&mut VerticalMotion<'_>) -> Option<Caret>,
+    ) -> Option<Caret> {
         let text = self
             .selected
             .as_mut()
             .filter(|text| text.gesture.is_none())?;
-        let previous = text.range.endpoint;
-        let fields = row_cells(previous.row)?;
+        let previous = text.range.endpoint();
+        let row = document.document_row(previous.row())?;
         if !matches!(motion, SelectionMotion::Row(_)) {
             text.preferred_x = None;
         }
         let endpoint = match motion {
             SelectionMotion::Character(direction) | SelectionMotion::Word(direction) => {
                 let by_word = matches!(motion, SelectionMotion::Word(_));
-                previous
-                    .horizontal(direction, &fields, by_word)
-                    .or_else(|| {
-                        let row = direction.adjacent_row(previous, row_count)?;
-                        let fields = row_cells(row)?;
-                        let range = fields.range_at(row)?;
-                        let boundary = match direction {
-                            Direction::Backward => range.endpoint,
-                            Direction::Forward => range.anchor,
-                        };
-                        if by_word {
-                            boundary
-                                .horizontal(direction, &fields, true)
-                                .or(Some(boundary))
-                        } else {
-                            Some(boundary)
-                        }
-                    })
+                previous.horizontal(direction, &row, by_word).or_else(|| {
+                    let row = direction.adjacent_row(previous, document)?;
+                    let row = document.document_row(row)?;
+                    let range = row.range()?;
+                    let boundary = match direction {
+                        Direction::Backward => range.endpoint(),
+                        Direction::Forward => range.anchor(),
+                    };
+                    if by_word {
+                        boundary
+                            .horizontal(direction, &row, true)
+                            .or(Some(boundary))
+                    } else {
+                        Some(boundary)
+                    }
+                })
             }
             SelectionMotion::Row(direction) => {
-                if let Some(row) = direction.adjacent_row(previous, row_count) {
+                if let Some(row) = direction.adjacent_row(previous, document) {
                     vertical_endpoint(&mut VerticalMotion {
                         previous,
                         row,
@@ -123,38 +124,38 @@ impl TableTextSelection {
                     })
                 } else {
                     text.preferred_x = None;
-                    Some(direction.boundary(fields.range_at(previous.row)?))
+                    Some(direction.boundary(row.range()?))
                 }
             }
-            SelectionMotion::RowBoundary(direction) => {
-                Some(direction.boundary(fields.range_at(previous.row)?))
-            }
+            SelectionMotion::RowBoundary(direction) => Some(direction.boundary(row.range()?)),
             SelectionMotion::DocumentBoundary(direction) => {
                 let row = match direction {
                     Direction::Backward => 0,
-                    Direction::Forward => row_count.checked_sub(1)?,
+                    Direction::Forward => document.len().checked_sub(1)?,
                 };
-                Some(direction.boundary(row_cells(row)?.range_at(row)?))
+                Some(direction.boundary(document.document_row(row)?.range()?))
             }
         }
         .unwrap_or(previous);
-        text.anchor = TextRange::point(text.range.anchor);
-        text.range.endpoint = endpoint;
+        text.anchor = CaretRange::point(text.range.anchor());
+        text.range = text.range.with_endpoint(endpoint);
         self.last_click = None;
-        Some(endpoint)
+        Some(text.range.endpoint())
     }
 }
 
-impl TextPosition {
+impl Caret {
     fn horizontal(
         self,
         direction: Direction,
-        fields: &RowCells<'_>,
+        row: &DocumentRow<'_>,
         by_word: bool,
     ) -> Option<Self> {
-        let cursor = CCursor::new(fields.column_of(self));
+        let cursor = CCursor::new(row.column_of(self));
         let destination = if by_word {
-            let line = fields
+            let line = row
+                .content()
+                .cells
                 .indexed()
                 .map(|(_, cell)| cell.clipboard_text())
                 .collect::<Vec<_>>()
@@ -169,32 +170,29 @@ impl TextPosition {
                 Direction::Forward => cursor + 1,
             }
         };
-        fields
-            .position_at_column(self.row, destination.index)
+        row.position_at_column(destination.index)
             .filter(|&position| position != self)
     }
 }
 
-impl RowCells<'_> {
-    fn column_of(&self, position: TextPosition) -> CharIndex {
-        position.character
+impl DocumentRow<'_> {
+    fn column_of(&self, position: Caret) -> CharIndex {
+        position.character()
             + self
+                .content()
+                .cells
                 .indexed()
-                .take_while(|(index, _)| *index < position.cell)
+                .take_while(|(index, _)| *index < position.cell())
                 .map(|(_, cell)| cell.clipboard_text().chars().count() + 1)
                 .sum::<usize>()
     }
 
-    fn position_at_column(&self, row: usize, column: CharIndex) -> Option<TextPosition> {
+    fn position_at_column(&self, column: CharIndex) -> Option<Caret> {
         let mut remaining = column.0;
         let mut last = None;
-        for (cell, spec) in self.indexed() {
-            let length = spec.clipboard_text().chars().count();
-            let position = TextPosition {
-                row,
-                cell,
-                character: CharIndex(remaining.min(length)),
-            };
+        for (carets, _) in self.cells() {
+            let length = carets.text_end().0;
+            let position = carets.at(CharIndex(remaining));
             if remaining <= length {
                 return Some(position);
             }

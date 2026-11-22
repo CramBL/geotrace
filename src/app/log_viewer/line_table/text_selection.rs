@@ -13,75 +13,66 @@ use egui::{
     Sense, Shape, WidgetInfo,
 };
 
-use super::row_cells::{CellIndex, RowCells};
+use super::LineTableRows;
+use super::row_cells::CellIndex;
 use super::row_grid::ShownRows;
 use super::row_layout::{CellLayout, RowLayout};
+use super::selection_document::{Caret, DocumentRevision, DocumentRow};
 
 use keyboard::{SelectionMotion, VerticalMotion};
 
 mod keyboard;
-
-impl RowCells<'_> {
-    fn range_at(&self, row: usize) -> Option<TextRange> {
-        let mut cells = self.indexed();
-        let first = cells.next()?;
-        let last = cells.next_back().unwrap_or(first);
-        Some(TextRange {
-            anchor: TextPosition {
-                row,
-                cell: first.0,
-                character: CharIndex::ZERO,
-            },
-            endpoint: TextPosition {
-                row,
-                cell: last.0,
-                character: CharIndex(last.1.clipboard_text().chars().count()),
-            },
-        })
-    }
-}
-
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-struct TextPosition {
-    row: usize,
-    cell: CellIndex,
-    character: CharIndex,
-}
 
 #[derive(Clone, Copy)]
 struct HorizontalPosition(f32);
 
 #[derive(Clone, Copy)]
 struct TextHit {
-    caret: TextPosition,
+    caret: Caret,
     glyph: Option<CharIndex>,
 }
 
-impl From<TextPosition> for TextHit {
-    fn from(caret: TextPosition) -> Self {
+impl From<Caret> for TextHit {
+    fn from(caret: Caret) -> Self {
         Self { caret, glyph: None }
     }
 }
 
 #[derive(Clone, Copy)]
-struct TextRange {
-    anchor: TextPosition,
-    endpoint: TextPosition,
+pub(super) struct CaretRange {
+    anchor: Caret,
+    endpoint: Caret,
 }
 
-impl TextRange {
-    fn point(position: TextPosition) -> Self {
+impl CaretRange {
+    pub(super) fn point(caret: Caret) -> Self {
         Self {
-            anchor: position,
-            endpoint: position,
+            anchor: caret,
+            endpoint: caret,
         }
     }
 
-    fn ordered(self) -> Range<TextPosition> {
+    pub(super) fn with_endpoint(self, endpoint: Caret) -> Self {
+        if self.anchor.revision() == endpoint.revision() {
+            Self { endpoint, ..self }
+        } else {
+            self
+        }
+    }
+
+    pub(super) fn anchor(self) -> Caret {
+        self.anchor
+    }
+
+    pub(super) fn endpoint(self) -> Caret {
+        self.endpoint
+    }
+
+    pub(super) fn ordered(self) -> Range<Caret> {
         self.anchor.min(self.endpoint)..self.anchor.max(self.endpoint)
     }
 
-    fn cell_characters(
+    pub(super) fn cell_characters(
         self,
         row: usize,
         cell: CellIndex,
@@ -89,18 +80,18 @@ impl TextRange {
     ) -> Option<Range<CharIndex>> {
         let range = self.ordered();
         let key = (row, cell);
-        let first = (range.start.row, range.start.cell);
-        let last = (range.end.row, range.end.cell);
+        let first = (range.start.row(), range.start.cell());
+        let last = (range.end.row(), range.end.cell());
         if range.is_empty() || key < first || key > last {
             return None;
         }
         let start = if key == first {
-            range.start.character.min(end)
+            range.start.character().min(end)
         } else {
             CharIndex::ZERO
         };
         let end = if key == last {
-            range.end.character.min(end)
+            range.end.character().min(end)
         } else {
             end
         };
@@ -145,30 +136,24 @@ struct SelectionGesture {
 }
 
 struct SelectedText {
-    anchor: TextRange,
-    range: TextRange,
+    anchor: CaretRange,
+    range: CaretRange,
     gesture: Option<SelectionGesture>,
     preferred_x: Option<HorizontalPosition>,
 }
 
 impl SelectedText {
-    fn extend(&mut self, pointer: TextPosition, unit_range: TextRange) {
+    fn extend(&mut self, pointer: Caret, unit_range: CaretRange) {
         let anchor = self.anchor.ordered();
         let target = unit_range.ordered();
         self.range =
             if pointer < anchor.start || (pointer == anchor.start && target.start < anchor.start) {
-                TextRange {
-                    anchor: anchor.end,
-                    endpoint: target.start,
-                }
+                CaretRange::point(anchor.end).with_endpoint(target.start)
             } else if pointer > anchor.end
                 || anchor.is_empty()
                 || (pointer == anchor.end && target.end > anchor.end)
             {
-                TextRange {
-                    anchor: anchor.start,
-                    endpoint: target.end,
-                }
+                CaretRange::point(anchor.start).with_endpoint(target.end)
             } else {
                 self.anchor
             };
@@ -177,93 +162,61 @@ impl SelectedText {
 
 #[derive(Default)]
 pub(in crate::app::log_viewer) struct TableTextSelection {
+    document: Option<DocumentRevision>,
     selected: Option<SelectedText>,
     last_click: Option<CompletedClick>,
-    primary_reported: Option<Range<TextPosition>>,
+    primary_reported: Option<Range<Caret>>,
 }
 
 impl TableTextSelection {
-    fn settled_primary<'a>(
+    pub(in crate::app::log_viewer) fn replace_document(
+        &mut self,
+        document: Option<DocumentRevision>,
+    ) {
+        if self.document != document {
+            *self = Self {
+                document,
+                ..Self::default()
+            };
+        }
+    }
+
+    fn settled_primary(
         &mut self,
         ui: &egui::Ui,
-        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
+        document: &LineTableRows,
     ) -> Option<OutputCommand> {
         let selection = self.nonempty_range();
-        let range = selection.map(TextRange::ordered);
+        let range = selection.map(CaretRange::ordered);
         let settle = ui.ctx().os() == OperatingSystem::Nix
             && !ui.input(|input| input.pointer.any_down())
             && self.primary_reported != range;
         if settle {
             self.primary_reported = range;
             if let Some(selection) = selection {
-                let text = Self::selected_text(selection, row_cells);
+                let text = document.clipboard_text(selection)?;
                 return (!text.is_empty()).then_some(OutputCommand::TextSelectionSettled(text));
             }
         }
         None
     }
 
-    fn select_all<'a>(
-        &mut self,
-        row_count: usize,
-        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
-    ) {
-        if let Some(last_row) = row_count.checked_sub(1)
-            && let Some(first) = row_cells(0).and_then(|cells| cells.range_at(0))
-            && let Some(last) = row_cells(last_row).and_then(|cells| cells.range_at(last_row))
-        {
+    fn select_all(&mut self, document: &LineTableRows) {
+        if let Some(range) = document.full_range() {
             self.selected = Some(SelectedText {
-                anchor: TextRange::point(first.anchor),
-                range: TextRange {
-                    anchor: first.anchor,
-                    endpoint: last.endpoint,
-                },
+                anchor: CaretRange::point(range.anchor()),
+                range,
                 gesture: None,
                 preferred_x: None,
             });
         }
     }
 
-    fn nonempty_range(&self) -> Option<TextRange> {
+    fn nonempty_range(&self) -> Option<CaretRange> {
         self.selected
             .as_ref()
             .map(|text| text.range)
             .filter(|range| !range.ordered().is_empty())
-    }
-
-    fn selected_text<'a>(
-        selection: TextRange,
-        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
-    ) -> String {
-        let range = selection.ordered();
-        let mut output = String::new();
-        for row in range.start.row..=range.end.row {
-            let Some(cells) = row_cells(row) else {
-                continue;
-            };
-            if row != range.start.row {
-                output.push('\n');
-            }
-            let mut first_cell = true;
-            for (index, cell) in cells.indexed() {
-                let text = cell.clipboard_text();
-                let Some(characters) =
-                    selection.cell_characters(row, index, CharIndex(text.chars().count()))
-                else {
-                    continue;
-                };
-                if !first_cell {
-                    output.push(' ');
-                }
-                first_cell = false;
-                output.extend(
-                    text.chars()
-                        .skip(characters.start.0)
-                        .take(characters.end.0 - characters.start.0),
-                );
-            }
-        }
-        output
     }
 }
 
@@ -273,23 +226,15 @@ impl CellLayout {
         self.origin.x + self.galley.pos_from_cursor(cursor).left()
     }
 
-    fn position(&self, character: CharIndex) -> TextPosition {
-        TextPosition {
-            row: self.row,
-            cell: self.cell,
-            character,
-        }
-    }
-
-    fn text_end(&self) -> CharIndex {
-        CharIndex(self.galley.text().chars().count())
+    fn position(&self, character: CharIndex) -> Caret {
+        self.carets().at(character)
     }
 
     fn hit_at(&self, x: f32) -> TextHit {
         let position = egui::vec2(x - self.origin.x, self.galley.rect.center().y);
         let cursor = self.galley.cursor_from_pos(position);
         let caret = if self.galley.elided && cursor.index == self.galley.end().index {
-            self.text_end()
+            self.carets().text_end()
         } else {
             cursor.index
         };
@@ -313,37 +258,33 @@ impl CellLayout {
         }
     }
 
-    fn word_at(&self, hit: TextHit) -> TextRange {
+    fn word_at(&self, hit: TextHit) -> CaretRange {
         if let Some(glyph) = hit.glyph
             && self.galley.elided
             && glyph + 1 == self.galley.end().index
         {
-            return TextRange {
-                anchor: self.position(glyph),
-                endpoint: self.position(self.text_end()),
-            };
+            return CaretRange::point(self.position(glyph))
+                .with_endpoint(self.position(self.carets().text_end()));
         }
         let text = self.galley.text();
-        let start = hit.glyph.unwrap_or(hit.caret.character);
+        let start = hit.glyph.unwrap_or(hit.caret.character());
         let end = hit.glyph.map_or(start, |glyph| glyph + 1);
-        TextRange {
-            anchor: self
-                .position(text_cursor_state::ccursor_previous_word(text, CCursor::new(end)).index),
-            endpoint: self
-                .position(text_cursor_state::ccursor_next_word(text, CCursor::new(start)).index),
-        }
+        let anchor = text_cursor_state::ccursor_previous_word(text, CCursor::new(end)).index;
+        let endpoint = text_cursor_state::ccursor_next_word(text, CCursor::new(start)).index;
+        CaretRange::point(self.position(anchor)).with_endpoint(self.position(endpoint))
     }
 
-    fn paint(self, ui: &egui::Ui, shape: ShapeIdx, selection: Option<TextRange>) {
+    fn paint(self, ui: &egui::Ui, shape: ShapeIdx, selection: Option<CaretRange>) {
         let displayed_end = self.galley.end().index;
         let text_end = if self.galley.elided && selection.is_some() {
-            self.text_end()
+            self.carets().text_end()
         } else {
             displayed_end
         };
+        let start = self.carets().start();
         let mut galley = self.galley;
         if let Some(characters) = selection
-            .and_then(|selection| selection.cell_characters(self.row, self.cell, text_end))
+            .and_then(|selection| selection.cell_characters(start.row(), start.cell(), text_end))
             .filter(|characters| !characters.is_empty())
         {
             let start = if galley.elided && characters.end > displayed_end {
@@ -365,7 +306,6 @@ impl CellLayout {
 }
 
 struct VisibleTextRow {
-    index: usize,
     layout: RowLayout,
     shapes: Vec<ShapeIdx>,
 }
@@ -373,7 +313,7 @@ struct VisibleTextRow {
 pub(super) struct TableTextUi<'grid> {
     drag_target: egui::Response,
     scrollbar: Option<egui::Rect>,
-    row_count: usize,
+    document: &'grid LineTableRows,
     shown: &'grid ShownRows,
     rows: Vec<VisibleTextRow>,
 }
@@ -390,7 +330,7 @@ pub(super) struct TableInputFocus<'a> {
 struct SelectionOutcome {
     clear_label_selection: bool,
     selected_on_release: bool,
-    keyboard_endpoint: Option<TextPosition>,
+    keyboard_endpoint: Option<Caret>,
     request_focus: bool,
     commands: SelectionCommands,
 }
@@ -414,15 +354,15 @@ struct PointerPress {
 #[derive(Default)]
 struct SelectionCommands {
     consumed: Vec<usize>,
-    copies: Vec<(usize, TextRange)>,
+    copies: Vec<(usize, CaretRange)>,
     last_label_copy: Option<usize>,
 }
 
 impl SelectionCommands {
-    fn emit<'a>(
+    fn emit(
         self,
         ui: &egui::Ui,
-        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
+        document: &LineTableRows,
         clear_label_selection: bool,
         primary: Option<OutputCommand>,
     ) {
@@ -439,8 +379,10 @@ impl SelectionCommands {
         }
         let mut after_labels = Vec::new();
         for (index, range) in self.copies {
-            let text = TableTextSelection::selected_text(range, &row_cells);
-            if !text.is_empty() {
+            if let Some(text) = document
+                .clipboard_text(range)
+                .filter(|text| !text.is_empty())
+            {
                 if self
                     .last_label_copy
                     .is_some_and(|label_copy| index > label_copy)
@@ -497,7 +439,7 @@ impl<'grid> TableTextUi<'grid> {
     pub(super) fn new(
         ui: &egui::Ui,
         shown: &'grid ShownRows,
-        row_count: usize,
+        document: &'grid LineTableRows,
         scrollbar: Option<egui::Rect>,
     ) -> Self {
         let viewport = ui.clip_rect().intersect(egui::Rect::from_x_y_ranges(
@@ -509,7 +451,7 @@ impl<'grid> TableTextUi<'grid> {
         Self {
             drag_target,
             scrollbar,
-            row_count,
+            document,
             shown,
             rows: Vec::new(),
         }
@@ -518,10 +460,18 @@ impl<'grid> TableTextUi<'grid> {
     pub(super) fn row_ui(
         &mut self,
         ui: &egui::Ui,
-        row: usize,
         layout: RowLayout,
         mut cell_hover: impl FnMut(CellIndex, egui::Response),
     ) {
+        if layout.revision() != self.document.document_revision()
+            || !self.shown.rows.contains(&layout.row())
+            || self
+                .rows
+                .last()
+                .is_some_and(|row| row.layout.row() >= layout.row())
+        {
+            return;
+        }
         let shapes = if ui.is_visible() {
             let sense = if ui.memory(|memory| memory.options.screen_reader) {
                 Sense::focusable_noninteractive()
@@ -529,10 +479,11 @@ impl<'grid> TableTextUi<'grid> {
                 Sense::hover()
             };
             layout
-                .cells
+                .cells()
                 .iter()
                 .map(|cell| {
-                    let id = ui.make_persistent_id(("log_text_cell", row, cell.cell.0));
+                    let caret = cell.carets().start();
+                    let id = ui.make_persistent_id(("log_text_cell", caret.row(), caret.cell().0));
                     let mut response = ui.interact(cell.bounds, id, sense);
                     let galley = &cell.galley;
                     response.widget_info(|| {
@@ -545,34 +496,30 @@ impl<'grid> TableTextUi<'grid> {
                             ..LayoutJob::default()
                         });
                     }
-                    cell_hover(cell.cell, response);
+                    cell_hover(caret.cell(), response);
                     ui.painter().add(Shape::Noop)
                 })
                 .collect()
         } else {
             Vec::new()
         };
-        self.rows.push(VisibleTextRow {
-            index: row,
-            layout,
-            shapes,
-        });
+        self.rows.push(VisibleTextRow { layout, shapes });
     }
 
     fn text_hit(&self, pointer: Pos2) -> Option<TextHit> {
         let viewport = self.drag_target.rect;
         let top = self.shown.bounds.top();
         if self.shown.rows.start == 0 && viewport.top() <= top && pointer.y < top {
-            let first = self.rows.first()?.layout.cells.first()?;
+            let first = self.rows.first()?.layout.cells().first()?;
             return Some(first.position(CharIndex::ZERO).into());
         }
         let bottom = self.shown.row_top(self.shown.rows.end);
-        if self.shown.rows.end == self.row_count
+        if self.shown.rows.end == self.document.len()
             && bottom <= viewport.bottom()
             && pointer.y >= bottom
         {
-            let field = self.rows.last()?.layout.cells.last()?;
-            return Some(field.position(field.text_end()).into());
+            let field = self.rows.last()?.layout.cells().last()?;
+            return Some(field.position(field.carets().text_end()).into());
         }
         let x = pointer.x.clamp(viewport.left(), viewport.right());
         let row = self.shown.hit_row(viewport.y_range(), pointer.y)?;
@@ -598,41 +545,49 @@ impl<'grid> TableTextUi<'grid> {
 
     fn placed_in_row(&self, row: usize) -> &[CellLayout] {
         self.rows
-            .binary_search_by_key(&row, |entry| entry.index)
+            .binary_search_by_key(&row, |entry| entry.layout.row())
             .ok()
             .and_then(|index| self.rows.get(index))
-            .map_or(&[], |row| row.layout.cells.as_slice())
+            .map_or(&[], |row| row.layout.cells())
     }
 
     fn with_row_geometry<R>(
         &self,
         row: usize,
         fonts: &mut FontsView<'_>,
-        layout_row: &impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
+        layout_row: &impl Fn(&mut FontsView<'_>, &DocumentRow<'_>) -> RowLayout,
         read: impl FnOnce(&[CellLayout]) -> R,
     ) -> R {
         let placed = self.placed_in_row(row);
         if !placed.is_empty() {
             return read(placed);
         }
-        let layout = layout_row(fonts, row);
-        read(layout.as_ref().map_or(&[], |row| row.cells.as_slice()))
+        let layout = self
+            .document
+            .document_row(row)
+            .map(|row| layout_row(fonts, &row))
+            .filter(|layout| {
+                layout.revision() == self.document.document_revision() && layout.row() == row
+            });
+        read(layout.as_ref().map_or(&[], |layout| layout.cells()))
     }
 
     fn vertical_endpoint(
         &self,
         motion: &mut VerticalMotion<'_>,
         fonts: &mut FontsView<'_>,
-        layout_row: &impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
-    ) -> Option<TextPosition> {
+        layout_row: &impl Fn(&mut FontsView<'_>, &DocumentRow<'_>) -> RowLayout,
+    ) -> Option<Caret> {
         let left = self.shown.bounds.left();
         let offset = if let Some(preferred) = *motion.preferred_x {
             preferred
         } else {
             let previous = motion.previous;
-            let x = self.with_row_geometry(previous.row, fonts, layout_row, |fields| {
-                let field = fields.iter().find(|field| field.cell == previous.cell)?;
-                Some(field.caret_x(previous.character))
+            let x = self.with_row_geometry(previous.row(), fonts, layout_row, |fields| {
+                let field = fields
+                    .iter()
+                    .find(|field| field.carets().start().cell() == previous.cell())?;
+                Some(field.caret_x(previous.character()))
             })?;
             let preferred = HorizontalPosition(x - left);
             *motion.preferred_x = Some(preferred);
@@ -645,35 +600,35 @@ impl<'grid> TableTextUi<'grid> {
         })
     }
 
-    fn selection_unit(&self, unit: SelectionUnit, hit: TextHit) -> TextRange {
+    fn selection_unit(&self, unit: SelectionUnit, hit: TextHit) -> CaretRange {
         let position = hit.caret;
-        let fields = self.placed_in_row(position.row);
+        let fields = self.placed_in_row(position.row());
         match unit {
             SelectionUnit::Character => {}
             SelectionUnit::Line => {
                 if let (Some(first), Some(last)) = (fields.first(), fields.last()) {
-                    return TextRange {
-                        anchor: first.position(CharIndex::ZERO),
-                        endpoint: last.position(last.text_end()),
-                    };
+                    return CaretRange::point(first.carets().start())
+                        .with_endpoint(last.position(last.carets().text_end()));
                 }
             }
             SelectionUnit::Word => {
-                if let Some(field) = fields.iter().find(|field| field.cell == position.cell) {
+                if let Some(field) = fields
+                    .iter()
+                    .find(|field| field.carets().start().cell() == position.cell())
+                {
                     return field.word_at(hit);
                 }
             }
         }
-        TextRange::point(position)
+        CaretRange::point(position)
     }
 
-    fn update_selection<'a>(
+    fn update_selection(
         &self,
         ui: &egui::Ui,
         selection: &mut TableTextSelection,
         focus: TableInputFocus<'_>,
-        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
-        layout_row: &impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
+        layout_row: &impl Fn(&mut FontsView<'_>, &DocumentRow<'_>) -> RowLayout,
     ) -> SelectionOutcome {
         let available = focus.available;
         let (events, position, time, primary_down) = ui.input(|input| {
@@ -801,13 +756,13 @@ impl<'grid> TableTextUi<'grid> {
                     modifiers,
                     ..
                 } if keyboard && modifiers.matches_logically(Modifiers::COMMAND) => {
-                    selection.select_all(self.row_count, &row_cells);
+                    selection.select_all(self.document);
                     outcome.commands.consumed.push(input_index);
                 }
                 Event::Key { key, modifiers, .. } if keyboard => {
                     if let Some(motion) = SelectionMotion::of(key, modifiers)
                         && let Some(endpoint) =
-                            selection.move_endpoint(motion, self.row_count, &row_cells, |motion| {
+                            selection.move_endpoint(motion, self.document, |motion| {
                                 ui.fonts_mut(|fonts| {
                                     self.vertical_endpoint(motion, fonts, layout_row)
                                 })
@@ -985,7 +940,7 @@ impl<'grid> TableTextUi<'grid> {
         let rect = self.drag_target.rect;
         let overshoot = pointer_y.clamp(rect.top(), rect.bottom()) - pointer_y;
         let more_above = self.shown.rows.start > 0 || self.shown.bounds.top() < rect.top();
-        let more_below = self.shown.rows.end < self.row_count
+        let more_below = self.shown.rows.end < self.document.len()
             || self.shown.row_top(self.shown.rows.end) > rect.bottom();
         if (overshoot > 0.0 && more_above) || (overshoot < 0.0 && more_below) {
             let speed =
@@ -995,23 +950,23 @@ impl<'grid> TableTextUi<'grid> {
         }
     }
 
-    pub(super) fn finish<'a>(
+    pub(super) fn finish(
         self,
         ui: &egui::Ui,
         selection: &mut TableTextSelection,
         focus: TableInputFocus<'_>,
-        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
-        layout_row: impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
+        layout_row: impl Fn(&mut FontsView<'_>, &DocumentRow<'_>) -> RowLayout,
     ) -> bool {
         let available = focus.available && self.drag_target.rect.is_positive();
         let focus = TableInputFocus { available, ..focus };
-        let outcome = self.update_selection(ui, selection, focus, &row_cells, &layout_row);
+        selection.replace_document(Some(self.document.document_revision()));
+        let outcome = self.update_selection(ui, selection, focus, &layout_row);
         if outcome.request_focus {
             focus.target.request_focus();
         }
         if let Some(endpoint) = outcome.keyboard_endpoint {
             let viewport = self.drag_target.rect;
-            let bounds = self.shown.row_bounds(endpoint.row);
+            let bounds = self.shown.row_bounds(endpoint.row());
             if bounds.top() < viewport.top() || bounds.bottom() > viewport.bottom() {
                 ui.scroll_to_rect(
                     egui::Rect::from_x_y_ranges(
@@ -1022,10 +977,10 @@ impl<'grid> TableTextUi<'grid> {
                 );
             }
         }
-        let primary = selection.settled_primary(ui, &row_cells);
+        let primary = selection.settled_primary(ui, self.document);
         outcome
             .commands
-            .emit(ui, row_cells, outcome.clear_label_selection, primary);
+            .emit(ui, self.document, outcome.clear_label_selection, primary);
         let text = selection.selected.as_ref();
         if available
             && (text.is_some_and(|text| text.gesture.is_some())
@@ -1037,7 +992,7 @@ impl<'grid> TableTextUi<'grid> {
             ui.ctx().set_cursor_icon(CursorIcon::Text);
         }
         for row in self.rows {
-            for (cell, shape) in row.layout.cells.into_iter().zip(row.shapes) {
+            for (cell, shape) in row.layout.into_cells().into_iter().zip(row.shapes) {
                 cell.paint(ui, shape, text.map(|text| text.range));
             }
         }
@@ -1050,83 +1005,74 @@ const MAX_SCROLL_SPEED: f32 = 900.0;
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
-    use rstest::rstest;
-
-    use super::super::row_cells::RowCell;
-    use super::super::{ICON_DEVICE_CLOCK, TimestampText};
-    use super::{CellIndex, CharIndex, RowCells, TableTextSelection, TextPosition, TextRange};
+    use super::super::LineTableRows;
+    use super::super::row_grid::RowGrid;
+    use super::super::row_layout::{RowLayoutRequest, RowLayoutStyle};
+    use super::super::tests as line_table_tests;
+    use super::{
+        DocumentRevision, DocumentRow, FontsView, ShownRows, TableTextSelection, TableTextUi,
+    };
 
     #[test]
-    fn copy_uses_cell_order_across_rows_with_optional_cells() {
-        let requested_rows = RefCell::new(Vec::new());
-        let row_cells = |row: usize| {
-            requested_rows.borrow_mut().push(row);
-            Some(RowCells([
-                Some(RowCell::Source {
-                    text: "αβ",
-                    boot: false,
-                }),
-                None,
-                Some(RowCell::Number(row.to_string())),
-            ]))
-        };
-        let selection = TextRange {
-            anchor: TextPosition {
-                row: 102,
-                cell: CellIndex(2),
-                character: CharIndex(2),
-            },
-            endpoint: TextPosition {
-                row: 100,
-                cell: CellIndex(0),
-                character: CharIndex(1),
-            },
-        };
+    fn selection_preserves_the_range_only_within_its_document() {
+        let log = line_table_tests::source_log("2026-01-01 14:02:11 hello\n");
+        let rows = LineTableRows::of(&log);
+        let mut selection = TableTextSelection::default();
+        selection.replace_document(Some(rows.document_revision()));
+        selection.select_all(&rows);
 
-        assert_eq!(
-            TableTextSelection::selected_text(selection, row_cells),
-            "β 100\nαβ 101\nαβ 10"
-        );
-        assert_eq!(requested_rows.into_inner(), [100, 101, 102]);
+        selection.replace_document(Some(rows.document_revision()));
+        assert!(selection.nonempty_range().is_some());
+
+        selection.replace_document(Some(DocumentRevision::next()));
+        assert!(selection.nonempty_range().is_none());
     }
 
-    #[rstest]
-    #[case::device_clock(0, " ")]
-    #[case::date_after_clock(1, "2")]
-    fn copy_projects_device_clock_at_display_character_boundaries(
-        #[case] character: usize,
-        #[case] expected: &str,
-    ) {
-        let start = TextPosition {
-            row: 0,
-            cell: CellIndex(0),
-            character: CharIndex(character),
-        };
-        let selection = TextRange {
-            anchor: start,
-            endpoint: TextPosition {
-                character: CharIndex(character + 1),
-                ..start
-            },
-        };
-        let row_cells = |_| {
-            Some(RowCells([
-                Some(RowCell::Timestamp(TimestampText {
-                    prefix: ICON_DEVICE_CLOCK,
-                    date: "2026-01-01 ".to_owned(),
-                    hour_minute: "14:02".to_owned(),
-                    seconds: ":11".to_owned(),
-                })),
-                None,
-                None,
-            ]))
-        };
+    #[test]
+    fn table_selection_rejects_geometry_for_another_document_or_row() {
+        let log = line_table_tests::source_log("2026-01-01 14:02:11 hello\n");
+        let rows = LineTableRows::of(&log);
+        let foreign_rows = LineTableRows::of(&log);
+        let context = egui::Context::default();
+        let output = context.run_ui(Default::default(), |ui| {
+            let shown = ShownRows {
+                grid: RowGrid { height: 20.0 },
+                rows: 0..1,
+                bounds: ui.max_rect(),
+            };
+            let style = RowLayoutStyle {
+                style: ui.style(),
+                line_number_width: 24.0,
+                gutter_width: 11.0,
+            };
+            let layout = |fonts: &mut FontsView<'_>, row: &DocumentRow<'_>| {
+                style.layout(
+                    fonts,
+                    &RowLayoutRequest {
+                        row,
+                        bounds: shown.row_bounds(row.index()),
+                        find_highlight: None,
+                        entry_text: None,
+                    },
+                )
+            };
+            let mut table = TableTextUi::new(ui, &shown, &rows, None);
+            let foreign = foreign_rows.document_row(0).unwrap();
+            table.row_ui(ui, ui.fonts_mut(|fonts| layout(fonts, &foreign)), |_, _| {});
+            assert!(table.rows.is_empty());
 
-        assert_eq!(
-            TableTextSelection::selected_text(selection, row_cells),
-            expected
-        );
+            let other_row = rows.document_row(0).unwrap();
+            let requested_row = rows.document_row(1).unwrap();
+            let cells = ui.fonts_mut(|fonts| {
+                table.with_row_geometry(
+                    requested_row.index(),
+                    fonts,
+                    &|fonts, _| layout(fonts, &other_row),
+                    |cells| cells.len(),
+                )
+            });
+            assert_eq!(cells, 0);
+        });
+        output.drop_without_applying_deltas();
     }
 }

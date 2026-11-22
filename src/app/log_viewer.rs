@@ -30,7 +30,7 @@ use inspector::InspectorSection;
 use jump::LogJumpEditor;
 use line_table::{
     FilteredSourceReturn, LineTableCache, LineTableRequests, RowHoverDwell, SourceReveal,
-    TableReadingAnchor,
+    TableReadingAnchor, TableTextSelection,
 };
 use log_list::{LogGroup, LogNavigationAction, LogTab};
 use restored_logs_badge::RestoredLogsBadge;
@@ -59,6 +59,7 @@ pub(super) struct LogViewerWindow {
     pub open: bool,
     selected: Option<LoadedLogId>,
     log_states: FxHashMap<LoadedLogId, LogViewerState>,
+    table_text_selection: TableTextSelection,
     color_services: bool,
     color_levels: bool,
     show_structural_lines: bool,
@@ -84,7 +85,6 @@ struct LogViewerState {
     source_reveal: Option<SourceReveal>,
     filtered_return: Option<FilteredSourceReturn>,
     line_table_cache: Option<LineTableCache>,
-    table_text_selection: line_table::TableTextSelection,
     table_reading_anchor: Option<TableReadingAnchor>,
     table_focus_requested: bool,
     scroll_to_source_line: Option<TableReadingAnchor>,
@@ -176,6 +176,7 @@ impl LogViewerWindow {
             open: false,
             selected: None,
             log_states: FxHashMap::default(),
+            table_text_selection: TableTextSelection::default(),
             color_services: true,
             color_levels: true,
             show_structural_lines: false,
@@ -220,12 +221,7 @@ impl LogViewerWindow {
     }
 
     pub(super) fn open_on_log(&mut self, id: LoadedLogId) {
-        if let Some(previous) = self.selected.filter(|previous| *previous != id)
-            && let Some(state) = self.log_states.get_mut(&previous)
-        {
-            state.table_text_selection = line_table::TableTextSelection::default();
-        }
-        self.selected = Some(id);
+        self.set_selected_log(Some(id));
         self.restored_logs.acknowledge(id);
         self.reveal_selected_tab = true;
         self.open = true;
@@ -259,16 +255,24 @@ impl LogViewerWindow {
         self.log_states.entry(id).or_default()
     }
 
+    fn set_selected_log(&mut self, selected: Option<LoadedLogId>) {
+        if self.selected != selected {
+            self.table_text_selection.replace_document(None);
+            self.selected = selected;
+        }
+    }
+
     fn resolve_selected_log(&mut self, logs: &LoadedLogs) {
         self.restored_logs.retain_loaded(logs);
         self.log_states
             .retain(|id, _| logs.get_by_id(*id).is_some());
         let previous = self.selected;
-        self.selected = self
+        let selected = self
             .selected
             .filter(|id| logs.get_by_id(*id).is_some())
             .or_else(|| logs.first_id());
-        self.reveal_selected_tab |= previous != self.selected;
+        self.set_selected_log(selected);
+        self.reveal_selected_tab |= previous != selected;
     }
 
     pub(super) fn show(
@@ -440,7 +444,7 @@ impl LogViewerWindow {
         self.log_states.remove(&closing);
         let was_active = self.selected == Some(closing);
         if was_active {
-            self.selected = navigation_order
+            let selected = navigation_order
                 .iter()
                 .position(|id| *id == closing)
                 .and_then(|index| {
@@ -451,6 +455,7 @@ impl LogViewerWindow {
                     })
                 })
                 .copied();
+            self.set_selected_log(selected);
         }
         self.resolve_selected_log(logs);
         if was_active && let Some(id) = self.selected {

@@ -232,6 +232,10 @@ impl LoadedLog {
         &self.document.parsed
     }
 
+    pub fn shared_parsed(&self) -> Arc<ParsedLog> {
+        Arc::clone(&self.document.parsed)
+    }
+
     pub fn content_hash(&self) -> LogContentHash {
         self.document.content_hash
     }

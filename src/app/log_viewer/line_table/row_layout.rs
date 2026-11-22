@@ -6,24 +6,48 @@ use egui::text::LayoutJob;
 use egui::{Align, FontSelection, Galley, RichText, TextStyle};
 use gt_log_view::TimestampTick;
 
-use super::row_cells::{CellIndex, RowCell};
-use super::{
-    BOOT_DIVIDER_SOURCE_WIDTH_FRACTION, EntryText, FindHighlight, LineTableContent, RowPresentation,
-};
+use super::row_cells::RowCell;
+use super::selection_document::{CellCarets, DocumentRevision, DocumentRow};
+use super::{BOOT_DIVIDER_SOURCE_WIDTH_FRACTION, EntryText, FindHighlight, RowPresentation};
 
 pub(super) struct CellLayout {
-    pub(super) row: usize,
-    pub(super) cell: CellIndex,
+    carets: CellCarets,
     pub(super) origin: egui::Pos2,
     pub(super) galley: Arc<Galley>,
     pub(super) bounds: egui::Rect,
 }
 
+impl CellLayout {
+    pub(super) fn carets(&self) -> CellCarets {
+        self.carets
+    }
+}
+
 pub(super) struct RowLayout {
-    pub(super) cells: Vec<CellLayout>,
+    revision: DocumentRevision,
+    row: usize,
+    cells: Vec<CellLayout>,
     pub(super) bounds: egui::Rect,
     pub(super) gutter: Option<egui::Rect>,
     pub(super) separator: Option<egui::Rect>,
+}
+
+impl RowLayout {
+    pub(super) fn revision(&self) -> DocumentRevision {
+        self.revision
+    }
+
+    pub(super) fn row(&self) -> usize {
+        self.row
+    }
+
+    pub(super) fn cells(&self) -> &[CellLayout] {
+        &self.cells
+    }
+
+    pub(super) fn into_cells(self) -> Vec<CellLayout> {
+        self.cells
+    }
 }
 
 pub(super) struct RowLayoutStyle<'a> {
@@ -33,9 +57,8 @@ pub(super) struct RowLayoutStyle<'a> {
 }
 
 pub(super) struct RowLayoutRequest<'a> {
-    pub(super) row: usize,
+    pub(super) row: &'a DocumentRow<'a>,
     pub(super) bounds: egui::Rect,
-    pub(super) content: &'a LineTableContent<'a>,
     pub(super) find_highlight: Option<&'a FindHighlight<'a>>,
     pub(super) entry_text: Option<EntryText>,
 }
@@ -52,10 +75,11 @@ impl RowLayoutStyle<'_> {
         let spacing = style.spacing.item_spacing.x;
         let bounds = row.bounds.round_ui();
         let center_y = bounds.center().y;
-        let is_divider = matches!(row.content.presentation, RowPresentation::Divider);
+        let is_divider = matches!(row.row.content().presentation, RowPresentation::Divider);
         let has_gutter = !is_divider
             || row
-                .content
+                .row
+                .content()
                 .cells
                 .indexed()
                 .any(|(_, cell)| !matches!(cell, RowCell::Divider { .. }));
@@ -69,7 +93,7 @@ impl RowLayoutStyle<'_> {
         let mut right = gutter.map_or(bounds.left(), |gutter| gutter.right());
         let mut x = right + if has_gutter { spacing } else { 0.0 };
         let mut cells = Vec::new();
-        for (index, cell) in row.content.cells.indexed() {
+        for (carets, cell) in row.row.cells() {
             let available = (bounds.right() - x).max(0.0);
             let mut job = match cell {
                 RowCell::Number(number) => self.rich_job(RichText::new(number).monospace().weak()),
@@ -135,8 +159,7 @@ impl RowLayoutStyle<'_> {
                 galley.rect.translate(origin.to_vec2()).round_ui()
             };
             cells.push(CellLayout {
-                row: row.row,
-                cell: index,
+                carets,
                 origin,
                 galley,
                 bounds: cell_bounds,
@@ -151,6 +174,8 @@ impl RowLayoutStyle<'_> {
             right
         };
         RowLayout {
+            revision: row.row.revision(),
+            row: row.row.index(),
             cells,
             bounds: egui::Rect::from_x_y_ranges(bounds.left()..=row_right, bounds.y_range()),
             gutter,
@@ -172,7 +197,8 @@ impl RowLayoutStyle<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::NumberedSource;
+    use super::super::LineTableRows;
+    use super::super::tests as line_table_tests;
     use super::*;
 
     #[test]
@@ -180,11 +206,12 @@ mod tests {
         let context = egui::Context::default();
         let output = context.run_ui(Default::default(), |ui| {
             let source = "--- Device reboot with a long export marker ---";
-            let content = NumberedSource {
-                line_number: 9,
-                text: source,
-            }
-            .content();
+            let raw = format!(
+                "2026-01-01 00:00:00 entry\n----------- Journal summary -----------\n{source}\n"
+            );
+            let log = line_table_tests::source_log(&raw);
+            let rows = LineTableRows::with_overlay(&log, true, None);
+            let row = rows.document_row(rows.len() - 1).unwrap();
             let metrics = RowLayoutStyle {
                 style: ui.style(),
                 line_number_width: 24.0,
@@ -196,9 +223,8 @@ mod tests {
                     metrics.layout(
                         fonts,
                         &RowLayoutRequest {
-                            row: 12,
+                            row: &row,
                             bounds,
-                            content: &content,
                             find_highlight: None,
                             entry_text: None,
                         },
@@ -215,7 +241,7 @@ mod tests {
                 assert_eq!(visible.cells.len(), 2);
                 assert_eq!(offscreen.cells.len(), visible.cells.len());
                 for (visible, offscreen) in visible.cells.iter().zip(&offscreen.cells) {
-                    assert_eq!(offscreen.cell, visible.cell);
+                    assert_eq!(offscreen.carets.start(), visible.carets.start());
                     assert_eq!(offscreen.bounds, visible.bounds.translate(scroll));
                     assert_eq!(offscreen.origin, visible.origin + scroll);
                     assert_eq!(offscreen.galley, visible.galley);
