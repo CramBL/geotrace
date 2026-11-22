@@ -84,6 +84,7 @@ struct LogViewerState {
     source_reveal: Option<SourceReveal>,
     filtered_return: Option<FilteredSourceReturn>,
     line_table_cache: Option<LineTableCache>,
+    table_text_selection: line_table::TableTextSelection,
     table_reading_anchor: Option<TableReadingAnchor>,
     table_focus_requested: bool,
     scroll_to_source_line: Option<TableReadingAnchor>,
@@ -219,6 +220,11 @@ impl LogViewerWindow {
     }
 
     pub(super) fn open_on_log(&mut self, id: LoadedLogId) {
+        if let Some(previous) = self.selected.filter(|previous| *previous != id)
+            && let Some(state) = self.log_states.get_mut(&previous)
+        {
+            state.table_text_selection = line_table::TableTextSelection::default();
+        }
         self.selected = Some(id);
         self.restored_logs.acknowledge(id);
         self.reveal_selected_tab = true;

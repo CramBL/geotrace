@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Log Viewer:** Drag to select and copy text across log lines with table filters applied.
 - **Log Viewer:** Go to line and Go to time reveal source locations from physical line numbers and explicit timestamps.
 - **Log Viewer:** Find searches original source text with next and previous navigation and separate queries for each log.
 - **Log Viewer:** Conditions support editing with Apply and Cancel, explicit matching modes and highlights for the selected condition.

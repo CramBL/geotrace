@@ -4333,3 +4333,4 @@ mod source_navigation;
 mod table_filter_controls;
 mod table_focus;
 mod tabs;
+mod text_selection;
