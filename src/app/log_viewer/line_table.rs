@@ -29,6 +29,7 @@ use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
 use navigation::SourceOverlay;
 use row_cells::{CellIndex, CopyProjection, RowCell, RowCells};
+use row_grid::{RowGrid, ShownRows};
 use text_selection::{RowTextUi, TableInputFocus, TableTextUi};
 
 pub(super) use navigation::{FilteredSourceReturn, SourceRequest, SourceReveal, SourceRow};
@@ -36,6 +37,7 @@ pub(super) use text_selection::TableTextSelection;
 
 mod navigation;
 mod row_cells;
+mod row_grid;
 mod text_selection;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1077,7 +1079,9 @@ impl LogViewerWindow {
             // Rows sit directly on top of each other, so the table reads as one
             // block of text and a row's index times its height is its offset.
             ui.spacing_mut().item_spacing.y = 0.0;
-            let row_height = row_height(ui);
+            let grid = RowGrid {
+                height: row_height(ui),
+            };
             let focus = TableFocusScope::for_log(log_id);
             let target = focus.register_ui(ui);
             let entered_by_navigation = target.gained_focus() && target.has_focus();
@@ -1113,36 +1117,36 @@ impl LogViewerWindow {
                 let row = rows.row_at_reading_anchor(parsed, anchor);
                 state.scroll_to_row = None;
                 Some(if reveal.is_some_and(SourceReveal::center_pending) {
-                    (row as f32 * row_height
-                        - (ui.available_height() - row_height).max(0.0)
+                    (grid.offset(row)
+                        - (ui.available_height() - grid.height).max(0.0)
                             * CONTEXT_TARGET_VERTICAL_FRACTION)
                         .max(0.0)
                 } else {
-                    row as f32 * row_height + anchor.offset_within_row_px
+                    grid.offset(row) + anchor.offset_within_row_px
                 })
             } else if filtered_return.is_some() {
                 state.scroll_to_row = None;
                 Some(0.0)
             } else {
-                state
-                    .scroll_to_row
-                    .take()
-                    .map(|row| row as f32 * row_height)
+                state.scroll_to_row.take().map(|row| grid.offset(row))
             };
-            let output = scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
+            let output = scroll_area.show_rows(ui, grid.height, rows.len(), |ui, shown| {
+                let positioned = ShownRows {
+                    grid,
+                    rows: shown.clone(),
+                    bounds: ui.max_rect(),
+                };
                 if let Some(offset) = requested_offset {
                     // Request after layout, when egui has the new content bounds.
-                    let top = ui.max_rect().top() - shown.start as f32 * row_height + offset;
                     ui.scroll_to_rect(
                         egui::Rect::from_min_size(
-                            egui::pos2(ui.max_rect().left(), top),
+                            egui::pos2(positioned.bounds.left(), positioned.screen_y(offset)),
                             egui::Vec2::ZERO,
                         ),
                         Some(egui::Align::Min),
                     );
                 }
-                let mut text =
-                    TableTextUi::new(ui, shown.clone(), row_height, rows.len(), scrollbar_rect);
+                let mut text = TableTextUi::new(ui, positioned, rows.len(), scrollbar_rect);
                 let render_row = |ui: &mut egui::Ui, text: &mut RowTextUi<'_>| {
                     let table_row = rows.at(text.index())?;
                     let revealed_reason = reveal.and_then(|reveal| {
@@ -1151,7 +1155,7 @@ impl LogViewerWindow {
                     let content = table_row.content(parsed)?;
                     let cell_ui = RowCellUi {
                         line_numbers,
-                        row_height,
+                        row_height: grid.height,
                         find_highlight: find_highlight
                             .as_ref()
                             .filter(|hit| table_row.source_line(parsed) == Some(hit.line_number())),
@@ -1260,9 +1264,9 @@ impl LogViewerWindow {
                 );
                 if keyboard_available && target.has_focus() {
                     KeyboardScrollSteps {
-                        row_height_px: row_height,
+                        row_height_px: grid.height,
                         page_height_px: ui.clip_rect().height(),
-                        content_height_px: rows.len() as f32 * row_height,
+                        content_height_px: grid.offset(rows.len()),
                     }
                     .scroll_the_table(ui);
                 }
@@ -1271,15 +1275,14 @@ impl LogViewerWindow {
                 }
             });
             focus.draw_focus(ui, output.inner_rect);
-            #[expect(clippy::cast_sign_loss, reason = "Scroll offsets are nonnegative")]
-            let first_visible_row =
-                (output.state.unclamped_offset().y.max(0.0) / row_height).floor() as usize;
+            let offset = output.state.unclamped_offset().y;
+            let first_visible_row = grid.row_at(offset);
             state.table_reading_anchor = rows.at(first_visible_row).and_then(|row| {
                 Some(TableReadingAnchor {
                     log: log_id,
                     source_line: row.source_line(parsed)?,
                     row: TableRowIdentity::from(row),
-                    offset_within_row_px: output.state.unclamped_offset().y.max(0.0) % row_height,
+                    offset_within_row_px: grid.offset_within_row(offset),
                 })
             });
         });

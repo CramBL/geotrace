@@ -14,6 +14,7 @@ use egui::{
 };
 
 use super::row_cells::{CellIndex, RowCells};
+use super::row_grid::ShownRows;
 
 use keyboard::{SelectionMotion, VerticalMotion};
 
@@ -421,10 +422,8 @@ impl RowTextUi<'_> {
 pub(super) struct TableTextUi {
     drag_target: egui::Response,
     scrollbar: Option<egui::Rect>,
-    visible_rows: Range<usize>,
     row_count: usize,
-    layout_rect: egui::Rect,
-    row_height: f32,
+    shown: ShownRows,
     fields: Vec<PlacedText>,
 }
 
@@ -546,8 +545,7 @@ impl Plugin for LabelSelectionHandoff {
 impl TableTextUi {
     pub(super) fn new(
         ui: &egui::Ui,
-        visible_rows: Range<usize>,
-        row_height: f32,
+        shown: ShownRows,
         row_count: usize,
         scrollbar: Option<egui::Rect>,
     ) -> Self {
@@ -560,10 +558,8 @@ impl TableTextUi {
         Self {
             drag_target,
             scrollbar,
-            visible_rows,
             row_count,
-            layout_rect: ui.max_rect(),
-            row_height,
+            shown,
             fields: Vec::new(),
         }
     }
@@ -577,27 +573,20 @@ impl TableTextUi {
 
     fn text_hit(&self, pointer: Pos2) -> Option<TextHit> {
         let viewport = self.drag_target.rect;
-        let top = self.layout_rect.top();
-        if self.visible_rows.start == 0 && viewport.top() <= top && pointer.y < top {
+        let top = self.shown.bounds.top();
+        if self.shown.rows.start == 0 && viewport.top() <= top && pointer.y < top {
             return Some(self.fields.first()?.position(CharIndex::ZERO).into());
         }
-        let bottom = self.shown_bottom();
-        if self.visible_rows.end == self.row_count
+        let bottom = self.shown.row_top(self.shown.rows.end);
+        if self.shown.rows.end == self.row_count
             && bottom <= viewport.bottom()
             && pointer.y >= bottom
         {
             let field = self.fields.last()?;
             return Some(field.position(field.text_end()).into());
         }
-        let y = pointer.y.clamp(viewport.top(), viewport.bottom());
         let x = pointer.x.clamp(viewport.left(), viewport.right());
-        let relative_y = (y - top).max(0.0);
-        let visible_height = (viewport.bottom() - top).max(0.0);
-        #[expect(clippy::cast_sign_loss, reason = "Row offsets are nonnegative")]
-        let row_offset = ((relative_y / self.row_height) as usize)
-            .min(((visible_height / self.row_height).ceil() as usize).saturating_sub(1));
-        let row =
-            (self.visible_rows.start + row_offset).min(self.visible_rows.end.saturating_sub(1));
+        let row = self.shown.hit_row(viewport.y_range(), pointer.y)?;
         Some(self.field_at_x(self.placed_in_row(row), x)?.hit_at(x))
     }
 
@@ -639,7 +628,7 @@ impl TableTextUi {
         let mut layout_ui = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt(("log_text_row_geometry", row))
-                .max_rect(self.layout_rect)
+                .max_rect(self.shown.bounds)
                 .invisible(),
         );
         render_row(
@@ -658,7 +647,7 @@ impl TableTextUi {
         motion: &mut VerticalMotion<'_>,
         render_row: &impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
     ) -> Option<TextPosition> {
-        let left = self.layout_rect.left();
+        let left = self.shown.bounds.left();
         let offset = if let Some(preferred) = *motion.preferred_x {
             preferred
         } else {
@@ -1015,19 +1004,15 @@ impl TableTextUi {
     fn scroll_during_drag(&self, ui: &egui::Ui, pointer_y: f32) {
         let rect = self.drag_target.rect;
         let overshoot = pointer_y.clamp(rect.top(), rect.bottom()) - pointer_y;
-        let more_above = self.visible_rows.start > 0 || self.layout_rect.top() < rect.top();
-        let more_below =
-            self.visible_rows.end < self.row_count || self.shown_bottom() > rect.bottom();
+        let more_above = self.shown.rows.start > 0 || self.shown.bounds.top() < rect.top();
+        let more_below = self.shown.rows.end < self.row_count
+            || self.shown.row_top(self.shown.rows.end) > rect.bottom();
         if (overshoot > 0.0 && more_above) || (overshoot < 0.0 && more_below) {
             let speed =
                 (overshoot * SCROLL_SPEED_PER_POINT).clamp(-MAX_SCROLL_SPEED, MAX_SCROLL_SPEED);
             let delta = ui.input(|input| input.stable_dt) * speed;
             ui.scroll_with_delta(egui::vec2(0.0, delta));
         }
-    }
-
-    fn shown_bottom(&self) -> f32 {
-        self.layout_rect.top() + self.visible_rows.len() as f32 * self.row_height
     }
 
     pub(super) fn finish<'a>(
@@ -1046,13 +1031,12 @@ impl TableTextUi {
         }
         if let Some(endpoint) = outcome.keyboard_endpoint {
             let viewport = self.drag_target.rect;
-            let y = self.layout_rect.top()
-                + (endpoint.row as f32 - self.visible_rows.start as f32) * self.row_height;
-            if y < viewport.top() || y + self.row_height > viewport.bottom() {
+            let bounds = self.shown.row_bounds(endpoint.row);
+            if bounds.top() < viewport.top() || bounds.bottom() > viewport.bottom() {
                 ui.scroll_to_rect(
-                    egui::Rect::from_min_size(
-                        egui::pos2(viewport.left(), y),
-                        egui::vec2(0.0, self.row_height),
+                    egui::Rect::from_x_y_ranges(
+                        viewport.left()..=viewport.left(),
+                        bounds.y_range(),
                     ),
                     None,
                 );
