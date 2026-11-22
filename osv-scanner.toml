@@ -17,3 +17,8 @@ ignoreUntil = "2027-04-09T00:00:00Z"
 id = "RUSTSEC-2026-0372"
 reason = "Unmaintained after merger into zbus 6. Transitive dependency via eframe → accesskit_unix. accesskit_unix 0.24.1 is the latest release and requires zbus 5. See https://rustsec.org/advisories/RUSTSEC-2026-0372.html"
 ignoreUntil = "2027-04-09T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+reason = "Chrono is unmaintained. RustSec lists no patched version. See https://rustsec.org/advisories/RUSTSEC-2026-0543.html"
+ignoreUntil = "2027-02-28T00:00:00Z"
