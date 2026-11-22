@@ -3,12 +3,10 @@ use std::ops::Range;
 use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Duration, NaiveTime, Utc};
+use egui::epaint::text::FontsView;
 use egui::scroll_area::ScrollSource;
 use egui::text::LayoutJob;
-use egui::{
-    Color32, FontId, IdSalt, Label, RichText, ScrollArea, Separator, Shape, Stroke, StrokeKind,
-    TextFormat,
-};
+use egui::{Color32, FontId, IdSalt, ScrollArea, Separator, Stroke, StrokeKind, TextFormat};
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_DEVICE_CLOCK;
 use gt_fmt::MIDDLE_DOT;
 use gt_log_view::{
@@ -28,9 +26,10 @@ use super::keyboard_navigation::{KeyboardScrollSteps, TableFocusScope};
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
 use navigation::SourceOverlay;
-use row_cells::{CellIndex, CopyProjection, RowCell, RowCells};
+use row_cells::{CopyProjection, RowCell, RowCells};
 use row_grid::{RowGrid, ShownRows};
-use text_selection::{RowTextUi, TableInputFocus, TableTextUi};
+use row_layout::{RowLayoutRequest, RowLayoutStyle};
+use text_selection::{TableInputFocus, TableTextUi};
 
 pub(super) use navigation::{FilteredSourceReturn, SourceRequest, SourceReveal, SourceRow};
 pub(super) use text_selection::TableTextSelection;
@@ -38,6 +37,7 @@ pub(super) use text_selection::TableTextSelection;
 mod navigation;
 mod row_cells;
 mod row_grid;
+mod row_layout;
 mod text_selection;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1043,7 +1043,16 @@ impl LogViewerWindow {
             }
         }
         let ticks = &rows.ticks;
-        let line_numbers = LineNumberColumn::new(ui, rows.largest_line_number);
+        let line_number_width = ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    rows.largest_line_number.to_string(),
+                    egui::TextStyle::Monospace.resolve(ui.style()),
+                    ui.visuals().weak_text_color(),
+                )
+                .size()
+                .x
+        });
         let anomaly_steps: FxHashMap<usize, Duration> = parsed
             .chronology()
             .order_anomalies()
@@ -1137,7 +1146,6 @@ impl LogViewerWindow {
                     bounds: ui.max_rect(),
                 };
                 if let Some(offset) = requested_offset {
-                    // Request after layout, when egui has the new content bounds.
                     ui.scroll_to_rect(
                         egui::Rect::from_min_size(
                             egui::pos2(positioned.bounds.left(), positioned.screen_y(offset)),
@@ -1146,88 +1154,126 @@ impl LogViewerWindow {
                         Some(egui::Align::Min),
                     );
                 }
-                let mut text = TableTextUi::new(ui, positioned, rows.len(), scrollbar_rect);
-                let render_row = |ui: &mut egui::Ui, text: &mut RowTextUi<'_>| {
-                    let table_row = rows.at(text.index())?;
-                    let revealed_reason = reveal.and_then(|reveal| {
-                        reveal.row_reason(table_row, log, show_structural_lines)
-                    });
-                    let content = table_row.content(parsed)?;
-                    let cell_ui = RowCellUi {
-                        line_numbers,
-                        row_height: grid.height,
-                        find_highlight: find_highlight
-                            .as_ref()
-                            .filter(|hit| table_row.source_line(parsed) == Some(hit.line_number())),
-                        revealed_reason: revealed_reason.as_deref(),
-                    };
-                    match content.presentation {
-                        RowPresentation::Divider => {
-                            ui.horizontal(|ui| {
-                                if content
-                                    .cells
-                                    .indexed()
-                                    .any(|(_, cell)| !matches!(cell, RowCell::Divider { .. }))
-                                {
-                                    ui.allocate_space(egui::vec2(gutter.width_px(), 0.0));
-                                }
-                                cell_ui.ui(ui, text, &content.cells, None);
-                                if ui.is_visible() {
-                                    ui.add(Separator::default().horizontal());
-                                }
-                            });
-                        }
-                        RowPresentation::Source => {
-                            let row = ui
-                                .horizontal(|ui| {
-                                    ui.allocate_space(egui::vec2(gutter.width_px(), 0.0));
-                                    cell_ui.ui(ui, text, &content.cells, None);
-                                })
-                                .response;
-                            cell_ui.decorate_row(ui, row.rect);
-                        }
-                        RowPresentation::Entry {
+                let style = Arc::clone(ui.style());
+                let metrics = RowLayoutStyle {
+                    style: &style,
+                    line_number_width,
+                    gutter_width: gutter.width_px(),
+                };
+                let find_at = |row: LineTableRow| {
+                    find_highlight
+                        .as_ref()
+                        .filter(|hit| row.source_line(parsed) == Some(hit.line_number()))
+                };
+                let layout_row =
+                    |fonts: &mut FontsView<'_>, row, table_row, content: &LineTableContent<'_>| {
+                        let entry_text = if let RowPresentation::Entry {
                             entry_index,
                             visible_row,
-                            entry,
-                            timestamp,
-                        } => {
-                            let placement = log.entry_placement(entry_index);
-                            let interaction = EntryRow {
-                                timestamp,
+                            ..
+                        } = content.presentation
+                        {
+                            let tick = ticks.tick(visible_row);
+                            Some(EntryText {
+                                tick: if log.entry_placement(entry_index).is_some() {
+                                    tick
+                                } else {
+                                    tick.min(TimestampTick::Plain)
+                                },
                                 highlighted: HighlightedMessage {
                                     spans: filters.condition_match_spans(entry_index),
                                     color: highlight,
                                 },
-                                position: placement.map(|placement| placement.position),
-                                order_anomaly_step: anomaly_steps.get(&entry_index).copied(),
                                 recognised: recognised_messages.get(entry_index).copied(),
                                 color_switches,
-                                association_window,
-                                years_resolved,
-                                gutter: &gutter,
-                                entry_index,
-                                tick: ticks.tick(visible_row),
-                                cross_highlight_fill: cross_highlighted.fill_of(entry_index),
-                                hover_dwell,
-                                revealed_reason: revealed_reason.as_deref(),
-                            }
-                            .ui(
-                                ui,
-                                text,
-                                &content.cells,
-                                cell_ui,
-                                unit,
-                            )?;
-                            return Some((entry_index, entry.line_number, placement, interaction));
+                            })
+                        } else {
+                            None
+                        };
+                        metrics.layout(
+                            fonts,
+                            &RowLayoutRequest {
+                                row,
+                                bounds: positioned.row_bounds(row),
+                                content,
+                                find_highlight: find_at(table_row),
+                                entry_text,
+                            },
+                        )
+                    };
+                let mut text = TableTextUi::new(ui, &positioned, rows.len(), scrollbar_rect);
+                let render_row = |ui: &mut egui::Ui, text: &mut TableTextUi<'_>, row| {
+                    let table_row = rows.at(row)?;
+                    let content = table_row.content(parsed)?;
+                    let layout = ui.fonts_mut(|fonts| layout_row(fonts, row, table_row, &content));
+                    let bounds = layout.bounds;
+                    ui.advance_cursor_after_rect(bounds);
+                    let revealed_reason = reveal.and_then(|reveal| {
+                        reveal.row_reason(table_row, log, show_structural_lines)
+                    });
+                    let decoration = RowDecoration {
+                        find_highlight: find_at(table_row),
+                        revealed_reason: revealed_reason.as_deref(),
+                    };
+                    let entry = if ui.is_visible()
+                        && let RowPresentation::Entry {
+                            entry_index,
+                            entry,
+                            timestamp,
+                            ..
+                        } = content.presentation
+                    {
+                        let placement = log.entry_placement(entry_index);
+                        let entry_row = EntryRow {
+                            timestamp,
+                            position: placement.map(|placement| placement.position),
+                            order_anomaly_step: anomaly_steps.get(&entry_index).copied(),
+                            association_window,
+                            years_resolved,
+                            gutter: &gutter,
+                            entry_index,
+                            hover_dwell,
+                            revealed_reason: revealed_reason.as_deref(),
+                        };
+                        if let Some(fill) = cross_highlighted.fill_of(entry_index) {
+                            ui.painter().rect_filled(bounds, 0, fill);
                         }
+                        if let Some(rect) = layout.gutter {
+                            entry_row.paint_gutter(ui, rect);
+                        }
+                        let id = ui.make_persistent_id(("log_text_entry", entry_index));
+                        let response = ui.interact(bounds, id, egui::Sense::CLICK);
+                        Some((entry_row, entry.line_number, placement, response))
+                    } else {
+                        None
+                    };
+                    let separator = layout.separator;
+                    text.row_ui(ui, row, layout, |index, response| {
+                        if let Some((_, cell)) = content
+                            .cells
+                            .indexed()
+                            .find(|(cell_index, _)| *cell_index == index)
+                        {
+                            decoration.cell_hover(ui, cell, response);
+                        }
+                    });
+                    if !ui.is_visible() {
+                        return None;
                     }
-                    None
+                    if let Some(rect) = separator {
+                        ui.place(rect, Separator::default().horizontal());
+                    }
+                    if !matches!(content.presentation, RowPresentation::Divider) {
+                        decoration.paint(ui, bounds);
+                    }
+                    let (entry_row, line_number, placement, response) = entry?;
+                    let interaction = entry_row.interaction_ui(ui, response, unit)?;
+                    Some((entry_row.entry_index, line_number, placement, interaction))
                 };
                 let mut clicked_position = None;
                 for row in shown {
                     let Some((entry_index, line_number, placement, interaction)) =
-                        render_row(ui, &mut text.row(row))
+                        render_row(ui, &mut text, row)
                     else {
                         continue;
                     };
@@ -1258,8 +1304,10 @@ impl LogViewerWindow {
                         entered_by_navigation,
                     },
                     |row| Some(rows.at(row)?.content(parsed)?.cells),
-                    |ui, text| {
-                        let _ = render_row(ui, text);
+                    |fonts, row| {
+                        let table_row = rows.at(row)?;
+                        let content = table_row.content(parsed)?;
+                        Some(layout_row(fonts, row, table_row, &content))
                     },
                 );
                 if keyboard_available && target.has_focus() {
@@ -1296,9 +1344,6 @@ impl LogViewerWindow {
     }
 }
 
-/// The height one row of the table draws at. A row is a `ui.horizontal`, which
-/// claims the interactive height whenever the text is shorter than it. The
-/// virtualized rows keep step with the drawn ones only at this height.
 pub(super) fn row_height(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Monospace)
         .max(ui.spacing().interact_size.y)
@@ -1330,37 +1375,6 @@ impl<'a> LayerGutter<'a> {
 
     fn width_px(&self) -> f32 {
         ANOMALY_COLUMN_WIDTH_PX + self.columns.len() as f32 * LAYER_COLUMN_WIDTH_PX
-    }
-}
-
-#[derive(Clone, Copy)]
-struct LineNumberColumn {
-    width_px: f32,
-}
-
-impl LineNumberColumn {
-    fn new(ui: &egui::Ui, largest: u32) -> Self {
-        let font = egui::TextStyle::Monospace.resolve(ui.style());
-        let width_px = ui
-            .painter()
-            .layout_no_wrap(largest.to_string(), font, ui.visuals().weak_text_color())
-            .size()
-            .x;
-        Self { width_px }
-    }
-
-    fn ui(self, ui: &mut egui::Ui, text: &mut RowTextUi<'_>, index: CellIndex, number: &str) {
-        ui.allocate_ui_with_layout(
-            egui::vec2(self.width_px, ui.spacing().interact_size.y),
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                text.label(
-                    ui,
-                    index,
-                    Label::new(RichText::new(number).monospace().weak()),
-                );
-            },
-        );
     }
 }
 
@@ -1470,120 +1484,36 @@ impl<'a> NumberedSource<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct RowCellUi<'a> {
-    line_numbers: LineNumberColumn,
-    row_height: f32,
+struct RowDecoration<'a> {
     find_highlight: Option<&'a FindHighlight<'a>>,
     revealed_reason: Option<&'a str>,
 }
 
-impl RowCellUi<'_> {
-    fn plain_job(ui: &egui::Ui, message: &str) -> LayoutJob {
-        LayoutJob::simple_singleline(
-            message.to_owned(),
-            egui::TextStyle::Monospace.resolve(ui.style()),
-            ui.visuals().text_color(),
-        )
-    }
-
-    fn ui(
-        self,
-        ui: &mut egui::Ui,
-        text: &mut RowTextUi<'_>,
-        cells: &RowCells<'_>,
-        entry: Option<&EntryRow<'_>>,
-    ) {
-        for (index, cell) in cells.indexed() {
-            match cell {
-                RowCell::Number(number) => self.line_numbers.ui(ui, text, index, number),
-                RowCell::Timestamp(timestamp) => {
-                    let tick = entry.map_or(TimestampTick::Plain, EntryRow::display_tick);
-                    let response =
-                        text.label(ui, index, Label::new(timestamp.layout_job(ui, tick)));
-                    if ui.is_visible() && timestamp.prefix == ALMOST_EQUAL_TO {
-                        response.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
-                    }
-                }
-                RowCell::Message(message) => {
-                    let job = entry.map_or_else(
-                        || Self::plain_job(ui, message),
-                        |entry| entry.message_job(ui, message),
-                    );
-                    text.label(ui, index, self.message_label(ui, job));
-                }
-                RowCell::Source { text: source, boot } => {
-                    let label = self.message_label(ui, Self::plain_job(ui, source));
-                    if *boot {
-                        self.boot_source_ui(ui, text, index, label, source);
-                    } else {
-                        let response = text.label(ui, index, label);
-                        if ui.is_visible()
-                            && let Some(reason) = self.revealed_reason
-                        {
-                            response.on_hover_text(reason);
-                        }
-                    }
-                }
-                RowCell::Divider {
-                    text: title,
-                    strong,
-                } => {
-                    let label = RichText::new(title).monospace();
-                    let label = if *strong { label.strong() } else { label };
-                    let response = text.label(ui, index, Label::new(label).truncate());
-                    if ui.is_visible() {
-                        response.on_hover_text(title);
-                    }
+impl RowDecoration<'_> {
+    fn cell_hover(&self, ui: &egui::Ui, cell: &RowCell<'_>, response: egui::Response) {
+        match cell {
+            RowCell::Timestamp(timestamp) if timestamp.prefix == ALMOST_EQUAL_TO => {
+                response.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
+            }
+            RowCell::Source { text, boot: true } => {
+                let response = response.on_hover_text(*text);
+                if let Some(hit) = self.find_highlight {
+                    hit.decorate_row(ui, response.rect);
                 }
             }
-        }
-    }
-
-    fn message_label(self, ui: &egui::Ui, mut job: LayoutJob) -> Label {
-        if let Some(hit) = self.find_highlight {
-            hit.highlight_job(ui, &mut job);
-        }
-        Label::new(job).truncate()
-    }
-
-    fn boot_source_ui(
-        self,
-        ui: &mut egui::Ui,
-        text: &mut RowTextUi<'_>,
-        index: CellIndex,
-        label: Label,
-        source: &str,
-    ) {
-        let width = ui
-            .painter()
-            .layout_no_wrap(
-                source.to_owned(),
-                egui::TextStyle::Monospace.resolve(ui.style()),
-                ui.visuals().text_color(),
-            )
-            .size()
-            .x
-            .min(ui.available_width() * BOOT_DIVIDER_SOURCE_WIDTH_FRACTION);
-        let response = ui
-            .allocate_ui_with_layout(
-                egui::vec2(width, self.row_height),
-                egui::Layout::centered_and_justified(ui.layout().main_dir()),
-                |ui| text.label(ui, index, label),
-            )
-            .inner;
-        if ui.is_visible() {
-            let response = response.on_hover_text(source);
-            if let Some(hit) = self.find_highlight {
-                hit.decorate_row(ui, response.rect);
+            RowCell::Source { boot: false, .. } => {
+                if let Some(reason) = self.revealed_reason {
+                    response.on_hover_text(reason);
+                }
             }
+            RowCell::Divider { text, .. } => {
+                response.on_hover_text(text);
+            }
+            _ => {}
         }
     }
 
-    fn decorate_row(self, ui: &egui::Ui, rect: egui::Rect) {
-        if !ui.is_visible() {
-            return;
-        }
+    fn paint(self, ui: &egui::Ui, rect: egui::Rect) {
         if let Some(hit) = self.find_highlight {
             hit.decorate_row(ui, rect);
         }
@@ -1603,27 +1533,16 @@ impl RowCellUi<'_> {
 
 struct EntryRow<'a> {
     timestamp: Option<RowTimestamp>,
-    highlighted: HighlightedMessage,
     position: Option<(Latitude, Longitude)>,
 
     /// The backwards step this entry opens, for the rows an order anomaly
     /// starts at.
     order_anomaly_step: Option<Duration>,
 
-    recognised: Option<RecognisedMessage>,
-
-    color_switches: MessageColorSwitches,
-
     association_window: AssociationWindow,
     years_resolved: bool,
     gutter: &'a LayerGutter<'a>,
     entry_index: usize,
-
-    /// How strongly this row's hour and minute draw.
-    tick: TimestampTick,
-
-    /// The background of a row the map's hovered hexagon stands for.
-    cross_highlight_fill: Option<Color32>,
 
     hover_dwell: RowHoverDwell,
     revealed_reason: Option<&'a str>,
@@ -1676,11 +1595,11 @@ struct MessageColors {
 }
 
 impl MessageColors {
-    fn of(ui: &egui::Ui, switches: MessageColorSwitches) -> Self {
+    fn of(style: &egui::Style, switches: MessageColorSwitches) -> Self {
         Self {
-            base: ui.visuals().text_color(),
-            weak: ui.visuals().weak_text_color(),
-            dark_mode: ui.visuals().dark_mode,
+            base: style.visuals.text_color(),
+            weak: style.visuals.weak_text_color(),
+            dark_mode: style.visuals.dark_mode,
             color_the_service: switches.services,
             color_the_hostname: switches.services,
             color_the_level: switches.levels,
@@ -1723,7 +1642,14 @@ impl MessageColors {
     }
 }
 
-impl EntryRow<'_> {
+struct EntryText {
+    tick: TimestampTick,
+    highlighted: HighlightedMessage,
+    recognised: Option<RecognisedMessage>,
+    color_switches: MessageColorSwitches,
+}
+
+impl EntryText {
     fn append_runs(
         message: &str,
         job: &mut LayoutJob,
@@ -1743,53 +1669,65 @@ impl EntryRow<'_> {
                 job.append(
                     before,
                     0.0,
-                    egui::TextFormat::simple(font_id.clone(), colors.base),
+                    TextFormat::simple(font_id.clone(), colors.base),
                 );
             }
             if let Some(text) = message.get(start..end) {
-                job.append(
-                    text,
-                    0.0,
-                    egui::TextFormat::simple(font_id.clone(), run.color),
-                );
+                job.append(text, 0.0, TextFormat::simple(font_id.clone(), run.color));
             }
             appended_to = end;
         }
         if let Some(rest) = message.get(appended_to..range.end) {
-            job.append(
-                rest,
-                0.0,
-                egui::TextFormat::simple(font_id.clone(), colors.base),
-            );
+            job.append(rest, 0.0, TextFormat::simple(font_id.clone(), colors.base));
         }
     }
 
-    /// Renders the row, returning what the cursor did to it.
-    fn ui(
+    fn message_job(&self, style: &egui::Style, font_id: &FontId, message: &str) -> LayoutJob {
+        let colors = MessageColors::of(style, self.color_switches);
+        let runs = self
+            .recognised
+            .map(|recognised| colors.runs(recognised))
+            .unwrap_or_default();
+        let mut job = LayoutJob::default();
+        let mut appended_to = 0;
+        for span in &self.highlighted.spans {
+            let Some(matched) = message.get(span.clone()) else {
+                continue;
+            };
+            Self::append_runs(
+                message,
+                &mut job,
+                font_id,
+                appended_to..span.start,
+                &runs,
+                &colors,
+            );
+            job.append(
+                matched,
+                0.0,
+                TextFormat::simple(font_id.clone(), self.highlighted.color),
+            );
+            appended_to = span.end;
+        }
+        Self::append_runs(
+            message,
+            &mut job,
+            font_id,
+            appended_to..message.len(),
+            &runs,
+            &colors,
+        );
+        job
+    }
+}
+
+impl EntryRow<'_> {
+    fn interaction_ui(
         &self,
-        ui: &mut egui::Ui,
-        text: &mut RowTextUi<'_>,
-        cells: &RowCells<'_>,
-        cell_ui: RowCellUi<'_>,
+        ui: &egui::Ui,
+        row: egui::Response,
         unit: AssociationWindowUnit,
     ) -> Option<RowInteraction> {
-        // Claimed before the row draws: the fill belongs behind its text.
-        let background = ui.is_visible().then(|| ui.painter().add(Shape::Noop));
-        let row = ui
-            .horizontal(|ui| {
-                self.gutter_ui(ui);
-                cell_ui.ui(ui, text, cells, Some(self));
-            })
-            .response;
-        let background = background?;
-        if let Some(fill) = self.cross_highlight_fill {
-            ui.painter()
-                .set(background, Shape::rect_filled(row.rect, 0, fill));
-        }
-
-        cell_ui.decorate_row(ui, row.rect);
-
-        let row = ui.interact(row.rect, row.id, egui::Sense::CLICK);
         let mut context_requested = false;
         row.context_menu(|ui| {
             if ui
@@ -1848,70 +1786,8 @@ impl EntryRow<'_> {
         }
     }
 
-    fn display_tick(&self) -> TimestampTick {
-        if self.position.is_some() {
-            self.tick
-        } else {
-            self.tick.min(TimestampTick::Plain)
-        }
-    }
-
-    /// The message: the service, level and hostname the parse recognised in
-    /// their own colours, and what the live filter matched over those. The
-    /// caller truncates it to one row: a long line must not push the rows
-    /// below it out of the virtualized table's grid, nor stretch the window
-    /// past the screen.
-    fn message_job(&self, ui: &egui::Ui, message: &str) -> LayoutJob {
-        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let colors = MessageColors::of(ui, self.color_switches);
-        let runs = self
-            .recognised
-            .map(|recognised| colors.runs(recognised))
-            .unwrap_or_default();
-        let mut job = LayoutJob::default();
-        let mut appended_to = 0;
-        for span in &self.highlighted.spans {
-            let Some(matched) = message.get(span.clone()) else {
-                continue;
-            };
-            Self::append_runs(
-                message,
-                &mut job,
-                &font_id,
-                appended_to..span.start,
-                &runs,
-                &colors,
-            );
-            job.append(
-                matched,
-                0.0,
-                egui::TextFormat::simple(font_id.clone(), self.highlighted.color),
-            );
-            appended_to = span.end;
-        }
-        Self::append_runs(
-            message,
-            &mut job,
-            &font_id,
-            appended_to..message.len(),
-            &runs,
-            &colors,
-        );
-        job
-    }
-
-    /// The warning-amber marker on the row an unexplained backwards timestamp
-    /// step starts at, and a bar in every enabled layer chip's column this row
-    /// matched.
-    fn gutter_ui(&self, ui: &mut egui::Ui) {
-        let height = ui.text_style_height(&egui::TextStyle::Monospace);
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(self.gutter.width_px(), height),
-            egui::Sense::hover(),
-        );
-        if !ui.is_visible() {
-            return;
-        }
+    fn paint_gutter(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let height = rect.height();
         let painter = ui.painter();
         if self.order_anomaly_step.is_some() {
             painter.rect_filled(
@@ -2022,19 +1898,24 @@ impl TimestampText {
     }
 
     /// The device clock glyph and its trailing padding occupy one monospace cell.
-    fn layout_job(&self, ui: &egui::Ui, tick: TimestampTick) -> LayoutJob {
+    fn layout_job(
+        &self,
+        fonts: &mut FontsView<'_>,
+        font_id: &FontId,
+        visuals: &egui::Visuals,
+        tick: TimestampTick,
+    ) -> LayoutJob {
         let prefix = self.prefix;
-        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let quiet = ui.visuals().weak_text_color();
+        let quiet = visuals.weak_text_color();
         let moved = match tick {
-            TimestampTick::Weak => ui.visuals().weak_text_color(),
-            TimestampTick::Plain => ui.visuals().text_color(),
-            TimestampTick::Strong => ui.visuals().strong_text_color(),
+            TimestampTick::Weak => visuals.weak_text_color(),
+            TimestampTick::Plain => visuals.text_color(),
+            TimestampTick::Strong => visuals.strong_text_color(),
         };
         let mut job = LayoutJob::default();
         if prefix == ICON_DEVICE_CLOCK {
-            let (icon_font, leading_space) = ui.fonts_mut(|fonts| {
-                let cell_width = fonts.glyph_width(&font_id, ' ');
+            let (icon_font, leading_space) = {
+                let cell_width = fonts.glyph_width(font_id, ' ');
                 let mut icon_font = FontId::proportional(font_id.size);
                 let icon_width = fonts
                     .layout_no_wrap(prefix.to_owned(), icon_font.clone(), quiet)
@@ -2046,7 +1927,7 @@ impl TimestampText {
                     .size()
                     .x;
                 (icon_font, cell_width - scaled_width)
-            });
+            };
             job.append(prefix, 0.0, TextFormat::simple(icon_font, quiet));
             job.append(
                 &self.date,
@@ -2065,7 +1946,11 @@ impl TimestampText {
             0.0,
             TextFormat::simple(font_id.clone(), moved),
         );
-        job.append(&self.seconds, 0.0, TextFormat::simple(font_id, quiet));
+        job.append(
+            &self.seconds,
+            0.0,
+            TextFormat::simple(font_id.clone(), quiet),
+        );
         job
     }
 

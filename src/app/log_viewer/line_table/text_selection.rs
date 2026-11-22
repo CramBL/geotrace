@@ -1,20 +1,21 @@
 use std::mem;
 use std::ops::Range;
-use std::sync::Arc;
 
 use egui::epaint::TextShape;
+use egui::epaint::text::FontsView;
 use egui::layers::ShapeIdx;
 use egui::os::OperatingSystem;
 use egui::plugin::Plugin;
 use egui::text::{CCursor, CCursorRange, CharIndex, LayoutJob};
 use egui::text_selection::{LabelSelectionState, text_cursor_state, visuals};
 use egui::{
-    CursorIcon, Event, Galley, InputOptions, Key, Label, Modifiers, OutputCommand, PointerButton,
-    Pos2, Role, Sense, Shape, WidgetInfo,
+    CursorIcon, Event, InputOptions, Key, Modifiers, OutputCommand, PointerButton, Pos2, Role,
+    Sense, Shape, WidgetInfo,
 };
 
 use super::row_cells::{CellIndex, RowCells};
 use super::row_grid::ShownRows;
+use super::row_layout::{CellLayout, RowLayout};
 
 use keyboard::{SelectionMotion, VerticalMotion};
 
@@ -266,15 +267,7 @@ impl TableTextSelection {
     }
 }
 
-struct PlacedText {
-    row: usize,
-    cell: CellIndex,
-    origin: Pos2,
-    galley: Arc<Galley>,
-    shape: Option<ShapeIdx>,
-}
-
-impl PlacedText {
+impl CellLayout {
     fn caret_x(&self, character: CharIndex) -> f32 {
         let cursor = CCursor::new(character.min(self.galley.end().index));
         self.origin.x + self.galley.pos_from_cursor(cursor).left()
@@ -341,10 +334,7 @@ impl PlacedText {
         }
     }
 
-    fn paint(self, ui: &egui::Ui, selection: Option<TextRange>) {
-        let Some(shape) = self.shape else {
-            return;
-        };
+    fn paint(self, ui: &egui::Ui, shape: ShapeIdx, selection: Option<TextRange>) {
         let displayed_end = self.galley.end().index;
         let text_end = if self.galley.elided && selection.is_some() {
             self.text_end()
@@ -374,57 +364,18 @@ impl PlacedText {
     }
 }
 
-pub(super) struct RowTextUi<'a> {
-    row: usize,
-    fields: &'a mut Vec<PlacedText>,
+struct VisibleTextRow {
+    index: usize,
+    layout: RowLayout,
+    shapes: Vec<ShapeIdx>,
 }
 
-impl RowTextUi<'_> {
-    pub(super) fn index(&self) -> usize {
-        self.row
-    }
-
-    pub(super) fn label(
-        &mut self,
-        ui: &mut egui::Ui,
-        cell: CellIndex,
-        label: Label,
-    ) -> egui::Response {
-        let label = if ui.is_visible() {
-            label
-        } else {
-            label.sense(Sense::hover())
-        };
-        let (origin, galley, mut response) = label.selectable(false).layout_in_ui(ui);
-        let shape = ui.is_visible().then(|| {
-            response
-                .widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), galley.text()));
-            ui.painter().add(Shape::Noop)
-        });
-        if shape.is_some() && galley.elided && ui.is_rect_visible(response.rect) {
-            response = response.on_hover_text(LayoutJob {
-                text: galley.job.text.clone(),
-                sections: galley.job.sections.clone(),
-                ..LayoutJob::default()
-            });
-        }
-        self.fields.push(PlacedText {
-            row: self.row,
-            cell,
-            origin,
-            galley,
-            shape,
-        });
-        response
-    }
-}
-
-pub(super) struct TableTextUi {
+pub(super) struct TableTextUi<'grid> {
     drag_target: egui::Response,
     scrollbar: Option<egui::Rect>,
     row_count: usize,
-    shown: ShownRows,
-    fields: Vec<PlacedText>,
+    shown: &'grid ShownRows,
+    rows: Vec<VisibleTextRow>,
 }
 
 #[derive(Clone, Copy)]
@@ -542,10 +493,10 @@ impl Plugin for LabelSelectionHandoff {
     }
 }
 
-impl TableTextUi {
+impl<'grid> TableTextUi<'grid> {
     pub(super) fn new(
         ui: &egui::Ui,
-        shown: ShownRows,
+        shown: &'grid ShownRows,
         row_count: usize,
         scrollbar: Option<egui::Rect>,
     ) -> Self {
@@ -560,29 +511,67 @@ impl TableTextUi {
             scrollbar,
             row_count,
             shown,
-            fields: Vec::new(),
+            rows: Vec::new(),
         }
     }
 
-    pub(super) fn row(&mut self, row: usize) -> RowTextUi<'_> {
-        RowTextUi {
-            row,
-            fields: &mut self.fields,
-        }
+    pub(super) fn row_ui(
+        &mut self,
+        ui: &egui::Ui,
+        row: usize,
+        layout: RowLayout,
+        mut cell_hover: impl FnMut(CellIndex, egui::Response),
+    ) {
+        let shapes = if ui.is_visible() {
+            let sense = if ui.memory(|memory| memory.options.screen_reader) {
+                Sense::focusable_noninteractive()
+            } else {
+                Sense::hover()
+            };
+            layout
+                .cells
+                .iter()
+                .map(|cell| {
+                    let id = ui.make_persistent_id(("log_text_cell", row, cell.cell.0));
+                    let mut response = ui.interact(cell.bounds, id, sense);
+                    let galley = &cell.galley;
+                    response.widget_info(|| {
+                        WidgetInfo::labeled(Role::Label, ui.is_enabled(), galley.text())
+                    });
+                    if galley.elided && ui.is_rect_visible(response.rect) {
+                        response = response.on_hover_text(LayoutJob {
+                            text: galley.job.text.clone(),
+                            sections: galley.job.sections.clone(),
+                            ..LayoutJob::default()
+                        });
+                    }
+                    cell_hover(cell.cell, response);
+                    ui.painter().add(Shape::Noop)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.rows.push(VisibleTextRow {
+            index: row,
+            layout,
+            shapes,
+        });
     }
 
     fn text_hit(&self, pointer: Pos2) -> Option<TextHit> {
         let viewport = self.drag_target.rect;
         let top = self.shown.bounds.top();
         if self.shown.rows.start == 0 && viewport.top() <= top && pointer.y < top {
-            return Some(self.fields.first()?.position(CharIndex::ZERO).into());
+            let first = self.rows.first()?.layout.cells.first()?;
+            return Some(first.position(CharIndex::ZERO).into());
         }
         let bottom = self.shown.row_top(self.shown.rows.end);
         if self.shown.rows.end == self.row_count
             && bottom <= viewport.bottom()
             && pointer.y >= bottom
         {
-            let field = self.fields.last()?;
+            let field = self.rows.last()?.layout.cells.last()?;
             return Some(field.position(field.text_end()).into());
         }
         let x = pointer.x.clamp(viewport.left(), viewport.right());
@@ -590,7 +579,7 @@ impl TableTextUi {
         Some(self.field_at_x(self.placed_in_row(row), x)?.hit_at(x))
     }
 
-    fn field_at_x<'a>(&self, fields: &'a [PlacedText], x: f32) -> Option<&'a PlacedText> {
+    fn field_at_x<'a>(&self, fields: &'a [CellLayout], x: f32) -> Option<&'a CellLayout> {
         let viewport = self.drag_target.rect;
         fields
             .iter()
@@ -599,7 +588,7 @@ impl TableTextUi {
                 bounds.right() > viewport.left() && bounds.left() < viewport.right()
             })
             .min_by(|a, b| {
-                let distance = |field: &PlacedText| {
+                let distance = |field: &CellLayout| {
                     let bounds = field.galley.rect.translate(field.origin.to_vec2());
                     (x - x.clamp(bounds.left(), bounds.right())).abs()
                 };
@@ -607,52 +596,41 @@ impl TableTextUi {
             })
     }
 
-    fn placed_in_row(&self, row: usize) -> &[PlacedText] {
-        let start = self.fields.partition_point(|field| field.row < row);
-        let end = self.fields.partition_point(|field| field.row <= row);
-        self.fields.get(start..end).unwrap_or_default()
+    fn placed_in_row(&self, row: usize) -> &[CellLayout] {
+        self.rows
+            .binary_search_by_key(&row, |entry| entry.index)
+            .ok()
+            .and_then(|index| self.rows.get(index))
+            .map_or(&[], |row| row.layout.cells.as_slice())
     }
 
     fn with_row_geometry<R>(
         &self,
-        ui: &mut egui::Ui,
         row: usize,
-        render_row: &impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
-        read: impl FnOnce(&[PlacedText]) -> R,
+        fonts: &mut FontsView<'_>,
+        layout_row: &impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
+        read: impl FnOnce(&[CellLayout]) -> R,
     ) -> R {
         let placed = self.placed_in_row(row);
         if !placed.is_empty() {
             return read(placed);
         }
-        let mut placed = Vec::new();
-        let mut layout_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(("log_text_row_geometry", row))
-                .max_rect(self.shown.bounds)
-                .invisible(),
-        );
-        render_row(
-            &mut layout_ui,
-            &mut RowTextUi {
-                row,
-                fields: &mut placed,
-            },
-        );
-        read(&placed)
+        let layout = layout_row(fonts, row);
+        read(layout.as_ref().map_or(&[], |row| row.cells.as_slice()))
     }
 
     fn vertical_endpoint(
         &self,
-        ui: &mut egui::Ui,
         motion: &mut VerticalMotion<'_>,
-        render_row: &impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
+        fonts: &mut FontsView<'_>,
+        layout_row: &impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
     ) -> Option<TextPosition> {
         let left = self.shown.bounds.left();
         let offset = if let Some(preferred) = *motion.preferred_x {
             preferred
         } else {
             let previous = motion.previous;
-            let x = self.with_row_geometry(ui, previous.row, render_row, |fields| {
+            let x = self.with_row_geometry(previous.row, fonts, layout_row, |fields| {
                 let field = fields.iter().find(|field| field.cell == previous.cell)?;
                 Some(field.caret_x(previous.character))
             })?;
@@ -662,7 +640,7 @@ impl TableTextUi {
         };
         let viewport = self.drag_target.rect;
         let x = (left + offset.0).clamp(viewport.left(), viewport.right());
-        self.with_row_geometry(ui, motion.row, render_row, |fields| {
+        self.with_row_geometry(motion.row, fonts, layout_row, |fields| {
             Some(self.field_at_x(fields, x)?.hit_at(x).caret)
         })
     }
@@ -691,11 +669,11 @@ impl TableTextUi {
 
     fn update_selection<'a>(
         &self,
-        ui: &mut egui::Ui,
+        ui: &egui::Ui,
         selection: &mut TableTextSelection,
         focus: TableInputFocus<'_>,
         row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
-        render_row: &impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
+        layout_row: &impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
     ) -> SelectionOutcome {
         let available = focus.available;
         let (events, position, time, primary_down) = ui.input(|input| {
@@ -830,7 +808,9 @@ impl TableTextUi {
                     if let Some(motion) = SelectionMotion::of(key, modifiers)
                         && let Some(endpoint) =
                             selection.move_endpoint(motion, self.row_count, &row_cells, |motion| {
-                                self.vertical_endpoint(ui, motion, render_row)
+                                ui.fonts_mut(|fonts| {
+                                    self.vertical_endpoint(motion, fonts, layout_row)
+                                })
                             })
                     {
                         outcome.keyboard_endpoint = Some(endpoint);
@@ -1017,15 +997,15 @@ impl TableTextUi {
 
     pub(super) fn finish<'a>(
         self,
-        ui: &mut egui::Ui,
+        ui: &egui::Ui,
         selection: &mut TableTextSelection,
         focus: TableInputFocus<'_>,
         row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
-        render_row: impl Fn(&mut egui::Ui, &mut RowTextUi<'_>),
+        layout_row: impl Fn(&mut FontsView<'_>, usize) -> Option<RowLayout>,
     ) -> bool {
         let available = focus.available && self.drag_target.rect.is_positive();
         let focus = TableInputFocus { available, ..focus };
-        let outcome = self.update_selection(ui, selection, focus, &row_cells, &render_row);
+        let outcome = self.update_selection(ui, selection, focus, &row_cells, &layout_row);
         if outcome.request_focus {
             focus.target.request_focus();
         }
@@ -1056,8 +1036,10 @@ impl TableTextUi {
         {
             ui.ctx().set_cursor_icon(CursorIcon::Text);
         }
-        for field in self.fields {
-            field.paint(ui, text.map(|text| text.range));
+        for row in self.rows {
+            for (cell, shape) in row.layout.cells.into_iter().zip(row.shapes) {
+                cell.paint(ui, shape, text.map(|text| text.range));
+            }
         }
         outcome.selected_on_release
     }
