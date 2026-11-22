@@ -237,7 +237,10 @@ fn selecting_an_inspector_value_supersedes_the_table_selection() {
     harness.press_drag_release(format.left_center(), egui::vec2(format.width(), 0.0), 4);
     assert!(!selection_painted(&harness, FIRST_ENTRY_MESSAGE));
     table_focus::focus_table(&mut harness);
-    harness.input_mut().events.push(Event::Copy);
+    harness.input_mut().events.extend([
+        key_press_event(Key::ArrowLeft, Modifiers::NONE),
+        Event::Copy,
+    ]);
     harness.step();
     assert_eq!(harness.copied_text().as_deref(), Some(FIXTURE_LOG_FORMAT));
 }
@@ -279,13 +282,19 @@ fn select_all_copies_the_table_after_tabbing_from_the_inspector() {
 }
 
 #[rstest]
-#[case::inspector_copy_before_tab(false, &[FIXTURE_LOG_FORMAT])]
-#[case::copies_before_and_after_tab(true, &[FIXTURE_LOG_FORMAT, WORD_DOCUMENT])]
+#[case::inspector_copy_before_tab(1, false, &[FIXTURE_LOG_FORMAT])]
+#[case::copies_before_and_after_tab(1, true, &[FIXTURE_LOG_FORMAT, WORD_DOCUMENT])]
+#[case::copies_between_and_after_coalesced_tabs(2, true, &[FIXTURE_LOG_FORMAT, WORD_DOCUMENT])]
 fn batched_copy_follows_focus_from_inspector_to_table(
+    #[case] tabs: usize,
     #[case] copy_table: bool,
     #[case] expected: &[&str],
 ) {
     let mut harness = inspector_selection_harness();
+    harness
+        .input_mut()
+        .events
+        .extend((1..tabs).map(|_| key_press_event(Key::Tab, Modifiers::NONE)));
     harness
         .input_mut()
         .events
@@ -337,6 +346,13 @@ fn keyboard_focus_moves_copy_from_the_table_to_find() {
     harness.input_mut().events.push(Event::Copy);
     harness.step();
     assert_eq!(harness.copied_text().as_deref(), Some("navsyncd"));
+    harness.input_mut().events.extend([
+        key_press_event(Key::ArrowLeft, Modifiers::NONE),
+        key_press_event(Key::ArrowRight, Modifiers::SHIFT),
+        Event::Copy,
+    ]);
+    harness.step();
+    assert_eq!(harness.copied_text().as_deref(), Some("n"));
 }
 
 #[rstest]
@@ -456,17 +472,432 @@ fn a_word_selection_can_be_cut_and_extended_by_shift_click() {
 }
 
 #[rstest]
-#[case::left_from_a_forward_drag(false, Key::ArrowLeft, Modifiers::SHIFT, "bet")]
-#[case::right_from_a_reverse_drag(true, Key::ArrowRight, Modifiers::SHIFT, "eta")]
-#[case::next_word(false, Key::ArrowRight, Modifiers::SHIFT | Modifiers::CTRL, "beta gamma")]
+#[case::left_from_a_forward_drag(
+    false,
+    Key::ArrowLeft,
+    Modifiers::SHIFT,
+    OperatingSystem::Nix,
+    "bet"
+)]
+#[case::right_from_a_reverse_drag(
+    true,
+    Key::ArrowRight,
+    Modifiers::SHIFT,
+    OperatingSystem::Nix,
+    "eta"
+)]
+#[case::next_word(false, Key::ArrowRight, Modifiers::SHIFT | Modifiers::CTRL | Modifiers::COMMAND, OperatingSystem::Nix, "beta gamma")]
+#[case::previous_word_on_mac(true, Key::ArrowLeft, Modifiers::SHIFT | Modifiers::ALT, OperatingSystem::Mac, "alpha beta")]
+#[case::row_end_on_mac(true, Key::ArrowRight, Modifiers::SHIFT | MAC_COMMAND_MODIFIERS, OperatingSystem::Mac, " gamma")]
 fn shift_arrow_changes_the_drag_endpoint(
     #[case] reverse: bool,
     #[case] key: Key,
     #[case] modifiers: Modifiers,
+    #[case] os: OperatingSystem,
+    #[case] expected: &str,
+) {
+    let mut harness = word_selection_harness();
+    harness.ctx.set_os(os);
+    drag_beta(&mut harness, reverse);
+    assert_eq!(
+        settled_selection(&harness),
+        (os == OperatingSystem::Nix).then_some("beta")
+    );
+    harness
+        .input_mut()
+        .events
+        .push(key_press_event(key, modifiers));
+    harness.step();
+    assert_eq!(
+        settled_selection(&harness),
+        (os == OperatingSystem::Nix).then_some(expected)
+    );
+    assert!(harness.copied_text().is_none());
+    harness.input_mut().events.push(Event::Copy);
+    harness.step();
+    assert_eq!(harness.copied_text().as_deref(), Some(expected));
+}
+
+#[rstest]
+#[case::left_from_a_forward_drag(false, Key::ArrowLeft, "b")]
+#[case::left_from_a_reverse_drag(true, Key::ArrowLeft, "b")]
+#[case::right_from_a_forward_drag(false, Key::ArrowRight, "a")]
+#[case::right_from_a_reverse_drag(true, Key::ArrowRight, "a")]
+fn a_bare_arrow_collapses_to_the_ordered_selection_edge(
+    #[case] reverse: bool,
+    #[case] arrow: Key,
     #[case] expected: &str,
 ) {
     let mut harness = word_selection_harness();
     harness.ctx.set_os(OperatingSystem::Nix);
+    drag_beta(&mut harness, reverse);
+    assert_eq!(settled_selection(&harness), Some("beta"));
+    harness
+        .input_mut()
+        .events
+        .extend([key_press_event(arrow, Modifiers::NONE), Event::Copy]);
+    harness.step();
+    table_focus::assert_table_focused(&harness);
+    assert!(harness.copied_text().is_none());
+    assert!(settled_selection(&harness).is_none());
+    assert!(!selection_painted(&harness, "svc: alpha beta gamma"));
+
+    let inward = if arrow == Key::ArrowLeft {
+        Key::ArrowRight
+    } else {
+        Key::ArrowLeft
+    };
+    harness
+        .input_mut()
+        .events
+        .extend([key_press_event(inward, Modifiers::SHIFT), Event::Copy]);
+    harness.step();
+    assert_eq!(harness.copied_text().as_deref(), Some(expected));
+}
+
+#[test]
+fn bare_arrows_advance_the_clicked_caret() {
+    let mut harness = word_selection_harness();
+    let (message, _) = label_shape(&harness, "svc: alpha beta gamma").unwrap();
+    harness.click_at(glyph_point(message, CharIndex::ZERO, 0.25));
+    harness.step();
+    table_focus::assert_table_focused(&harness);
+    harness.input_mut().events.extend([
+        key_press_event(Key::ArrowRight, Modifiers::NONE),
+        key_press_event(Key::ArrowRight, Modifiers::NONE),
+        Event::Copy,
+        key_press_event(Key::ArrowRight, Modifiers::SHIFT),
+        Event::Copy,
+    ]);
+    harness.step();
+    let copies: Vec<_> = harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|command| {
+            if let OutputCommand::CopyText(text) = command {
+                Some(text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(copies, ["c"]);
+}
+
+#[rstest]
+#[case::arrow_preserves_table_focus(true, None)]
+#[case::subsequent_tab_changes_focus(true, Some(Key::Tab))]
+#[case::arrow_moves_focus_without_a_caret(false, None)]
+fn caret_arrow_focus_with_an_adjacent_widget(
+    #[case] place_caret: bool,
+    #[case] subsequent_focus_key: Option<Key>,
+) {
+    let mut harness = adjacent_word_selection_harness(WORD_LOG);
+    if place_caret {
+        drag_beta(&mut harness, false);
+    } else {
+        table_focus::focus_table(&mut harness);
+    }
+    table_focus::assert_table_focused(&harness);
+    harness
+        .input_mut()
+        .events
+        .push(key_press_event(Key::ArrowRight, Modifiers::NONE));
+    if let Some(key) = subsequent_focus_key {
+        harness
+            .input_mut()
+            .events
+            .push(key_press_event(key, Modifiers::NONE));
+    }
+    harness.step();
+    if !place_caret {
+        assert!(
+            harness
+                .get_by_label(ADJACENT_CONTROL_LABEL)
+                .accesskit_node()
+                .is_focused()
+        );
+        return;
+    }
+    if subsequent_focus_key.is_some() {
+        assert!(
+            !harness
+                .get_by_label(keyboard_navigation::TABLE_LABEL)
+                .accesskit_node()
+                .is_focused()
+        );
+        return;
+    }
+    table_focus::assert_table_focused(&harness);
+
+    harness.input_mut().events.extend([
+        key_press_event(Key::ArrowLeft, Modifiers::SHIFT),
+        Event::Copy,
+    ]);
+    harness.step();
+    assert_eq!(harness.copied_text().as_deref(), Some("a"));
+}
+
+#[rstest]
+#[case::fresh_tab(false, Modifiers::NONE)]
+#[case::idle_tab(true, Modifiers::NONE)]
+#[case::fresh_shift_tab(false, Modifiers::SHIFT)]
+#[case::idle_shift_tab(true, Modifiers::SHIFT)]
+fn traversal_releases_the_caret_before_a_batched_arrow(
+    #[case] idle_before_tab: bool,
+    #[case] tab_modifiers: Modifiers,
+) {
+    let mut harness = adjacent_word_selection_harness(WORD_LOG);
+    focus_caret_from_adjacent_control(&mut harness);
+    if idle_before_tab {
+        harness.step();
+    }
+
+    harness.input_mut().events.extend([
+        key_press_event(Key::Tab, tab_modifiers),
+        key_press_event(Key::ArrowRight, Modifiers::NONE),
+    ]);
+    harness.run_steps(2);
+    assert!(
+        !harness
+            .get_by_label(keyboard_navigation::TABLE_LABEL)
+            .is_focused()
+    );
+    if !idle_before_tab {
+        assert!(harness.get_by_label(ADJACENT_CONTROL_LABEL).is_focused());
+    }
+
+    table_focus::focus_table(&mut harness);
+    harness.input_mut().events.extend([
+        key_press_event(Key::ArrowRight, Modifiers::SHIFT),
+        Event::Copy,
+    ]);
+    harness.step();
+    assert_eq!(harness.copied_text().as_deref(), Some("b"));
+}
+
+#[rstest]
+#[case::down_before_tab(false)]
+#[case::down_after_tab(true)]
+fn arrow_down_scrolls_only_with_table_focus_at_the_key(#[case] after_tab: bool) {
+    let text = format!("{WORD_LOG}{}", long_log(60));
+    let mut harness = adjacent_word_selection_harness(&text);
+    focus_caret_from_adjacent_control(&mut harness);
+    let before = harness.state().viewer.active_state().table_reading_anchor;
+    let tab = key_press_event(Key::Tab, Modifiers::NONE);
+    let down = key_press_event(Key::ArrowDown, Modifiers::NONE);
+    let events = if after_tab { [tab, down] } else { [down, tab] };
+    harness.input_mut().events.extend(events);
+    harness.run_steps(2);
+    assert!(
+        !harness
+            .get_by_label(keyboard_navigation::TABLE_LABEL)
+            .is_focused()
+    );
+    let after = harness.state().viewer.active_state().table_reading_anchor;
+    assert_eq!(before == after, after_tab);
+}
+
+fn focus_caret_from_adjacent_control(harness: &mut Harness<'_, ViewerState>) {
+    let (message, _) = label_shape(harness, "svc: alpha beta gamma").unwrap();
+    let pos = glyph_point(message, CharIndex(11), 0.25);
+    harness.hover_at(pos);
+    harness.get_by_label(ADJACENT_CONTROL_LABEL).focus();
+    harness.step();
+    assert!(harness.get_by_label(ADJACENT_CONTROL_LABEL).is_focused());
+
+    for pressed in [true, false] {
+        harness.input_mut().events.push(Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    harness.step();
+    table_focus::assert_table_focused(harness);
+}
+
+fn adjacent_word_selection_harness(text: &str) -> Harness<'static, ViewerState> {
+    const VIEWPORT: egui::Vec2 = egui::vec2(1120.0, 760.0);
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_size(VIEWPORT)
+        .build_ui_state(
+            |ui, state: &mut ViewerState| {
+                viewer_ui(ui, state);
+                ui.place(
+                    egui::Rect::from_center_size(
+                        egui::pos2(1060.0, 320.0),
+                        egui::vec2(100.0, 24.0),
+                    ),
+                    egui::Button::new(ADJACENT_CONTROL_LABEL),
+                );
+                ui.place(
+                    egui::Rect::from_center_size(egui::pos2(400.0, 725.0), egui::vec2(100.0, 24.0)),
+                    egui::Button::new(BELOW_TABLE_CONTROL_LABEL),
+                );
+            },
+            viewer_state(Vec::new(), &[("words.log", text)]),
+        );
+    harness.run_steps(3);
+    let table = harness
+        .get_by_label(keyboard_navigation::TABLE_LABEL)
+        .rect();
+    let neighbour = harness.get_by_label(ADJACENT_CONTROL_LABEL).rect();
+    assert!(neighbour.left() > table.right() && table.y_range().contains(neighbour.center().y));
+    let below = harness.get_by_label(BELOW_TABLE_CONTROL_LABEL).rect();
+    assert!(below.top() > table.bottom() && table.x_range().contains(below.center().x));
+
+    harness
+}
+
+#[rstest]
+#[case::linux_left_from_a_forward_range(
+    OperatingSystem::Nix,
+    NIX_WORD_MODIFIERS,
+    Some(false),
+    Key::ArrowLeft,
+    "b"
+)]
+#[case::linux_left_from_a_point(
+    OperatingSystem::Nix,
+    NIX_WORD_MODIFIERS,
+    None,
+    Key::ArrowLeft,
+    "b"
+)]
+#[case::mac_left_from_a_forward_range(
+    OperatingSystem::Mac,
+    Modifiers::ALT,
+    Some(false),
+    Key::ArrowLeft,
+    "b"
+)]
+#[case::mac_left_from_a_point(OperatingSystem::Mac, Modifiers::ALT, None, Key::ArrowLeft, "b")]
+#[case::linux_left_from_a_reverse_range(
+    OperatingSystem::Nix,
+    NIX_WORD_MODIFIERS,
+    Some(true),
+    Key::ArrowLeft,
+    "a"
+)]
+#[case::mac_right_from_a_forward_range(
+    OperatingSystem::Mac,
+    Modifiers::ALT,
+    Some(false),
+    Key::ArrowRight,
+    "ma"
+)]
+#[case::linux_right_from_a_reverse_range(
+    OperatingSystem::Nix,
+    NIX_WORD_MODIFIERS,
+    Some(true),
+    Key::ArrowRight,
+    "ta"
+)]
+#[case::mac_right_from_a_point(OperatingSystem::Mac, Modifiers::ALT, None, Key::ArrowRight, "ma")]
+#[case::mac_command_right_from_a_forward_range(
+    OperatingSystem::Mac,
+    MAC_COMMAND_MODIFIERS,
+    Some(false),
+    Key::ArrowRight,
+    "ma"
+)]
+#[case::mac_command_right_from_a_reverse_range(
+    OperatingSystem::Mac,
+    MAC_COMMAND_MODIFIERS,
+    Some(true),
+    Key::ArrowRight,
+    "ma"
+)]
+#[case::mac_command_right_from_a_point(
+    OperatingSystem::Mac,
+    MAC_COMMAND_MODIFIERS,
+    None,
+    Key::ArrowRight,
+    "ma"
+)]
+#[case::mac_command_left_from_a_reverse_range(
+    OperatingSystem::Mac,
+    MAC_COMMAND_MODIFIERS,
+    Some(true),
+    Key::ArrowLeft,
+    "1"
+)]
+fn a_modified_arrow_moves_the_active_caret_and_collapses_the_range(
+    #[case] os: OperatingSystem,
+    #[case] modifiers: Modifiers,
+    #[case] reverse_drag: Option<bool>,
+    #[case] arrow: Key,
+    #[case] expected: &str,
+) {
+    let mut harness = word_selection_harness();
+    harness.ctx.set_os(os);
+    if let Some(reverse) = reverse_drag {
+        drag_beta(&mut harness, reverse);
+    } else {
+        let (message, _) = label_shape(&harness, "svc: alpha beta gamma").unwrap();
+        harness.click_at(glyph_point(message, CharIndex(15), 0.25));
+        harness.step();
+    }
+    harness
+        .input_mut()
+        .events
+        .extend([key_press_event(arrow, modifiers), Event::Copy]);
+    harness.step();
+    let copied_after_movement = harness.copied_text();
+
+    let (extension, presses) = if arrow == Key::ArrowLeft {
+        (Key::ArrowRight, 1)
+    } else {
+        (Key::ArrowLeft, 2)
+    };
+    harness
+        .input_mut()
+        .events
+        .extend((0..presses).map(|_| key_press_event(extension, Modifiers::SHIFT)));
+    harness.input_mut().events.push(Event::Copy);
+    harness.step();
+    assert_eq!(harness.copied_text().as_deref(), Some(expected));
+    assert!(copied_after_movement.is_none());
+}
+
+#[rstest]
+#[case::move_then_extend(false)]
+#[case::extend_by_word(true)]
+fn word_left_selects_the_separator_after_punctuation(#[case] extend_by_word: bool) {
+    let log = "2026-05-29 18:48:25 svc: abc!\n2026-05-29 18:48:26 svc: def\n";
+    let mut harness = harness_of(Vec::new(), &[("words.log", log)]);
+    harness.ctx.set_os(OperatingSystem::Nix);
+    let (number, _) = label_shape(&harness, "2").unwrap();
+    harness.click_at(glyph_point(number, CharIndex::ZERO, 0.25));
+    harness.step();
+    table_focus::assert_table_focused(&harness);
+
+    let modifiers = if extend_by_word {
+        NIX_WORD_MODIFIERS | Modifiers::SHIFT
+    } else {
+        NIX_WORD_MODIFIERS
+    };
+    harness
+        .input_mut()
+        .events
+        .push(key_press_event(Key::ArrowLeft, modifiers));
+    if !extend_by_word {
+        harness
+            .input_mut()
+            .events
+            .push(key_press_event(Key::ArrowRight, Modifiers::SHIFT));
+    }
+    harness.input_mut().events.push(Event::Copy);
+    harness.step();
+    assert_eq!(harness.copied_text().as_deref(), Some("\n"));
+}
+
+fn drag_beta(harness: &mut Harness<'_, ViewerState>, reverse: bool) {
     let message = harness.get_by_label("svc: alpha beta gamma").rect();
     let start = egui::pos2(
         message.left() + message.width() * (11.0 / 21.0),
@@ -477,18 +908,7 @@ fn shift_arrow_changes_the_drag_endpoint(
         message.center().y,
     );
     let (start, end) = if reverse { (end, start) } else { (start, end) };
-    drag_in_one_frame(&mut harness, start, end);
-    assert_eq!(settled_selection(&harness), Some("beta"));
-    harness
-        .input_mut()
-        .events
-        .push(key_press_event(key, modifiers));
-    harness.step();
-    assert_eq!(settled_selection(&harness), Some(expected));
-    assert!(harness.copied_text().is_none());
-    harness.input_mut().events.push(Event::Copy);
-    harness.step();
-    assert_eq!(harness.copied_text().as_deref(), Some(expected));
+    drag_in_one_frame(harness, start, end);
 }
 
 #[test]
@@ -808,8 +1228,11 @@ fn a_later_row_click_keeps_the_copy_ownership_at_tab(
     );
 }
 
-#[test]
-fn tab_into_the_table_restores_copy_for_its_retained_selection() {
+#[rstest]
+#[case::one_tab(1)]
+#[case::two_tabs(2)]
+#[case::three_tabs(3)]
+fn tab_into_the_table_restores_copy_for_its_retained_selection(#[case] tabs: usize) {
     let mut harness = word_selection_harness();
     let first = harness.get_by_label("svc: alpha beta gamma").rect();
     let beta = Pos2::new(
@@ -826,7 +1249,8 @@ fn tab_into_the_table_restores_copy_for_its_retained_selection() {
     harness
         .input_mut()
         .events
-        .extend([key_press_event(Key::Tab, Modifiers::NONE), Event::Copy]);
+        .extend((0..tabs).map(|_| key_press_event(Key::Tab, Modifiers::NONE)));
+    harness.input_mut().events.push(Event::Copy);
     harness.step();
     table_focus::assert_table_focused(&harness);
     assert_eq!(harness.copied_text().as_deref(), Some("beta"));
@@ -874,6 +1298,10 @@ fn word_selection_harness() -> Harness<'static, ViewerState> {
     harness
 }
 
+const MAC_COMMAND_MODIFIERS: Modifiers = Modifiers::MAC_CMD.plus(Modifiers::COMMAND);
+const NIX_WORD_MODIFIERS: Modifiers = Modifiers::CTRL.plus(Modifiers::COMMAND);
+const BELOW_TABLE_CONTROL_LABEL: &str = "Control below table";
+const ADJACENT_CONTROL_LABEL: &str = "Adjacent control";
 const WORD_LOG: &str =
     "2026-05-29 18:48:25 svc: alpha beta gamma\n2026-05-29 18:48:26 svc: another row\n";
 const WORD_DOCUMENT: &str = "Boot 1 · up 1s · 2 entries\n1  2026-05-29 18:48:25 svc: alpha beta gamma\n2  2026-05-29 18:48:26 svc: another row";

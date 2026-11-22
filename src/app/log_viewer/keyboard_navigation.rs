@@ -1,4 +1,4 @@
-use egui::{EventFilter, FocusDirection, Role, Sense, StrokeKind, WidgetInfo};
+use egui::{Role, Sense, StrokeKind, WidgetInfo};
 use gt_log_view::LoadedLogs;
 use gt_ui_types::LoadedLogId;
 
@@ -32,61 +32,11 @@ impl TableFocusScope {
         ui.input(|input| input.focused) && ui.memory(|memory| memory.has_focus(self.0))
     }
 
-    pub(super) fn lock_vertical_arrows(&self, ui: &egui::Ui) {
-        ui.memory_mut(|memory| {
-            memory.set_focus_lock_filter(
-                self.0,
-                EventFilter {
-                    vertical_arrows: true,
-                    ..EventFilter::default()
-                },
-            );
-        });
-    }
-
     pub(super) fn draw_focus(&self, ui: &egui::Ui, rect: egui::Rect) {
         if self.has_focus(ui) {
             ui.painter()
                 .rect_stroke(rect, 0, ui.visuals().selection.stroke, StrokeKind::Inside);
         }
-    }
-}
-
-pub(super) struct KeyboardScrollSteps {
-    pub(super) row_height_px: f32,
-    pub(super) page_height_px: f32,
-    pub(super) content_height_px: f32,
-}
-
-impl KeyboardScrollSteps {
-    pub(super) fn scroll_the_table(&self, ui: &egui::Ui) {
-        let distance_px: f32 = [
-            (egui::Key::ArrowDown, self.row_height_px),
-            (egui::Key::ArrowUp, -self.row_height_px),
-            (egui::Key::PageDown, self.page_height_px),
-            (egui::Key::PageUp, -self.page_height_px),
-            (egui::Key::Home, -self.content_height_px),
-            (egui::Key::End, self.content_height_px),
-        ]
-        .into_iter()
-        .map(|(key, step_px)| {
-            let presses = ui.input_mut(|input| {
-                let mut presses = 0;
-                input.events.retain(|event| {
-                    let scroll = matches!(event, egui::Event::Key { key: pressed_key, pressed: true, modifiers, .. }
-                        if *pressed_key == key && !modifiers.any());
-                    presses += usize::from(scroll);
-                    !scroll
-                });
-                presses
-            });
-            if presses > 0 {
-                ui.memory_mut(|memory| memory.move_focus(FocusDirection::None));
-            }
-            presses as f32 * step_px
-        })
-        .sum();
-        ui.scroll_with_delta(egui::vec2(0.0, -distance_px));
     }
 }
 

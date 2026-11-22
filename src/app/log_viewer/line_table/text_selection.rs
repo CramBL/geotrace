@@ -1,17 +1,11 @@
-use std::mem;
 use std::ops::Range;
 
 use egui::epaint::TextShape;
 use egui::epaint::text::FontsView;
 use egui::layers::ShapeIdx;
-use egui::os::OperatingSystem;
-use egui::plugin::Plugin;
 use egui::text::{CCursor, CCursorRange, CharIndex, LayoutJob};
-use egui::text_selection::{LabelSelectionState, text_cursor_state, visuals};
-use egui::{
-    CursorIcon, Event, Key, Modifiers, OutputCommand, PointerButton, Pos2, Role, Sense, Shape,
-    WidgetInfo,
-};
+use egui::text_selection::{text_cursor_state, visuals};
+use egui::{Pos2, Role, Sense, Shape, WidgetInfo};
 
 use super::LineTableRows;
 use super::row_cells::CellIndex;
@@ -20,14 +14,15 @@ use super::row_layout::{CellLayout, RowLayout};
 use super::selection_document::{Caret, DocumentRow};
 
 use controller::{
-    AnchorMode, GestureLimits, HorizontalPosition, PointerCompletion, PointerIntent,
-    SelectionTarget, SelectionUnit,
+    GestureLimits, HorizontalPosition, PointerCompletion, PointerIntent, SelectionTarget,
+    SelectionUnit,
 };
-use keyboard::{Direction, SelectionMotion, VerticalMotion, VerticalResult};
+use keyboard::{VerticalMotion, VerticalResult};
 
 pub(in crate::app::log_viewer) use controller::TableTextSelection;
 
 mod controller;
+pub(super) mod input;
 mod keyboard;
 
 #[derive(Clone, Copy)]
@@ -194,173 +189,20 @@ struct VisibleTextRow {
 }
 
 pub(super) struct TableTextUi<'grid> {
-    drag_target: egui::Response,
-    scrollbar: Option<egui::Rect>,
+    viewport: egui::Rect,
     document: &'grid LineTableRows,
     shown: &'grid ShownRows,
     rows: Vec<VisibleTextRow>,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct TableInputFocus<'a> {
-    pub(super) target: &'a egui::Response,
-    pub(super) available: bool,
-    pub(super) after_navigation: bool,
-    pub(super) entered_by_navigation: bool,
-}
-
-#[derive(Default)]
-struct SelectionOutcome {
-    clear_label_selection: bool,
-    selected_on_release: bool,
-    keyboard_endpoint: Option<Caret>,
-    request_focus: bool,
-    commands: SelectionCommands,
-}
-
-#[derive(Clone, Copy)]
-struct PointerPress {
-    position: Pos2,
-    button: PointerButton,
-    modifiers: Modifiers,
-    time: f64,
-    released_in_frame: bool,
-    available: bool,
-}
-
-#[derive(Default)]
-struct SelectionCommands {
-    consumed: Vec<usize>,
-    copies: Vec<(usize, CaretRange)>,
-    last_label_copy: Option<usize>,
-}
-
-impl SelectionCommands {
-    fn emit(
-        self,
-        ui: &egui::Ui,
-        document: &LineTableRows,
-        clear_label_selection: bool,
-        primary: Option<OutputCommand>,
-    ) {
-        if !self.consumed.is_empty() {
-            ui.input_mut(|input| {
-                let mut consumed = self.consumed.into_iter().peekable();
-                let mut index = 0;
-                input.events.retain(|_| {
-                    let keep = consumed.next_if_eq(&index).is_none();
-                    index += 1;
-                    keep
-                });
-            });
-        }
-        let mut after_labels = Vec::new();
-        for (index, range) in self.copies {
-            if let Some(text) = document
-                .clipboard_text(range)
-                .filter(|text| !text.is_empty())
-            {
-                if self
-                    .last_label_copy
-                    .is_some_and(|label_copy| index > label_copy)
-                {
-                    after_labels.push(OutputCommand::CopyText(text));
-                } else {
-                    ui.copy_text(text);
-                }
-            }
-        }
-        if self.last_label_copy.is_some() && (clear_label_selection || !after_labels.is_empty()) {
-            after_labels.extend(primary);
-            let output = ui.ctx().plugin_or_default::<LabelSelectionHandoff>();
-            let mut output = output.lock();
-            output.clear_label_selection |= clear_label_selection;
-            output.commands.append(&mut after_labels);
-        } else {
-            if clear_label_selection {
-                ui.ctx()
-                    .plugin::<LabelSelectionState>()
-                    .lock()
-                    .clear_selection();
-                ui.ctx().request_repaint();
-            }
-            if let Some(command) = primary {
-                ui.ctx().send_cmd(command);
-            }
-        }
-    }
-}
-
-#[derive(Default)]
-struct LabelSelectionHandoff {
-    clear_label_selection: bool,
-    commands: Vec<OutputCommand>,
-}
-
-impl Plugin for LabelSelectionHandoff {
-    fn debug_name(&self) -> &'static str {
-        "Log table selection handoff"
-    }
-
-    fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
-        // egui publishes label selections before it runs output hooks.
-        if mem::take(&mut self.clear_label_selection) {
-            ctx.plugin::<LabelSelectionState>().lock().clear_selection();
-            ctx.request_repaint();
-        }
-        output.platform_output.commands.append(&mut self.commands);
-    }
-}
-
-impl SelectionMotion {
-    fn of(key: Key, modifiers: Modifiers) -> Option<Self> {
-        if !modifiers.shift {
-            return None;
-        }
-        Some(match key {
-            Key::ArrowLeft | Key::ArrowRight => {
-                let direction = if key == Key::ArrowLeft {
-                    Direction::Backward
-                } else {
-                    Direction::Forward
-                };
-                if modifiers.alt || modifiers.ctrl {
-                    Self::Word(direction)
-                } else if modifiers.mac_cmd {
-                    Self::RowBoundary(direction)
-                } else {
-                    Self::Character(direction)
-                }
-            }
-            Key::ArrowUp if modifiers.command => Self::DocumentBoundary(Direction::Backward),
-            Key::ArrowDown if modifiers.command => Self::DocumentBoundary(Direction::Forward),
-            Key::ArrowUp => Self::Row(Direction::Backward),
-            Key::ArrowDown => Self::Row(Direction::Forward),
-            Key::Home if modifiers.ctrl => Self::DocumentBoundary(Direction::Backward),
-            Key::End if modifiers.ctrl => Self::DocumentBoundary(Direction::Forward),
-            Key::Home => Self::RowBoundary(Direction::Backward),
-            Key::End => Self::RowBoundary(Direction::Forward),
-            _ => return None,
-        })
-    }
-}
-
 impl<'grid> TableTextUi<'grid> {
     pub(super) fn new(
-        ui: &egui::Ui,
+        viewport: egui::Rect,
         shown: &'grid ShownRows,
         document: &'grid LineTableRows,
-        scrollbar: Option<egui::Rect>,
     ) -> Self {
-        let viewport = ui.clip_rect().intersect(egui::Rect::from_x_y_ranges(
-            ui.max_rect().x_range(),
-            ui.clip_rect().y_range(),
-        ));
-        let sense = Sense::click_and_drag() - Sense::FOCUSABLE;
-        let drag_target = ui.interact(viewport, ui.make_persistent_id("log_text_drag"), sense);
         Self {
-            drag_target,
-            scrollbar,
+            viewport,
             document,
             shown,
             rows: Vec::new(),
@@ -417,7 +259,7 @@ impl<'grid> TableTextUi<'grid> {
     }
 
     fn text_hit(&self, pointer: Pos2) -> Option<TextHit> {
-        let viewport = self.drag_target.rect;
+        let viewport = self.viewport;
         let top = self.shown.bounds.top();
         if self.shown.rows.start == 0 && viewport.top() <= top && pointer.y < top {
             let first = self.rows.first()?.layout.cells().first()?;
@@ -437,7 +279,7 @@ impl<'grid> TableTextUi<'grid> {
     }
 
     fn field_at_x<'a>(&self, fields: &'a [CellLayout], x: f32) -> Option<&'a CellLayout> {
-        let viewport = self.drag_target.rect;
+        let viewport = self.viewport;
         fields
             .iter()
             .filter(|field| {
@@ -501,7 +343,7 @@ impl<'grid> TableTextUi<'grid> {
             })?;
             HorizontalPosition(x - left)
         };
-        let viewport = self.drag_target.rect;
+        let viewport = self.viewport;
         let x = (left + offset.0).clamp(viewport.left(), viewport.right());
         let caret = self.with_row_geometry(motion.row, fonts, layout_row, |fields| {
             Some(self.field_at_x(fields, x)?.hit_at(x).caret)
@@ -535,243 +377,6 @@ impl<'grid> TableTextUi<'grid> {
         CaretRange::point(position)
     }
 
-    fn update_selection(
-        &self,
-        ui: &egui::Ui,
-        selection: &mut TableTextSelection,
-        focus: TableInputFocus<'_>,
-        layout_row: &impl Fn(&mut FontsView<'_>, &DocumentRow<'_>) -> RowLayout,
-    ) -> SelectionOutcome {
-        let available = focus.available;
-        let (events, position, time, primary_down) = ui.input(|input| {
-            let events: Vec<_> = input
-                .events
-                .iter()
-                .enumerate()
-                .filter(|(_, event)| match event {
-                    Event::Key {
-                        key: Key::Tab,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } => !modifiers.any() || modifiers.shift_only(),
-                    Event::Key {
-                        key,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } => *key == Key::A || SelectionMotion::of(*key, *modifiers).is_some(),
-                    event => matches!(
-                        event,
-                        Event::PointerMoved(_)
-                            | Event::PointerButton { .. }
-                            | Event::Copy
-                            | Event::Cut
-                    ),
-                })
-                .map(|(index, event)| (index, event.clone()))
-                .collect();
-            (
-                events,
-                input.pointer.interact_pos(),
-                input.time,
-                input.pointer.primary_down(),
-            )
-        });
-        let limits = ui.ctx().options(|options| {
-            let input = options.input_options;
-            GestureLimits {
-                distance: input.max_click_dist,
-                duration: input.max_click_duration,
-                multi_click_delay: input.max_double_click_delay,
-            }
-        });
-        let last_release = events.iter().rposition(|(_, event)| {
-            matches!(
-                event,
-                Event::PointerButton {
-                    button: PointerButton::Primary,
-                    pressed: false,
-                    ..
-                }
-            )
-        });
-        let label_has_selection = ui
-            .ctx()
-            .plugin::<LabelSelectionState>()
-            .lock()
-            .has_selection();
-        let tab_pressed = events
-            .iter()
-            .any(|(_, event)| matches!(event, Event::Key { key: Key::Tab, .. }));
-        let pointer_pressed = events
-            .iter()
-            .any(|(_, event)| matches!(event, Event::PointerButton { pressed: true, .. }));
-        let previously_focused = ui.memory(|memory| memory.had_focus_last_frame(focus.target.id));
-        let entry_from_previous_frame = available && focus.entered_by_navigation && !tab_pressed;
-        let table_had_focus = if tab_pressed || pointer_pressed {
-            previously_focused
-        } else {
-            focus.after_navigation
-        };
-        // A label can already have processed a later press in this frame.
-        let mut keyboard = entry_from_previous_frame
-            || (available
-                && table_had_focus
-                && (selection.range().is_some() || !label_has_selection));
-        let mut outcome = SelectionOutcome {
-            clear_label_selection: entry_from_previous_frame,
-            ..SelectionOutcome::default()
-        };
-        for (index, (input_index, event)) in events.into_iter().enumerate() {
-            match event {
-                Event::PointerButton {
-                    pos,
-                    button,
-                    pressed: true,
-                    modifiers,
-                } => {
-                    let press = PointerPress {
-                        position: pos,
-                        button,
-                        modifiers,
-                        time,
-                        released_in_frame: last_release.is_some_and(|release| index < release),
-                        available,
-                    };
-                    keyboard = self
-                        .press_selection(ui, selection, &mut outcome, press, limits)
-                        .unwrap_or(keyboard);
-                }
-                Event::PointerMoved(pos) if available => {
-                    let _ = self.apply_pointer(selection, PointerIntent::Drag(pos), limits);
-                }
-                Event::PointerButton {
-                    pos,
-                    button: PointerButton::Primary,
-                    pressed: false,
-                    ..
-                } if available => {
-                    let intent = PointerIntent::Release {
-                        position: pos,
-                        time,
-                    };
-                    let completion = self.apply_pointer(selection, intent, limits);
-                    outcome.selected_on_release = completion == Some(PointerCompletion::Selection);
-                    outcome.request_focus |= completion.is_some();
-                    keyboard |= completion.is_some();
-                }
-                Event::Key {
-                    key: Key::Tab,
-                    modifiers,
-                    ..
-                } => {
-                    // egui applies backwards focus traversal in the next pass.
-                    let leaves_backwards = modifiers.shift_only() && previously_focused;
-                    let focused = available && focus.after_navigation && !leaves_backwards;
-                    outcome.clear_label_selection |= focused && focus.entered_by_navigation;
-                    outcome.request_focus &= focused;
-                    keyboard = focused && (outcome.clear_label_selection || !label_has_selection);
-                }
-                Event::Key {
-                    key: Key::A,
-                    modifiers,
-                    ..
-                } if keyboard && modifiers.matches_logically(Modifiers::COMMAND) => {
-                    selection.select_all(self.document);
-                    outcome.commands.consumed.push(input_index);
-                }
-                Event::Key { key, modifiers, .. } if keyboard => {
-                    if let Some(motion) = SelectionMotion::of(key, modifiers)
-                        && let Some(endpoint) =
-                            selection.move_endpoint(motion, self.document, |motion| {
-                                ui.fonts_mut(|fonts| {
-                                    self.vertical_endpoint(motion, fonts, layout_row)
-                                })
-                            })
-                    {
-                        outcome.keyboard_endpoint = Some(endpoint.caret);
-                        outcome.commands.consumed.push(input_index);
-                    }
-                }
-                Event::Copy | Event::Cut if keyboard => {
-                    let range = selection.copy_range();
-                    if range.is_some() || outcome.clear_label_selection {
-                        outcome.commands.consumed.push(input_index);
-                    }
-                    outcome
-                        .commands
-                        .copies
-                        .extend(range.map(|range| (input_index, range)));
-                }
-                Event::Copy | Event::Cut
-                    if label_has_selection && !outcome.clear_label_selection =>
-                {
-                    outcome.commands.last_label_copy = Some(input_index);
-                }
-                _ => {}
-            }
-        }
-        if available && primary_down {
-            if let Some(position) = position
-                && selection.dragging()
-            {
-                let _ = self.apply_pointer(selection, PointerIntent::Drag(position), limits);
-                self.scroll_during_drag(ui, position.y);
-            }
-        } else {
-            selection.stop_drag();
-        }
-        outcome
-    }
-
-    fn press_selection(
-        &self,
-        ui: &egui::Ui,
-        selection: &mut TableTextSelection,
-        outcome: &mut SelectionOutcome,
-        press: PointerPress,
-        limits: GestureLimits,
-    ) -> Option<bool> {
-        outcome.keyboard_endpoint = None;
-        let on_layer = ui.ctx().layer_id_at(press.position) == Some(self.drag_target.layer_id);
-        if on_layer
-            && self
-                .scrollbar
-                .is_some_and(|rect| rect.contains(press.position))
-        {
-            return None;
-        }
-        let inside = on_layer && self.drag_target.rect.contains(press.position);
-        let primary = press.button == PointerButton::Primary;
-        if primary {
-            outcome.selected_on_release = false;
-        } else if inside {
-            return None;
-        }
-        let owns_press = press.available
-            && inside
-            && (self.drag_target.is_pointer_button_down_on() || press.released_in_frame);
-        outcome.clear_label_selection = owns_press;
-        outcome.request_focus = owns_press;
-        if owns_press {
-            let anchor = if press.modifiers.shift {
-                AnchorMode::Extend
-            } else {
-                AnchorMode::Replace
-            };
-            let intent = PointerIntent::Press {
-                position: press.position,
-                time: press.time,
-                anchor,
-            };
-            let _ = self.apply_pointer(selection, intent, limits);
-        } else {
-            selection.clear();
-        }
-        Some(owns_press)
-    }
-
     fn apply_pointer(
         &self,
         selection: &mut TableTextSelection,
@@ -787,20 +392,8 @@ impl<'grid> TableTextUi<'grid> {
         })
     }
 
-    fn settled_primary(
-        &self,
-        ui: &egui::Ui,
-        selection: &mut TableTextSelection,
-    ) -> Option<OutputCommand> {
-        if ui.ctx().os() != OperatingSystem::Nix || ui.input(|input| input.pointer.any_down()) {
-            return None;
-        }
-        let text = self.document.clipboard_text(selection.settle()?)?;
-        (!text.is_empty()).then_some(OutputCommand::TextSelectionSettled(text))
-    }
-
-    fn scroll_during_drag(&self, ui: &egui::Ui, pointer_y: f32) {
-        let rect = self.drag_target.rect;
+    fn scroll_during_drag_ui(&self, ui: &egui::Ui, pointer_y: f32) {
+        let rect = self.viewport;
         let overshoot = pointer_y.clamp(rect.top(), rect.bottom()) - pointer_y;
         let more_above = self.shown.rows.start > 0 || self.shown.bounds.top() < rect.top();
         let more_below = self.shown.rows.end < self.document.len()
@@ -813,53 +406,25 @@ impl<'grid> TableTextUi<'grid> {
         }
     }
 
-    pub(super) fn finish(
-        self,
-        ui: &egui::Ui,
-        selection: &mut TableTextSelection,
-        focus: TableInputFocus<'_>,
-        layout_row: impl Fn(&mut FontsView<'_>, &DocumentRow<'_>) -> RowLayout,
-    ) -> bool {
-        let available = focus.available && self.drag_target.rect.is_positive();
-        let focus = TableInputFocus { available, ..focus };
-        selection.replace_document(Some(self.document.document_revision()));
-        let outcome = self.update_selection(ui, selection, focus, &layout_row);
-        if outcome.request_focus {
-            focus.target.request_focus();
+    fn reveal_endpoint_ui(&self, ui: &egui::Ui, endpoint: Caret) {
+        let bounds = self.shown.row_bounds(endpoint.row());
+        if bounds.top() < self.viewport.top() || bounds.bottom() > self.viewport.bottom() {
+            ui.scroll_to_rect(
+                egui::Rect::from_x_y_ranges(
+                    self.viewport.left()..=self.viewport.left(),
+                    bounds.y_range(),
+                ),
+                None,
+            );
         }
-        if let Some(endpoint) = outcome.keyboard_endpoint {
-            let viewport = self.drag_target.rect;
-            let bounds = self.shown.row_bounds(endpoint.row());
-            if bounds.top() < viewport.top() || bounds.bottom() > viewport.bottom() {
-                ui.scroll_to_rect(
-                    egui::Rect::from_x_y_ranges(
-                        viewport.left()..=viewport.left(),
-                        bounds.y_range(),
-                    ),
-                    None,
-                );
-            }
-        }
-        let primary = self.settled_primary(ui, selection);
-        outcome
-            .commands
-            .emit(ui, self.document, outcome.clear_label_selection, primary);
-        let range = selection.range();
-        if available
-            && (selection.dragging()
-                || (ui.rect_contains_pointer(self.drag_target.rect)
-                    && !self
-                        .scrollbar
-                        .is_some_and(|rect| ui.rect_contains_pointer(rect))))
-        {
-            ui.ctx().set_cursor_icon(CursorIcon::Text);
-        }
+    }
+
+    fn paint(self, ui: &egui::Ui, range: Option<CaretRange>) {
         for row in self.rows {
             for (cell, shape) in row.layout.into_cells().into_iter().zip(row.shapes) {
                 cell.paint(ui, shape, range);
             }
         }
-        outcome.selected_on_release
     }
 }
 
@@ -902,7 +467,7 @@ mod tests {
                     },
                 )
             };
-            let mut table = TableTextUi::new(ui, &shown, &rows, None);
+            let mut table = TableTextUi::new(ui.max_rect(), &shown, &rows);
             let foreign = foreign_rows.document_row(0).unwrap();
             table.row_ui(ui, ui.fonts_mut(|fonts| layout(fonts, &foreign)), |_, _| {});
             assert!(table.rows.is_empty());

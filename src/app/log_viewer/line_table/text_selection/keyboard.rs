@@ -70,25 +70,11 @@ impl NavigationEndpoint {
         }
         let row = document.document_row(previous.row())?;
         let (caret, preferred_x) = match motion {
-            SelectionMotion::Character(direction) | SelectionMotion::Word(direction) => {
-                let by_word = matches!(motion, SelectionMotion::Word(_));
-                let caret = previous.horizontal(direction, &row, by_word).or_else(|| {
-                    let row = direction.adjacent_row(previous, document)?;
-                    let row = document.document_row(row)?;
-                    let range = row.range()?;
-                    let boundary = match direction {
-                        Direction::Backward => range.endpoint(),
-                        Direction::Forward => range.anchor(),
-                    };
-                    if by_word {
-                        boundary
-                            .horizontal(direction, &row, true)
-                            .or(Some(boundary))
-                    } else {
-                        Some(boundary)
-                    }
-                });
-                (caret, None)
+            SelectionMotion::Character(direction) => {
+                (previous.character_position(direction, &row, document), None)
+            }
+            SelectionMotion::Word(direction) => {
+                (previous.word_position(direction, &row, document), None)
             }
             SelectionMotion::Row(direction) => {
                 if let Some(row) = direction.adjacent_row(previous, document) {
@@ -130,33 +116,62 @@ impl NavigationEndpoint {
 }
 
 impl Caret {
-    fn horizontal(
+    fn character_position(
         self,
         direction: Direction,
         row: &DocumentRow<'_>,
-        by_word: bool,
+        document: &LineTableRows,
     ) -> Option<Self> {
         let cursor = CCursor::new(row.column_of(self));
-        let destination = if by_word {
-            let line = row
-                .content()
-                .cells
-                .indexed()
-                .map(|(_, cell)| cell.clipboard_text())
-                .collect::<Vec<_>>()
-                .join(" ");
-            match direction {
-                Direction::Backward => text_cursor_state::ccursor_previous_word(&line, cursor),
-                Direction::Forward => text_cursor_state::ccursor_next_word(&line, cursor),
-            }
-        } else {
-            match direction {
-                Direction::Backward => cursor - 1,
-                Direction::Forward => cursor + 1,
-            }
+        let destination = match direction {
+            Direction::Backward => cursor - 1,
+            Direction::Forward => cursor + 1,
         };
         row.position_at_column(destination.index)
             .filter(|&position| position != self)
+            .or_else(|| {
+                let next = direction.adjacent_row(self, document)?;
+                let range = document.document_row(next)?.range()?;
+                Some(match direction {
+                    Direction::Backward => range.endpoint(),
+                    Direction::Forward => range.anchor(),
+                })
+            })
+    }
+
+    fn word_position(
+        self,
+        direction: Direction,
+        row: &DocumentRow<'_>,
+        document: &LineTableRows,
+    ) -> Option<Self> {
+        // The first newline beyond the caret bounds native word motion.
+        let adjacent = direction
+            .adjacent_row(self, document)
+            .and_then(|index| document.document_row(index));
+        let neighbour = adjacent.as_ref().unwrap_or(row);
+        let (first, last) = match direction {
+            Direction::Backward => (neighbour, row),
+            Direction::Forward => (row, neighbour),
+        };
+        let first_range = first.range()?;
+        let text = document.clipboard_text(first_range.with_endpoint(last.range()?.endpoint()))?;
+        let next_row_start = first.column_of(first_range.endpoint()) + 1;
+        let column = row.column_of(self);
+        let cursor = CCursor::new(if row.index() == first.index() {
+            column
+        } else {
+            next_row_start + column.0
+        });
+        let destination = match direction {
+            Direction::Backward => text_cursor_state::ccursor_previous_word(&text, cursor),
+            Direction::Forward => text_cursor_state::ccursor_next_word(&text, cursor),
+        };
+        if destination.index < next_row_start {
+            first.position_at_column(destination.index)
+        } else {
+            last.position_at_column(destination.index - next_row_start.0)
+        }
     }
 }
 
@@ -185,5 +200,73 @@ impl DocumentRow<'_> {
             remaining -= length + 1;
         }
         last
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::text::{CCursor, CharIndex};
+    use egui::text_selection::text_cursor_state;
+
+    use super::super::super::{LineTableRows, tests as line_table_tests};
+    use super::{CaretRange, Direction, NavigationEndpoint, SelectionMotion};
+
+    #[test]
+    fn word_motion_matches_native_motion_over_the_clipboard_text() {
+        let log = line_table_tests::source_log(concat!(
+            "2026-05-29 18:48:25 svc: abc!\n",
+            "2026-05-29 18:48:26 svc: emoji 👩‍🔬\n",
+            "2026-05-29 18:48:27 svc: plain   spaces\n",
+            "2026-05-29 18:48:28 svc: final word\n",
+        ));
+        let document = LineTableRows::of(&log);
+        let full = document.full_range().unwrap();
+        let clipboard = document.clipboard_text(full).unwrap();
+        for row_index in 0..document.len() {
+            let row = document.document_row(row_index).unwrap();
+            for (cell, _) in row.cells() {
+                for index in 0..=cell.text_end().0 {
+                    let caret = cell.at(CharIndex(index));
+                    let cursor = CCursor::new(CharIndex(
+                        document
+                            .clipboard_text(CaretRange::point(full.anchor()).with_endpoint(caret))
+                            .unwrap()
+                            .chars()
+                            .count(),
+                    ));
+                    for (direction, native) in [
+                        (
+                            Direction::Backward,
+                            text_cursor_state::ccursor_previous_word(&clipboard, cursor),
+                        ),
+                        (
+                            Direction::Forward,
+                            text_cursor_state::ccursor_next_word(&clipboard, cursor),
+                        ),
+                    ] {
+                        let endpoint = NavigationEndpoint {
+                            caret,
+                            preferred_x: None,
+                        };
+                        let moved = endpoint
+                            .moved(SelectionMotion::Word(direction), &document, |_| None)
+                            .unwrap();
+                        let actual = document
+                            .clipboard_text(CaretRange::point(caret).with_endpoint(moved.caret));
+                        let expected: String = clipboard
+                            .chars()
+                            .skip(cursor.index.min(native.index).0)
+                            .take(cursor.index.0.abs_diff(native.index.0))
+                            .collect();
+                        assert_eq!(
+                            actual.as_deref(),
+                            Some(expected.as_str()),
+                            "row {row_index}, cursor {:?}",
+                            cursor.index
+                        );
+                    }
+                }
+            }
+        }
     }
 }
