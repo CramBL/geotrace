@@ -5,7 +5,9 @@ use egui::Pos2;
 use super::super::LineTableRows;
 use super::super::selection_document::{Caret, DocumentRevision};
 use super::CaretRange;
-use super::keyboard::{NavigationEndpoint, SelectionMotion, VerticalMotion, VerticalResult};
+use super::keyboard::{
+    Direction, NavigationEndpoint, SelectionMotion, VerticalMotion, VerticalResult,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct HorizontalPosition(pub(super) f32);
@@ -21,6 +23,13 @@ pub(super) enum SelectionUnit {
 pub(super) enum AnchorMode {
     Extend,
     Replace,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum KeyboardIntent {
+    CollapseOrMoveCharacter(Direction),
+    Extend(SelectionMotion),
+    MoveCaret(SelectionMotion),
 }
 
 #[derive(Clone, Copy)]
@@ -148,12 +157,15 @@ impl TableTextSelection {
         }
     }
 
-    pub(super) fn move_endpoint(
+    pub(super) fn navigate(
         &mut self,
-        motion: SelectionMotion,
+        intent: KeyboardIntent,
         document: &LineTableRows,
         vertical_endpoint: impl FnOnce(VerticalMotion) -> Option<VerticalResult>,
     ) -> Option<NavigationEndpoint> {
+        if self.document != Some(document.document_revision()) {
+            return None;
+        }
         let text = self
             .selected
             .as_mut()
@@ -162,9 +174,35 @@ impl TableTextSelection {
             caret: text.range.endpoint(),
             preferred_x: text.preferred_x,
         };
-        let endpoint = previous.moved(motion, document, vertical_endpoint)?;
-        text.anchor = CaretRange::point(text.range.anchor());
-        text.range = text.range.with_endpoint(endpoint.caret);
+        let endpoint = match intent {
+            KeyboardIntent::CollapseOrMoveCharacter(direction) => {
+                let range = text.range.ordered();
+                if range.is_empty() {
+                    previous.moved(
+                        SelectionMotion::Character(direction),
+                        document,
+                        vertical_endpoint,
+                    )?
+                } else {
+                    NavigationEndpoint {
+                        caret: match direction {
+                            Direction::Backward => range.start,
+                            Direction::Forward => range.end,
+                        },
+                        preferred_x: None,
+                    }
+                }
+            }
+            KeyboardIntent::Extend(motion) | KeyboardIntent::MoveCaret(motion) => {
+                previous.moved(motion, document, vertical_endpoint)?
+            }
+        };
+        let anchor = match intent {
+            KeyboardIntent::Extend(_) => text.range.anchor(),
+            _ => endpoint.caret,
+        };
+        text.anchor = CaretRange::point(anchor);
+        text.range = text.anchor.with_endpoint(endpoint.caret);
         text.preferred_x = endpoint.preferred_x;
         self.last_click = None;
         Some(endpoint)
@@ -320,7 +358,6 @@ impl SelectedText {
 #[cfg(test)]
 mod tests {
     use super::super::super::tests as line_table_tests;
-    use super::super::keyboard::Direction;
     use super::*;
 
     #[test]
@@ -354,11 +391,11 @@ mod tests {
             .unwrap()
             .endpoint();
         let column = HorizontalPosition(32.0);
-        let up = SelectionMotion::Row(Direction::Backward);
-        let down = SelectionMotion::Row(Direction::Forward);
+        let up = KeyboardIntent::Extend(SelectionMotion::Row(Direction::Backward));
+        let down = KeyboardIntent::Extend(SelectionMotion::Row(Direction::Forward));
 
         let missed = selection
-            .move_endpoint(up, &document, |motion| {
+            .navigate(up, &document, |motion| {
                 assert_eq!(motion.previous, end);
                 assert_eq!(motion.preferred_x, None);
                 Some(VerticalResult {
@@ -371,7 +408,7 @@ mod tests {
         assert_eq!(missed.preferred_x, Some(column));
 
         let on_short_row = selection
-            .move_endpoint(up, &document, |motion| {
+            .navigate(up, &document, |motion| {
                 assert_eq!(motion.preferred_x, Some(column));
                 Some(VerticalResult {
                     caret: Some(short),
@@ -382,7 +419,7 @@ mod tests {
         assert_eq!(on_short_row.caret, short);
 
         let on_last_row = selection
-            .move_endpoint(down, &document, |motion| {
+            .navigate(down, &document, |motion| {
                 assert_eq!(motion.previous, short);
                 assert_eq!(motion.preferred_x, Some(column));
                 Some(VerticalResult {
@@ -395,7 +432,7 @@ mod tests {
 
         let mut geometry_requested = false;
         let boundary = selection
-            .move_endpoint(down, &document, |_| {
+            .navigate(down, &document, |_| {
                 geometry_requested = true;
                 None
             })
@@ -404,7 +441,7 @@ mod tests {
         assert_eq!(boundary.preferred_x, None);
         assert!(!geometry_requested);
         selection
-            .move_endpoint(up, &document, |motion| {
+            .navigate(up, &document, |motion| {
                 assert_eq!(motion.previous, end);
                 assert_eq!(motion.preferred_x, None);
                 None

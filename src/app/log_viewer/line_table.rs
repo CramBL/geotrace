@@ -1,4 +1,3 @@
-use std::mem;
 use std::ops::Range;
 use std::ptr;
 use std::sync::{Arc, LazyLock};
@@ -7,7 +6,7 @@ use chrono::{DateTime, Duration, NaiveTime, Utc};
 use egui::epaint::text::FontsView;
 use egui::scroll_area::ScrollSource;
 use egui::text::LayoutJob;
-use egui::{Color32, FontId, IdSalt, ScrollArea, Separator, Stroke, StrokeKind, TextFormat};
+use egui::{Color32, FontId, ScrollArea, Separator, Stroke, StrokeKind, TextFormat};
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_DEVICE_CLOCK;
 use gt_fmt::MIDDLE_DOT;
 use gt_log_view::{
@@ -23,7 +22,7 @@ use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover, LogRowPlacement};
 use rustc_hash::FxHashMap;
 
 use super::find::FindHighlight;
-use super::keyboard_navigation::{KeyboardScrollSteps, TableFocusScope};
+use super::keyboard_navigation::TableFocusScope;
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
 use navigation::SourceOverlay;
@@ -31,7 +30,8 @@ use row_cells::{CopyProjection, RowCell, RowCells};
 use row_grid::{RowGrid, ShownRows};
 use row_layout::{RowLayoutRequest, RowLayoutStyle};
 use selection_document::{DocumentRevision, DocumentRow};
-use text_selection::{TableInputFocus, TableTextUi};
+use text_selection::TableTextUi;
+use text_selection::input::{TableInputFocus, TableSelectionInput};
 
 pub(super) use navigation::{FilteredSourceReturn, SourceRequest, SourceReveal, SourceRow};
 pub(super) use text_selection::TableTextSelection;
@@ -1103,25 +1103,14 @@ impl LogViewerWindow {
                 height: row_height(ui),
             };
             let focus = TableFocusScope::for_log(log_id);
-            let target = focus.register_ui(ui);
-            let entered_by_navigation = target.gained_focus() && target.has_focus();
             let keyboard_available = keyboard_access.available(ui.ctx());
-            let scroll_salt = ("log_viewer_line_table", log_id);
-            // egui's `ScrollArea` registers each scrollbar with its axis index.
-            let scrollbar = ui.ctx().read_response(
-                ui.make_persistent_id(IdSalt::new(scroll_salt))
-                    .with(VERTICAL_SCROLLBAR_AXIS),
+            let input_focus = TableInputFocus::capture(
+                focus.register_ui(ui),
+                keyboard_available,
+                &mut state.table_focus_requested,
             );
-            let scrollbar_rect = scrollbar
-                .filter(egui::Response::enabled)
-                .map(|bar| bar.interact_rect);
-            if keyboard_available && mem::take(&mut state.table_focus_requested) {
-                target.request_focus();
-            }
-            let after_navigation = target.has_focus();
-            if keyboard_available {
-                focus.lock_vertical_arrows(ui);
-            }
+            let scroll_salt = ("log_viewer_line_table", log_id);
+            let scrollbar = TableSelectionInput::previous_scrollbar_ui(ui, scroll_salt);
             let scroll_area = ScrollArea::vertical()
                 .id_salt(scroll_salt)
                 .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
@@ -1211,7 +1200,8 @@ impl LogViewerWindow {
                         },
                     )
                 };
-                let mut text = TableTextUi::new(ui, &positioned, &rows, scrollbar_rect);
+                let input = TableSelectionInput::register_ui(ui, scrollbar, &[]);
+                let mut text = TableTextUi::new(input.viewport(), &positioned, &rows);
                 let render_row = |ui: &mut egui::Ui, text: &mut TableTextUi<'_>, row| {
                     let displayed_row = rows.document_row(row)?;
                     let table_row = displayed_row.kind();
@@ -1305,25 +1295,8 @@ impl LogViewerWindow {
                         clicked_position = Some((latitude.as_degrees(), longitude.as_degrees()));
                     }
                 }
-                let selected_by_pointer = text.finish(
-                    ui,
-                    selection,
-                    TableInputFocus {
-                        target: &target,
-                        available: keyboard_available,
-                        after_navigation,
-                        entered_by_navigation,
-                    },
-                    layout_row,
-                );
-                if keyboard_available && target.has_focus() {
-                    KeyboardScrollSteps {
-                        row_height_px: grid.height,
-                        page_height_px: ui.clip_rect().height(),
-                        content_height_px: grid.offset(rows.len()),
-                    }
-                    .scroll_the_table(ui);
-                }
+                let selected_by_pointer =
+                    input.finish_ui(ui, text, selection, &input_focus, layout_row);
                 if !selected_by_pointer && let Some(position) = clicked_position {
                     *requests.map_center = Some(position);
                 }
@@ -1854,7 +1827,6 @@ const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 const SECONDS_FORMAT: &str = ":%S";
 
 const CONTEXT_TARGET_VERTICAL_FRACTION: f32 = 0.5;
-const VERTICAL_SCROLLBAR_AXIS: usize = 1;
 const REVEAL_OUTLINE_WIDTH_PX: f32 = 1.0;
 
 pub(super) const DEVICE_CLOCK_ROW_HOVER: &str =
