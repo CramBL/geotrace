@@ -2,7 +2,8 @@ use egui::text::{CCursor, CharIndex};
 use egui::text_selection::text_cursor_state;
 use egui::{Key, Modifiers};
 
-use super::{HorizontalPosition, RowTextFields, TableTextSelection, TextPosition, TextRange};
+use super::super::row_cells::RowCells;
+use super::{HorizontalPosition, TableTextSelection, TextPosition, TextRange};
 
 #[derive(Clone, Copy)]
 pub(super) enum Direction {
@@ -79,7 +80,7 @@ impl TableTextSelection {
         &mut self,
         motion: SelectionMotion,
         row_count: usize,
-        row_fields: impl Fn(usize) -> Option<RowTextFields<'a>>,
+        row_cells: impl Fn(usize) -> Option<RowCells<'a>>,
         vertical_endpoint: impl FnOnce(&mut VerticalMotion<'_>) -> Option<TextPosition>,
     ) -> Option<TextPosition> {
         let text = self
@@ -87,7 +88,7 @@ impl TableTextSelection {
             .as_mut()
             .filter(|text| text.gesture.is_none())?;
         let previous = text.range.endpoint;
-        let fields = row_fields(previous.row)?;
+        let fields = row_cells(previous.row)?;
         if !matches!(motion, SelectionMotion::Row(_)) {
             text.preferred_x = None;
         }
@@ -98,7 +99,7 @@ impl TableTextSelection {
                     .horizontal(direction, &fields, by_word)
                     .or_else(|| {
                         let row = direction.adjacent_row(previous, row_count)?;
-                        let fields = row_fields(row)?;
+                        let fields = row_cells(row)?;
                         let range = fields.range_at(row)?;
                         let boundary = match direction {
                             Direction::Backward => range.endpoint,
@@ -133,7 +134,7 @@ impl TableTextSelection {
                     Direction::Backward => 0,
                     Direction::Forward => row_count.checked_sub(1)?,
                 };
-                Some(direction.boundary(row_fields(row)?.range_at(row)?))
+                Some(direction.boundary(row_cells(row)?.range_at(row)?))
             }
         }
         .unwrap_or(previous);
@@ -148,14 +149,14 @@ impl TextPosition {
     fn horizontal(
         self,
         direction: Direction,
-        fields: &RowTextFields<'_>,
+        fields: &RowCells<'_>,
         by_word: bool,
     ) -> Option<Self> {
         let cursor = CCursor::new(fields.column_of(self));
         let destination = if by_word {
             let line = fields
-                .present()
-                .map(|(_, text)| text)
+                .indexed()
+                .map(|(_, cell)| cell.clipboard_text())
                 .collect::<Vec<_>>()
                 .join(" ");
             match direction {
@@ -174,24 +175,24 @@ impl TextPosition {
     }
 }
 
-impl RowTextFields<'_> {
+impl RowCells<'_> {
     fn column_of(&self, position: TextPosition) -> CharIndex {
         position.character
             + self
-                .present()
-                .take_while(|(field, _)| *field < position.field)
-                .map(|(_, text)| text.chars().count() + 1)
+                .indexed()
+                .take_while(|(index, _)| *index < position.cell)
+                .map(|(_, cell)| cell.clipboard_text().chars().count() + 1)
                 .sum::<usize>()
     }
 
     fn position_at_column(&self, row: usize, column: CharIndex) -> Option<TextPosition> {
         let mut remaining = column.0;
         let mut last = None;
-        for (field, text) in self.present() {
-            let length = text.chars().count();
+        for (cell, spec) in self.indexed() {
+            let length = spec.clipboard_text().chars().count();
             let position = TextPosition {
                 row,
-                field,
+                cell,
                 character: CharIndex(remaining.min(length)),
             };
             if remaining <= length {

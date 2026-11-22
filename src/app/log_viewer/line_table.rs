@@ -28,12 +28,14 @@ use super::keyboard_navigation::{KeyboardScrollSteps, TableFocusScope};
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
 use navigation::SourceOverlay;
-use text_selection::{RowTextFields, RowTextUi, TableInputFocus, TableTextUi, TextField};
+use row_cells::{CellIndex, CopyProjection, RowCell, RowCells};
+use text_selection::{RowTextUi, TableInputFocus, TableTextUi};
 
 pub(super) use navigation::{FilteredSourceReturn, SourceRequest, SourceReveal, SourceRow};
 pub(super) use text_selection::TableTextSelection;
 
 mod navigation;
+mod row_cells;
 mod text_selection;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,90 +94,85 @@ impl LineTableRow {
                 visible_row,
             } => {
                 let entry = parsed.entries().get(entry_index)?;
-                LineTableContent::Entry {
-                    entry_index,
-                    visible_row,
-                    entry,
-                    timestamp: RowTimestamp::of(parsed, entry_index, entry),
-                    message: parsed.message(entry),
+                let timestamp = RowTimestamp::of(parsed, entry_index, entry);
+                LineTableContent {
+                    presentation: RowPresentation::Entry {
+                        entry_index,
+                        visible_row,
+                        entry,
+                        timestamp,
+                    },
+                    cells: RowCells([
+                        Some(RowCell::Number(entry.line_number.to_string())),
+                        Some(RowCell::Timestamp(TimestampText::of(timestamp))),
+                        Some(RowCell::Message(parsed.message(entry))),
+                    ]),
                 }
             }
-            Self::RenderRawSource { line_number } => LineTableContent::Source(NumberedSource {
+            Self::RenderRawSource { line_number } => NumberedSource {
                 line_number,
                 text: parsed.source_line(line_number)?,
-            }),
+            }
+            .content(),
             Self::Structural { structural_index } => {
-                LineTableContent::Source(NumberedSource::structural(parsed, structural_index)?)
+                NumberedSource::structural(parsed, structural_index)?.content()
             }
             Self::BootDivider {
                 session_index,
                 structural_index,
             } => {
                 let session = parsed.boot_sessions().get(session_index)?;
-                LineTableContent::BootDivider {
-                    source: structural_index
-                        .and_then(|index| NumberedSource::structural(parsed, index)),
-                    title: boot_divider_title(
-                        session,
-                        parsed.chronology().session_uptime(session_index),
-                    ),
+                let source =
+                    structural_index.and_then(|index| NumberedSource::structural(parsed, index));
+                let title =
+                    boot_divider_title(session, parsed.chronology().session_uptime(session_index));
+                LineTableContent {
+                    presentation: RowPresentation::Divider,
+                    cells: RowCells([
+                        source.map(|source| RowCell::Number(source.line_number.to_string())),
+                        source.map(|source| RowCell::Source {
+                            text: source.text,
+                            boot: true,
+                        }),
+                        Some(RowCell::Divider {
+                            text: title,
+                            strong: true,
+                        }),
+                    ]),
                 }
             }
             Self::DayDivider { entry_index } => {
                 let time = parsed.chronology().resolved()?.eligible_time(entry_index)?;
-                LineTableContent::DayDivider(time.timestamp().format(DATE_FORMAT).to_string())
+                LineTableContent {
+                    presentation: RowPresentation::Divider,
+                    cells: RowCells([
+                        Some(RowCell::Divider {
+                            text: time.timestamp().format(DATE_FORMAT).to_string(),
+                            strong: false,
+                        }),
+                        None,
+                        None,
+                    ]),
+                }
             }
         })
     }
 }
 
-enum LineTableContent<'a> {
-    BootDivider {
-        source: Option<NumberedSource<'a>>,
-        title: String,
-    },
-    DayDivider(String),
+struct LineTableContent<'a> {
+    presentation: RowPresentation<'a>,
+    cells: RowCells<'a>,
+}
+
+enum RowPresentation<'a> {
+    Divider,
     Entry {
         entry_index: usize,
         visible_row: usize,
         entry: &'a LogEntry,
         timestamp: Option<RowTimestamp>,
-        message: &'a str,
     },
-    Source(NumberedSource<'a>),
-}
-
-impl<'a> LineTableContent<'a> {
-    fn fields(self) -> RowTextFields<'a> {
-        match self {
-            Self::Entry {
-                entry,
-                timestamp,
-                message,
-                ..
-            } => RowTextFields {
-                number: Some(entry.line_number.to_string()),
-                timestamp: Some(TimestampText::of(timestamp).clipboard_text()),
-                content: Some(message),
-                ..RowTextFields::default()
-            },
-            Self::Source(source) => RowTextFields {
-                number: Some(source.line_number.to_string()),
-                content: Some(source.text),
-                ..RowTextFields::default()
-            },
-            Self::BootDivider { source, title } => RowTextFields {
-                number: source.map(|source| source.line_number.to_string()),
-                content: source.map(|source| source.text),
-                divider: Some(title),
-                ..RowTextFields::default()
-            },
-            Self::DayDivider(title) => RowTextFields {
-                divider: Some(title),
-                ..RowTextFields::default()
-            },
-        }
-    }
+    Source,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1151,56 +1148,49 @@ impl LogViewerWindow {
                     let revealed_reason = reveal.and_then(|reveal| {
                         reveal.row_reason(table_row, log, show_structural_lines)
                     });
-                    match table_row.content(parsed)? {
-                        LineTableContent::BootDivider { source, title } => {
-                            let title = RichText::new(title).monospace().strong();
-                            if let Some(source) = source {
-                                ui.horizontal(|ui| {
+                    let content = table_row.content(parsed)?;
+                    let cell_ui = RowCellUi {
+                        line_numbers,
+                        row_height,
+                        find_highlight: find_highlight
+                            .as_ref()
+                            .filter(|hit| table_row.source_line(parsed) == Some(hit.line_number())),
+                        revealed_reason: revealed_reason.as_deref(),
+                    };
+                    match content.presentation {
+                        RowPresentation::Divider => {
+                            ui.horizontal(|ui| {
+                                if content
+                                    .cells
+                                    .indexed()
+                                    .any(|(_, cell)| !matches!(cell, RowCell::Divider { .. }))
+                                {
                                     ui.allocate_space(egui::vec2(gutter.width_px(), 0.0));
-                                    line_numbers.ui(ui, text, source.line_number);
-                                    source.boot_divider_ui(
-                                        ui,
-                                        text,
-                                        find_highlight.as_ref(),
-                                        row_height,
-                                    );
-                                    divider_row_ui(ui, text, title);
-                                });
-                            } else {
-                                divider_row_ui(ui, text, title);
-                            }
+                                }
+                                cell_ui.ui(ui, text, &content.cells, None);
+                                if ui.is_visible() {
+                                    ui.add(Separator::default().horizontal());
+                                }
+                            });
                         }
-                        LineTableContent::DayDivider(title) => {
-                            divider_row_ui(ui, text, RichText::new(title).monospace());
+                        RowPresentation::Source => {
+                            let row = ui
+                                .horizontal(|ui| {
+                                    ui.allocate_space(egui::vec2(gutter.width_px(), 0.0));
+                                    cell_ui.ui(ui, text, &content.cells, None);
+                                })
+                                .response;
+                            cell_ui.decorate_row(ui, row.rect);
                         }
-                        LineTableContent::Source(source) => {
-                            StructuralSourceRow {
-                                source,
-                                line_numbers,
-                                gutter_width_px: gutter.width_px(),
-                                find_highlight: find_highlight
-                                    .as_ref()
-                                    .filter(|hit| hit.line_number() == source.line_number),
-                                revealed_reason: revealed_reason.as_deref(),
-                            }
-                            .ui(ui, text);
-                        }
-                        LineTableContent::Entry {
+                        RowPresentation::Entry {
                             entry_index,
                             visible_row,
                             entry,
                             timestamp,
-                            message,
                         } => {
                             let placement = log.entry_placement(entry_index);
                             let interaction = EntryRow {
-                                entry,
                                 timestamp,
-                                line_numbers,
-                                message,
-                                find_highlight: find_highlight
-                                    .as_ref()
-                                    .filter(|hit| hit.line_number() == entry.line_number),
                                 highlighted: HighlightedMessage {
                                     spans: filters.condition_match_spans(entry_index),
                                     color: highlight,
@@ -1218,7 +1208,13 @@ impl LogViewerWindow {
                                 hover_dwell,
                                 revealed_reason: revealed_reason.as_deref(),
                             }
-                            .ui(ui, text, unit)?;
+                            .ui(
+                                ui,
+                                text,
+                                &content.cells,
+                                cell_ui,
+                                unit,
+                            )?;
                             return Some((entry_index, entry.line_number, placement, interaction));
                         }
                     }
@@ -1257,7 +1253,7 @@ impl LogViewerWindow {
                         after_navigation,
                         entered_by_navigation,
                     },
-                    |row| Some(rows.at(row)?.content(parsed)?.fields()),
+                    |row| Some(rows.at(row)?.content(parsed)?.cells),
                     |ui, text| {
                         let _ = render_row(ui, text);
                     },
@@ -1350,15 +1346,15 @@ impl LineNumberColumn {
         Self { width_px }
     }
 
-    fn ui(self, ui: &mut egui::Ui, text: &mut RowTextUi<'_>, line_number: u32) {
+    fn ui(self, ui: &mut egui::Ui, text: &mut RowTextUi<'_>, index: CellIndex, number: &str) {
         ui.allocate_ui_with_layout(
             egui::vec2(self.width_px, ui.spacing().interact_size.y),
             egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
                 text.label(
                     ui,
-                    TextField::Number,
-                    Label::new(RichText::new(line_number.to_string()).monospace().weak()),
+                    index,
+                    Label::new(RichText::new(number).monospace().weak()),
                 );
             },
         );
@@ -1456,85 +1452,141 @@ impl<'a> NumberedSource<'a> {
         })
     }
 
-    fn layout_job(self, ui: &egui::Ui, highlight: Option<&FindHighlight<'_>>) -> LayoutJob {
-        let mut job = LayoutJob::simple_singleline(
-            self.text.to_owned(),
+    fn content(self) -> LineTableContent<'a> {
+        LineTableContent {
+            presentation: RowPresentation::Source,
+            cells: RowCells([
+                Some(RowCell::Number(self.line_number.to_string())),
+                Some(RowCell::Source {
+                    text: self.text,
+                    boot: false,
+                }),
+                None,
+            ]),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RowCellUi<'a> {
+    line_numbers: LineNumberColumn,
+    row_height: f32,
+    find_highlight: Option<&'a FindHighlight<'a>>,
+    revealed_reason: Option<&'a str>,
+}
+
+impl RowCellUi<'_> {
+    fn plain_job(ui: &egui::Ui, message: &str) -> LayoutJob {
+        LayoutJob::simple_singleline(
+            message.to_owned(),
             egui::TextStyle::Monospace.resolve(ui.style()),
             ui.visuals().text_color(),
-        );
-        if let Some(hit) = highlight {
-            hit.highlight_job(ui, &mut job);
-        }
-        job
+        )
     }
 
-    fn boot_divider_ui(
+    fn ui(
         self,
         ui: &mut egui::Ui,
         text: &mut RowTextUi<'_>,
-        highlight: Option<&FindHighlight<'_>>,
-        row_height: f32,
+        cells: &RowCells<'_>,
+        entry: Option<&EntryRow<'_>>,
     ) {
-        let source_width = ui
+        for (index, cell) in cells.indexed() {
+            match cell {
+                RowCell::Number(number) => self.line_numbers.ui(ui, text, index, number),
+                RowCell::Timestamp(timestamp) => {
+                    let tick = entry.map_or(TimestampTick::Plain, EntryRow::display_tick);
+                    let response =
+                        text.label(ui, index, Label::new(timestamp.layout_job(ui, tick)));
+                    if ui.is_visible() && timestamp.prefix == ALMOST_EQUAL_TO {
+                        response.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
+                    }
+                }
+                RowCell::Message(message) => {
+                    let job = entry.map_or_else(
+                        || Self::plain_job(ui, message),
+                        |entry| entry.message_job(ui, message),
+                    );
+                    text.label(ui, index, self.message_label(ui, job));
+                }
+                RowCell::Source { text: source, boot } => {
+                    let label = self.message_label(ui, Self::plain_job(ui, source));
+                    if *boot {
+                        self.boot_source_ui(ui, text, index, label, source);
+                    } else {
+                        let response = text.label(ui, index, label);
+                        if ui.is_visible()
+                            && let Some(reason) = self.revealed_reason
+                        {
+                            response.on_hover_text(reason);
+                        }
+                    }
+                }
+                RowCell::Divider {
+                    text: title,
+                    strong,
+                } => {
+                    let label = RichText::new(title).monospace();
+                    let label = if *strong { label.strong() } else { label };
+                    let response = text.label(ui, index, Label::new(label).truncate());
+                    if ui.is_visible() {
+                        response.on_hover_text(title);
+                    }
+                }
+            }
+        }
+    }
+
+    fn message_label(self, ui: &egui::Ui, mut job: LayoutJob) -> Label {
+        if let Some(hit) = self.find_highlight {
+            hit.highlight_job(ui, &mut job);
+        }
+        Label::new(job).truncate()
+    }
+
+    fn boot_source_ui(
+        self,
+        ui: &mut egui::Ui,
+        text: &mut RowTextUi<'_>,
+        index: CellIndex,
+        label: Label,
+        source: &str,
+    ) {
+        let width = ui
             .painter()
             .layout_no_wrap(
-                self.text.to_owned(),
+                source.to_owned(),
                 egui::TextStyle::Monospace.resolve(ui.style()),
                 ui.visuals().text_color(),
             )
             .size()
             .x
             .min(ui.available_width() * BOOT_DIVIDER_SOURCE_WIDTH_FRACTION);
-        let highlight = highlight.filter(|hit| hit.line_number() == self.line_number);
-        let job = self.layout_job(ui, highlight);
         let response = ui
             .allocate_ui_with_layout(
-                egui::vec2(source_width, row_height),
+                egui::vec2(width, self.row_height),
                 egui::Layout::centered_and_justified(ui.layout().main_dir()),
-                |ui| text.label(ui, TextField::Content, Label::new(job).truncate()),
+                |ui| text.label(ui, index, label),
             )
             .inner;
         if ui.is_visible() {
-            let response = response.on_hover_text(self.text);
-            if let Some(hit) = highlight {
+            let response = response.on_hover_text(source);
+            if let Some(hit) = self.find_highlight {
                 hit.decorate_row(ui, response.rect);
             }
         }
     }
-}
 
-struct StructuralSourceRow<'a> {
-    source: NumberedSource<'a>,
-    line_numbers: LineNumberColumn,
-    gutter_width_px: f32,
-    find_highlight: Option<&'a FindHighlight<'a>>,
-    revealed_reason: Option<&'a str>,
-}
-
-impl StructuralSourceRow<'_> {
-    fn ui(&self, ui: &mut egui::Ui, text: &mut RowTextUi<'_>) {
-        let row = ui
-            .horizontal(|ui| {
-                ui.allocate_space(egui::vec2(self.gutter_width_px, 0.0));
-                self.line_numbers.ui(ui, text, self.source.line_number);
-                let label = Label::new(self.source.layout_job(ui, self.find_highlight));
-                let source = text.label(ui, TextField::Content, label.truncate());
-                if ui.is_visible()
-                    && let Some(reason) = self.revealed_reason
-                {
-                    source.on_hover_text(reason);
-                }
-            })
-            .response;
+    fn decorate_row(self, ui: &egui::Ui, rect: egui::Rect) {
         if !ui.is_visible() {
             return;
         }
         if let Some(hit) = self.find_highlight {
-            hit.decorate_row(ui, row.rect);
+            hit.decorate_row(ui, rect);
         }
         if self.revealed_reason.is_some() {
             ui.painter().rect_stroke(
-                row.rect,
+                rect,
                 0,
                 Stroke::new(
                     REVEAL_OUTLINE_WIDTH_PX,
@@ -1547,10 +1599,7 @@ impl StructuralSourceRow<'_> {
 }
 
 struct EntryRow<'a> {
-    entry: &'a LogEntry,
     timestamp: Option<RowTimestamp>,
-    line_numbers: LineNumberColumn,
-    message: &'a str,
     highlighted: HighlightedMessage,
     position: Option<(Latitude, Longitude)>,
 
@@ -1574,7 +1623,6 @@ struct EntryRow<'a> {
     cross_highlight_fill: Option<Color32>,
 
     hover_dwell: RowHoverDwell,
-    find_highlight: Option<&'a FindHighlight<'a>>,
     revealed_reason: Option<&'a str>,
 }
 
@@ -1673,38 +1721,61 @@ impl MessageColors {
 }
 
 impl EntryRow<'_> {
+    fn append_runs(
+        message: &str,
+        job: &mut LayoutJob,
+        font_id: &FontId,
+        range: Range<usize>,
+        runs: &[MessageRun],
+        colors: &MessageColors,
+    ) {
+        let mut appended_to = range.start;
+        for run in runs {
+            let start = run.range.start.max(appended_to);
+            let end = run.range.end.min(range.end);
+            if start >= end {
+                continue;
+            }
+            if let Some(before) = message.get(appended_to..start) {
+                job.append(
+                    before,
+                    0.0,
+                    egui::TextFormat::simple(font_id.clone(), colors.base),
+                );
+            }
+            if let Some(text) = message.get(start..end) {
+                job.append(
+                    text,
+                    0.0,
+                    egui::TextFormat::simple(font_id.clone(), run.color),
+                );
+            }
+            appended_to = end;
+        }
+        if let Some(rest) = message.get(appended_to..range.end) {
+            job.append(
+                rest,
+                0.0,
+                egui::TextFormat::simple(font_id.clone(), colors.base),
+            );
+        }
+    }
+
     /// Renders the row, returning what the cursor did to it.
     fn ui(
         &self,
         ui: &mut egui::Ui,
         text: &mut RowTextUi<'_>,
+        cells: &RowCells<'_>,
+        cell_ui: RowCellUi<'_>,
         unit: AssociationWindowUnit,
     ) -> Option<RowInteraction> {
-        let associated = self.position.is_some();
-        let interpolated = self.timestamp.is_some_and(RowTimestamp::is_interpolated);
-        let tick = match associated {
-            true => self.tick,
-            false => self.tick.min(TimestampTick::Plain),
-        };
         // Claimed before the row draws: the fill belongs behind its text.
         let background = ui.is_visible().then(|| ui.painter().add(Shape::Noop));
         let row = ui
             .horizontal(|ui| {
                 self.gutter_ui(ui);
-                self.line_numbers.ui(ui, text, self.entry.line_number);
-                let label = Label::new(self.timestamp_job(ui, tick));
-                let timestamp = text.label(ui, TextField::Timestamp, label);
-                if ui.is_visible()
-                    && interpolated
-                    && !self.timestamp.is_some_and(RowTimestamp::is_device_clock)
-                {
-                    timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
-                }
-                let mut message = self.message_job(ui);
-                if let Some(hit) = self.find_highlight {
-                    hit.highlight_job(ui, &mut message);
-                }
-                text.label(ui, TextField::Content, Label::new(message).truncate());
+                cell_ui.ui(ui, text, cells, Some(self));
             })
             .response;
         let background = background?;
@@ -1713,20 +1784,7 @@ impl EntryRow<'_> {
                 .set(background, Shape::rect_filled(row.rect, 0, fill));
         }
 
-        if let Some(hit) = self.find_highlight {
-            hit.decorate_row(ui, row.rect);
-        }
-        if self.revealed_reason.is_some() {
-            ui.painter().rect_stroke(
-                row.rect,
-                0,
-                Stroke::new(
-                    REVEAL_OUTLINE_WIDTH_PX,
-                    gt_ui_theme::warning_amber(ui.visuals().dark_mode),
-                ),
-                StrokeKind::Inside,
-            );
-        }
+        cell_ui.decorate_row(ui, row.rect);
 
         let row = ui.interact(row.rect, row.id, egui::Sense::CLICK);
         let mut context_requested = false;
@@ -1787,57 +1845,12 @@ impl EntryRow<'_> {
         }
     }
 
-    /// The timestamp column in three runs: the date, the hour and minute, and
-    /// the seconds. The date and the seconds are always drawn in the quiet
-    /// colour, and only the hour and minute take the timestamp tick. The date
-    /// of a timestamp without a year is `--MM-DD`, and a line without a
-    /// timestamp has blank runs.
-    fn timestamp_job(&self, ui: &egui::Ui, tick: TimestampTick) -> LayoutJob {
-        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let quiet = ui.visuals().weak_text_color();
-        let moved = match tick {
-            TimestampTick::Weak => ui.visuals().weak_text_color(),
-            TimestampTick::Plain => ui.visuals().text_color(),
-            TimestampTick::Strong => ui.visuals().strong_text_color(),
-        };
-        let text = TimestampText::of(self.timestamp);
-        let prefix = text.prefix;
-        let mut job = LayoutJob::default();
-        if self.timestamp.is_some_and(RowTimestamp::is_device_clock) {
-            let (icon_font, leading_space) = ui.fonts_mut(|fonts| {
-                let cell_width = fonts.glyph_width(&font_id, ' ');
-                let mut icon_font = FontId::proportional(font_id.size);
-                let icon_width = fonts
-                    .layout_no_wrap(prefix.to_owned(), icon_font.clone(), quiet)
-                    .size()
-                    .x;
-                icon_font.size *= cell_width / icon_width;
-                let scaled_width = fonts
-                    .layout_no_wrap(prefix.to_owned(), icon_font.clone(), quiet)
-                    .size()
-                    .x;
-                (icon_font, cell_width - scaled_width)
-            });
-            job.append(prefix, 0.0, TextFormat::simple(icon_font, quiet));
-            job.append(
-                &text.date,
-                leading_space,
-                TextFormat::simple(font_id.clone(), quiet),
-            );
+    fn display_tick(&self) -> TimestampTick {
+        if self.position.is_some() {
+            self.tick
         } else {
-            job.append(
-                &format!("{prefix}{}", text.date),
-                0.0,
-                TextFormat::simple(font_id.clone(), quiet),
-            );
+            self.tick.min(TimestampTick::Plain)
         }
-        job.append(
-            &text.hour_minute,
-            0.0,
-            TextFormat::simple(font_id.clone(), moved),
-        );
-        job.append(&text.seconds, 0.0, TextFormat::simple(font_id, quiet));
-        job
     }
 
     /// The message: the service, level and hostname the parse recognised in
@@ -1845,7 +1858,7 @@ impl EntryRow<'_> {
     /// caller truncates it to one row: a long line must not push the rows
     /// below it out of the virtualized table's grid, nor stretch the window
     /// past the screen.
-    fn message_job(&self, ui: &egui::Ui) -> LayoutJob {
+    fn message_job(&self, ui: &egui::Ui, message: &str) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let colors = MessageColors::of(ui, self.color_switches);
         let runs = self
@@ -1855,10 +1868,17 @@ impl EntryRow<'_> {
         let mut job = LayoutJob::default();
         let mut appended_to = 0;
         for span in &self.highlighted.spans {
-            let Some(matched) = self.message.get(span.clone()) else {
+            let Some(matched) = message.get(span.clone()) else {
                 continue;
             };
-            self.append_runs(&mut job, &font_id, appended_to..span.start, &runs, &colors);
+            Self::append_runs(
+                message,
+                &mut job,
+                &font_id,
+                appended_to..span.start,
+                &runs,
+                &colors,
+            );
             job.append(
                 matched,
                 0.0,
@@ -1866,56 +1886,15 @@ impl EntryRow<'_> {
             );
             appended_to = span.end;
         }
-        self.append_runs(
+        Self::append_runs(
+            message,
             &mut job,
             &font_id,
-            appended_to..self.message.len(),
+            appended_to..message.len(),
             &runs,
             &colors,
         );
         job
-    }
-
-    /// Appends `range` of the message, cut at each recognised run inside it:
-    /// the run in its own colour, everything else in the base colour.
-    fn append_runs(
-        &self,
-        job: &mut LayoutJob,
-        font_id: &egui::FontId,
-        range: Range<usize>,
-        runs: &[MessageRun],
-        colors: &MessageColors,
-    ) {
-        let mut appended_to = range.start;
-        for run in runs {
-            let start = run.range.start.max(appended_to);
-            let end = run.range.end.min(range.end);
-            if start >= end {
-                continue;
-            }
-            if let Some(before) = self.message.get(appended_to..start) {
-                job.append(
-                    before,
-                    0.0,
-                    egui::TextFormat::simple(font_id.clone(), colors.base),
-                );
-            }
-            if let Some(text) = self.message.get(start..end) {
-                job.append(
-                    text,
-                    0.0,
-                    egui::TextFormat::simple(font_id.clone(), run.color),
-                );
-            }
-            appended_to = end;
-        }
-        if let Some(rest) = self.message.get(appended_to..range.end) {
-            job.append(
-                rest,
-                0.0,
-                egui::TextFormat::simple(font_id.clone(), colors.base),
-            );
-        }
     }
 
     /// The warning-amber marker on the row an unexplained backwards timestamp
@@ -1957,19 +1936,6 @@ impl EntryRow<'_> {
             );
         }
     }
-}
-
-/// One divider row: its label, and the rule running from it to the right
-/// edge of the table.
-fn divider_row_ui(ui: &mut egui::Ui, text: &mut RowTextUi<'_>, label: RichText) {
-    ui.horizontal(|ui| {
-        let tooltip = ui.is_visible().then(|| label.text().to_owned());
-        let response = text.label(ui, TextField::Divider, Label::new(label).truncate());
-        if let Some(tooltip) = tooltip {
-            response.on_hover_text(tooltip);
-            ui.add(Separator::default().horizontal());
-        }
-    });
 }
 
 /// `time` as `format` writes it, padded with spaces to `width`, and all spaces without a time.
@@ -2032,7 +1998,7 @@ static TIMESTAMP_RUN_WIDTHS: LazyLock<TimestampRunWidths> = LazyLock::new(|| {
     }
 });
 
-struct TimestampText {
+pub(super) struct TimestampText {
     prefix: &'static str,
     date: String,
     hour_minute: String,
@@ -2052,12 +2018,68 @@ impl TimestampText {
         }
     }
 
-    fn clipboard_text(&self) -> String {
-        let prefix = match self.prefix {
-            ICON_DEVICE_CLOCK => ANCHORED_TIMESTAMP_PREFIX,
-            prefix => prefix,
+    /// The device clock glyph and its trailing padding occupy one monospace cell.
+    fn layout_job(&self, ui: &egui::Ui, tick: TimestampTick) -> LayoutJob {
+        let prefix = self.prefix;
+        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let quiet = ui.visuals().weak_text_color();
+        let moved = match tick {
+            TimestampTick::Weak => ui.visuals().weak_text_color(),
+            TimestampTick::Plain => ui.visuals().text_color(),
+            TimestampTick::Strong => ui.visuals().strong_text_color(),
         };
-        format!("{prefix}{}{}{}", self.date, self.hour_minute, self.seconds)
+        let mut job = LayoutJob::default();
+        if prefix == ICON_DEVICE_CLOCK {
+            let (icon_font, leading_space) = ui.fonts_mut(|fonts| {
+                let cell_width = fonts.glyph_width(&font_id, ' ');
+                let mut icon_font = FontId::proportional(font_id.size);
+                let icon_width = fonts
+                    .layout_no_wrap(prefix.to_owned(), icon_font.clone(), quiet)
+                    .size()
+                    .x;
+                icon_font.size *= cell_width / icon_width;
+                let scaled_width = fonts
+                    .layout_no_wrap(prefix.to_owned(), icon_font.clone(), quiet)
+                    .size()
+                    .x;
+                (icon_font, cell_width - scaled_width)
+            });
+            job.append(prefix, 0.0, TextFormat::simple(icon_font, quiet));
+            job.append(
+                &self.date,
+                leading_space,
+                TextFormat::simple(font_id.clone(), quiet),
+            );
+        } else {
+            job.append(
+                &format!("{prefix}{}", self.date),
+                0.0,
+                TextFormat::simple(font_id.clone(), quiet),
+            );
+        }
+        job.append(
+            &self.hour_minute,
+            0.0,
+            TextFormat::simple(font_id.clone(), moved),
+        );
+        job.append(&self.seconds, 0.0, TextFormat::simple(font_id, quiet));
+        job
+    }
+
+    fn clipboard_text(&self) -> String {
+        let prefix = self.prefix;
+        let projection = match prefix {
+            ICON_DEVICE_CLOCK => CopyProjection::ReplaceFirst(' '),
+            _ => CopyProjection::Verbatim,
+        };
+        let mut output = String::with_capacity(
+            prefix.len() + self.date.len() + self.hour_minute.len() + self.seconds.len(),
+        );
+        output.extend(projection.characters(prefix));
+        output.push_str(&self.date);
+        output.push_str(&self.hour_minute);
+        output.push_str(&self.seconds);
+        output
     }
 }
 
