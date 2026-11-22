@@ -1,5 +1,6 @@
 use std::mem;
 use std::ops::Range;
+use std::ptr;
 use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Duration, NaiveTime, Utc};
@@ -29,6 +30,7 @@ use navigation::SourceOverlay;
 use row_cells::{CopyProjection, RowCell, RowCells};
 use row_grid::{RowGrid, ShownRows};
 use row_layout::{RowLayoutRequest, RowLayoutStyle};
+use selection_document::{DocumentRevision, DocumentRow};
 use text_selection::{TableInputFocus, TableTextUi};
 
 pub(super) use navigation::{FilteredSourceReturn, SourceRequest, SourceReveal, SourceRow};
@@ -38,6 +40,7 @@ mod navigation;
 mod row_cells;
 mod row_grid;
 mod row_layout;
+mod selection_document;
 mod text_selection;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -529,6 +532,8 @@ impl DisplayedClockTicks {
 
 #[derive(Debug)]
 pub(super) struct LineTableRows {
+    revision: DocumentRevision,
+    parsed: Arc<ParsedLog>,
     entries: DisplayedEntries,
     insertions: Vec<InsertedRow>,
     boot_rows: Vec<(usize, usize)>,
@@ -740,6 +745,8 @@ impl LineTableRows {
             .max(revealed_source.map_or(0, |overlay| overlay.last_line));
         let (insertions, boot_rows) = PendingInsertion::index_in_source_order(pending);
         Self {
+            revision: DocumentRevision::next(),
+            parsed: log.shared_parsed(),
             entries: visible,
             insertions,
             boot_rows,
@@ -899,9 +906,12 @@ impl LogViewerWindow {
         };
         let state = self.log_state_mut(log_id);
         match &mut state.line_table_cache {
-            Some(cache) if cache.key == key => Arc::clone(&cache.rows),
+            Some(cache)
+                if cache.key == key && ptr::eq(cache.rows.parsed.as_ref(), log.parsed()) =>
+            {
+                Arc::clone(&cache.rows)
+            }
             slot => {
-                state.table_text_selection = TableTextSelection::default();
                 let rows = Arc::new(LineTableRows::with_source_overlay(
                     log,
                     key.show_structural_lines,
@@ -1020,7 +1030,8 @@ impl LogViewerWindow {
         };
         let show_structural_lines = self.show_structural_lines;
         let keyboard_access = self.keyboard_access;
-        let state = self.log_state_mut(log_id);
+        let state = self.log_states.entry(log_id).or_default();
+        let selection = &mut self.table_text_selection;
         let find_hit = state.find.as_ref().and_then(|find| find.current()).cloned();
         let find_highlight = find_hit
             .as_ref()
@@ -1165,47 +1176,47 @@ impl LogViewerWindow {
                         .as_ref()
                         .filter(|hit| row.source_line(parsed) == Some(hit.line_number()))
                 };
-                let layout_row =
-                    |fonts: &mut FontsView<'_>, row, table_row, content: &LineTableContent<'_>| {
-                        let entry_text = if let RowPresentation::Entry {
-                            entry_index,
-                            visible_row,
-                            ..
-                        } = content.presentation
-                        {
-                            let tick = ticks.tick(visible_row);
-                            Some(EntryText {
-                                tick: if log.entry_placement(entry_index).is_some() {
-                                    tick
-                                } else {
-                                    tick.min(TimestampTick::Plain)
-                                },
-                                highlighted: HighlightedMessage {
-                                    spans: filters.condition_match_spans(entry_index),
-                                    color: highlight,
-                                },
-                                recognised: recognised_messages.get(entry_index).copied(),
-                                color_switches,
-                            })
-                        } else {
-                            None
-                        };
-                        metrics.layout(
-                            fonts,
-                            &RowLayoutRequest {
-                                row,
-                                bounds: positioned.row_bounds(row),
-                                content,
-                                find_highlight: find_at(table_row),
-                                entry_text,
+                let layout_row = |fonts: &mut FontsView<'_>, row: &DocumentRow<'_>| {
+                    let content = row.content();
+                    let entry_text = if let RowPresentation::Entry {
+                        entry_index,
+                        visible_row,
+                        ..
+                    } = content.presentation
+                    {
+                        let tick = ticks.tick(visible_row);
+                        Some(EntryText {
+                            tick: if log.entry_placement(entry_index).is_some() {
+                                tick
+                            } else {
+                                tick.min(TimestampTick::Plain)
                             },
-                        )
+                            highlighted: HighlightedMessage {
+                                spans: filters.condition_match_spans(entry_index),
+                                color: highlight,
+                            },
+                            recognised: recognised_messages.get(entry_index).copied(),
+                            color_switches,
+                        })
+                    } else {
+                        None
                     };
-                let mut text = TableTextUi::new(ui, &positioned, rows.len(), scrollbar_rect);
+                    metrics.layout(
+                        fonts,
+                        &RowLayoutRequest {
+                            row,
+                            bounds: positioned.row_bounds(row.index()),
+                            find_highlight: find_at(row.kind()),
+                            entry_text,
+                        },
+                    )
+                };
+                let mut text = TableTextUi::new(ui, &positioned, &rows, scrollbar_rect);
                 let render_row = |ui: &mut egui::Ui, text: &mut TableTextUi<'_>, row| {
-                    let table_row = rows.at(row)?;
-                    let content = table_row.content(parsed)?;
-                    let layout = ui.fonts_mut(|fonts| layout_row(fonts, row, table_row, &content));
+                    let displayed_row = rows.document_row(row)?;
+                    let table_row = displayed_row.kind();
+                    let content = displayed_row.content();
+                    let layout = ui.fonts_mut(|fonts| layout_row(fonts, &displayed_row));
                     let bounds = layout.bounds;
                     ui.advance_cursor_after_rect(bounds);
                     let revealed_reason = reveal.and_then(|reveal| {
@@ -1248,7 +1259,7 @@ impl LogViewerWindow {
                         None
                     };
                     let separator = layout.separator;
-                    text.row_ui(ui, row, layout, |index, response| {
+                    text.row_ui(ui, layout, |index, response| {
                         if let Some((_, cell)) = content
                             .cells
                             .indexed()
@@ -1296,19 +1307,14 @@ impl LogViewerWindow {
                 }
                 let selected_by_pointer = text.finish(
                     ui,
-                    &mut state.table_text_selection,
+                    selection,
                     TableInputFocus {
                         target: &target,
                         available: keyboard_available,
                         after_navigation,
                         entered_by_navigation,
                     },
-                    |row| Some(rows.at(row)?.content(parsed)?.cells),
-                    |fonts, row| {
-                        let table_row = rows.at(row)?;
-                        let content = table_row.content(parsed)?;
-                        Some(layout_row(fonts, row, table_row, &content))
-                    },
+                    layout_row,
                 );
                 if keyboard_available && target.has_focus() {
                     KeyboardScrollSteps {
@@ -2023,7 +2029,7 @@ mod tests {
             .unwrap_or_default()
     }
 
-    fn source_log(text: &str) -> LoadedLog {
+    pub(super) fn source_log(text: &str) -> LoadedLog {
         let parsed =
             gt_logfile::parse_log(text.into(), gutter_log_start()).expect("the log parses");
         LoadedLog::new(
