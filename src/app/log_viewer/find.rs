@@ -1,7 +1,9 @@
 use std::mem;
 
 use egui::text::{ByteIndex, LayoutJob};
-use egui::{Button, ComboBox, Label, Role, Stroke, StrokeKind, TextEdit, TextFormat, WidgetInfo};
+use egui::{
+    Button, Color32, ComboBox, Label, Role, Stroke, StrokeKind, TextEdit, TextFormat, WidgetInfo,
+};
 use egui_phosphor::regular::{
     ARROW_DOWN as ICON_NEXT, ARROW_UP as ICON_PREVIOUS, MAGNIFYING_GLASS as ICON_FIND,
     X as ICON_CLOSE,
@@ -316,7 +318,7 @@ impl<'a> FindHighlight<'a> {
         );
     }
 
-    pub(super) fn highlight_job(&self, ui: &egui::Ui, job: &mut LayoutJob) {
+    pub(super) fn highlight_job(&self, background: Color32, job: &mut LayoutJob) {
         let Some(before) = self
             .source
             .strip_suffix(&job.text)
@@ -343,7 +345,7 @@ impl<'a> FindHighlight<'a> {
             }
             let mut matched = section.clone();
             matched.byte_range = start..end;
-            matched.format.background = ui.visuals().selection.bg_fill;
+            matched.format.background = background;
             job.sections.push(matched);
             if end < section.byte_range.end {
                 let mut after = section;
