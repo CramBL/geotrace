@@ -9,22 +9,26 @@ use egui::plugin::Plugin;
 use egui::text::{CCursor, CCursorRange, CharIndex, LayoutJob};
 use egui::text_selection::{LabelSelectionState, text_cursor_state, visuals};
 use egui::{
-    CursorIcon, Event, InputOptions, Key, Modifiers, OutputCommand, PointerButton, Pos2, Role,
-    Sense, Shape, WidgetInfo,
+    CursorIcon, Event, Key, Modifiers, OutputCommand, PointerButton, Pos2, Role, Sense, Shape,
+    WidgetInfo,
 };
 
 use super::LineTableRows;
 use super::row_cells::CellIndex;
 use super::row_grid::ShownRows;
 use super::row_layout::{CellLayout, RowLayout};
-use super::selection_document::{Caret, DocumentRevision, DocumentRow};
+use super::selection_document::{Caret, DocumentRow};
 
-use keyboard::{SelectionMotion, VerticalMotion};
+use controller::{
+    AnchorMode, GestureLimits, HorizontalPosition, PointerCompletion, PointerIntent,
+    SelectionTarget, SelectionUnit,
+};
+use keyboard::{Direction, SelectionMotion, VerticalMotion, VerticalResult};
 
+pub(in crate::app::log_viewer) use controller::TableTextSelection;
+
+mod controller;
 mod keyboard;
-
-#[derive(Clone, Copy)]
-struct HorizontalPosition(f32);
 
 #[derive(Clone, Copy)]
 struct TextHit {
@@ -96,127 +100,6 @@ impl CaretRange {
             end
         };
         Some(start..end)
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum SelectionUnit {
-    Character,
-    Line,
-    Word,
-}
-
-/// egui exposes the click count on release, after a selection gesture can begin.
-struct CompletedClick {
-    position: Pos2,
-    time: f64,
-    unit: SelectionUnit,
-}
-
-impl CompletedClick {
-    fn next_unit(&self, position: Pos2, time: f64, options: InputOptions) -> SelectionUnit {
-        if time - self.time >= options.max_double_click_delay
-            || position.distance(self.position) >= options.max_click_dist
-        {
-            SelectionUnit::Character
-        } else if self.unit == SelectionUnit::Character {
-            SelectionUnit::Word
-        } else {
-            SelectionUnit::Line
-        }
-    }
-}
-
-struct SelectionGesture {
-    unit: SelectionUnit,
-    origin: Pos2,
-    start_time: f64,
-    extending: bool,
-    within_click_distance: bool,
-}
-
-struct SelectedText {
-    anchor: CaretRange,
-    range: CaretRange,
-    gesture: Option<SelectionGesture>,
-    preferred_x: Option<HorizontalPosition>,
-}
-
-impl SelectedText {
-    fn extend(&mut self, pointer: Caret, unit_range: CaretRange) {
-        let anchor = self.anchor.ordered();
-        let target = unit_range.ordered();
-        self.range =
-            if pointer < anchor.start || (pointer == anchor.start && target.start < anchor.start) {
-                CaretRange::point(anchor.end).with_endpoint(target.start)
-            } else if pointer > anchor.end
-                || anchor.is_empty()
-                || (pointer == anchor.end && target.end > anchor.end)
-            {
-                CaretRange::point(anchor.start).with_endpoint(target.end)
-            } else {
-                self.anchor
-            };
-    }
-}
-
-#[derive(Default)]
-pub(in crate::app::log_viewer) struct TableTextSelection {
-    document: Option<DocumentRevision>,
-    selected: Option<SelectedText>,
-    last_click: Option<CompletedClick>,
-    primary_reported: Option<Range<Caret>>,
-}
-
-impl TableTextSelection {
-    pub(in crate::app::log_viewer) fn replace_document(
-        &mut self,
-        document: Option<DocumentRevision>,
-    ) {
-        if self.document != document {
-            *self = Self {
-                document,
-                ..Self::default()
-            };
-        }
-    }
-
-    fn settled_primary(
-        &mut self,
-        ui: &egui::Ui,
-        document: &LineTableRows,
-    ) -> Option<OutputCommand> {
-        let selection = self.nonempty_range();
-        let range = selection.map(CaretRange::ordered);
-        let settle = ui.ctx().os() == OperatingSystem::Nix
-            && !ui.input(|input| input.pointer.any_down())
-            && self.primary_reported != range;
-        if settle {
-            self.primary_reported = range;
-            if let Some(selection) = selection {
-                let text = document.clipboard_text(selection)?;
-                return (!text.is_empty()).then_some(OutputCommand::TextSelectionSettled(text));
-            }
-        }
-        None
-    }
-
-    fn select_all(&mut self, document: &LineTableRows) {
-        if let Some(range) = document.full_range() {
-            self.selected = Some(SelectedText {
-                anchor: CaretRange::point(range.anchor()),
-                range,
-                gesture: None,
-                preferred_x: None,
-            });
-        }
-    }
-
-    fn nonempty_range(&self) -> Option<CaretRange> {
-        self.selected
-            .as_ref()
-            .map(|text| text.range)
-            .filter(|range| !range.ordered().is_empty())
     }
 }
 
@@ -335,12 +218,6 @@ struct SelectionOutcome {
     commands: SelectionCommands,
 }
 
-#[derive(PartialEq, Eq)]
-enum PointerCompletion {
-    Caret,
-    Selection,
-}
-
 #[derive(Clone, Copy)]
 struct PointerPress {
     position: Pos2,
@@ -432,6 +309,39 @@ impl Plugin for LabelSelectionHandoff {
             ctx.request_repaint();
         }
         output.platform_output.commands.append(&mut self.commands);
+    }
+}
+
+impl SelectionMotion {
+    fn of(key: Key, modifiers: Modifiers) -> Option<Self> {
+        if !modifiers.shift {
+            return None;
+        }
+        Some(match key {
+            Key::ArrowLeft | Key::ArrowRight => {
+                let direction = if key == Key::ArrowLeft {
+                    Direction::Backward
+                } else {
+                    Direction::Forward
+                };
+                if modifiers.alt || modifiers.ctrl {
+                    Self::Word(direction)
+                } else if modifiers.mac_cmd {
+                    Self::RowBoundary(direction)
+                } else {
+                    Self::Character(direction)
+                }
+            }
+            Key::ArrowUp if modifiers.command => Self::DocumentBoundary(Direction::Backward),
+            Key::ArrowDown if modifiers.command => Self::DocumentBoundary(Direction::Forward),
+            Key::ArrowUp => Self::Row(Direction::Backward),
+            Key::ArrowDown => Self::Row(Direction::Forward),
+            Key::Home if modifiers.ctrl => Self::DocumentBoundary(Direction::Backward),
+            Key::End if modifiers.ctrl => Self::DocumentBoundary(Direction::Forward),
+            Key::Home => Self::RowBoundary(Direction::Backward),
+            Key::End => Self::RowBoundary(Direction::Forward),
+            _ => return None,
+        })
     }
 }
 
@@ -574,12 +484,12 @@ impl<'grid> TableTextUi<'grid> {
 
     fn vertical_endpoint(
         &self,
-        motion: &mut VerticalMotion<'_>,
+        motion: VerticalMotion,
         fonts: &mut FontsView<'_>,
         layout_row: &impl Fn(&mut FontsView<'_>, &DocumentRow<'_>) -> RowLayout,
-    ) -> Option<Caret> {
+    ) -> Option<VerticalResult> {
         let left = self.shown.bounds.left();
-        let offset = if let Some(preferred) = *motion.preferred_x {
+        let offset = if let Some(preferred) = motion.preferred_x {
             preferred
         } else {
             let previous = motion.previous;
@@ -589,14 +499,16 @@ impl<'grid> TableTextUi<'grid> {
                     .find(|field| field.carets().start().cell() == previous.cell())?;
                 Some(field.caret_x(previous.character()))
             })?;
-            let preferred = HorizontalPosition(x - left);
-            *motion.preferred_x = Some(preferred);
-            preferred
+            HorizontalPosition(x - left)
         };
         let viewport = self.drag_target.rect;
         let x = (left + offset.0).clamp(viewport.left(), viewport.right());
-        self.with_row_geometry(motion.row, fonts, layout_row, |fields| {
+        let caret = self.with_row_geometry(motion.row, fonts, layout_row, |fields| {
             Some(self.field_at_x(fields, x)?.hit_at(x).caret)
+        });
+        Some(VerticalResult {
+            caret,
+            preferred_x: offset,
         })
     }
 
@@ -666,7 +578,14 @@ impl<'grid> TableTextUi<'grid> {
                 input.pointer.primary_down(),
             )
         });
-        let options = ui.ctx().options(|options| options.input_options);
+        let limits = ui.ctx().options(|options| {
+            let input = options.input_options;
+            GestureLimits {
+                distance: input.max_click_dist,
+                duration: input.max_click_duration,
+                multi_click_delay: input.max_double_click_delay,
+            }
+        });
         let last_release = events.iter().rposition(|(_, event)| {
             matches!(
                 event,
@@ -699,7 +618,7 @@ impl<'grid> TableTextUi<'grid> {
         let mut keyboard = entry_from_previous_frame
             || (available
                 && table_had_focus
-                && (selection.selected.is_some() || !label_has_selection));
+                && (selection.range().is_some() || !label_has_selection));
         let mut outcome = SelectionOutcome {
             clear_label_selection: entry_from_previous_frame,
             ..SelectionOutcome::default()
@@ -721,11 +640,11 @@ impl<'grid> TableTextUi<'grid> {
                         available,
                     };
                     keyboard = self
-                        .press_selection(ui, selection, &mut outcome, press, options)
+                        .press_selection(ui, selection, &mut outcome, press, limits)
                         .unwrap_or(keyboard);
                 }
                 Event::PointerMoved(pos) if available => {
-                    self.extend_selection(selection, pos, options.max_click_dist);
+                    let _ = self.apply_pointer(selection, PointerIntent::Drag(pos), limits);
                 }
                 Event::PointerButton {
                     pos,
@@ -733,8 +652,11 @@ impl<'grid> TableTextUi<'grid> {
                     pressed: false,
                     ..
                 } if available => {
-                    self.extend_selection(selection, pos, options.max_click_dist);
-                    let completion = Self::complete_selection(selection, pos, time, options);
+                    let intent = PointerIntent::Release {
+                        position: pos,
+                        time,
+                    };
+                    let completion = self.apply_pointer(selection, intent, limits);
                     outcome.selected_on_release = completion == Some(PointerCompletion::Selection);
                     outcome.request_focus |= completion.is_some();
                     keyboard |= completion.is_some();
@@ -768,12 +690,12 @@ impl<'grid> TableTextUi<'grid> {
                                 })
                             })
                     {
-                        outcome.keyboard_endpoint = Some(endpoint);
+                        outcome.keyboard_endpoint = Some(endpoint.caret);
                         outcome.commands.consumed.push(input_index);
                     }
                 }
                 Event::Copy | Event::Cut if keyboard => {
-                    let range = selection.nonempty_range();
+                    let range = selection.copy_range();
                     if range.is_some() || outcome.clear_label_selection {
                         outcome.commands.consumed.push(input_index);
                     }
@@ -792,16 +714,13 @@ impl<'grid> TableTextUi<'grid> {
         }
         if available && primary_down {
             if let Some(position) = position
-                && selection
-                    .selected
-                    .as_ref()
-                    .is_some_and(|text| text.gesture.is_some())
+                && selection.dragging()
             {
-                self.extend_selection(selection, position, options.max_click_dist);
+                let _ = self.apply_pointer(selection, PointerIntent::Drag(position), limits);
                 self.scroll_during_drag(ui, position.y);
             }
-        } else if let Some(text) = &mut selection.selected {
-            text.gesture = None;
+        } else {
+            selection.stop_drag();
         }
         outcome
     }
@@ -812,7 +731,7 @@ impl<'grid> TableTextUi<'grid> {
         selection: &mut TableTextSelection,
         outcome: &mut SelectionOutcome,
         press: PointerPress,
-        options: InputOptions,
+        limits: GestureLimits,
     ) -> Option<bool> {
         outcome.keyboard_endpoint = None;
         let on_layer = ui.ctx().layer_id_at(press.position) == Some(self.drag_target.layer_id);
@@ -836,104 +755,48 @@ impl<'grid> TableTextUi<'grid> {
         outcome.clear_label_selection = owns_press;
         outcome.request_focus = owns_press;
         if owns_press {
-            self.begin_selection(
-                selection,
-                press.position,
-                press.modifiers,
-                press.time,
-                options,
-            );
+            let anchor = if press.modifiers.shift {
+                AnchorMode::Extend
+            } else {
+                AnchorMode::Replace
+            };
+            let intent = PointerIntent::Press {
+                position: press.position,
+                time: press.time,
+                anchor,
+            };
+            let _ = self.apply_pointer(selection, intent, limits);
         } else {
-            selection.selected = None;
-            selection.last_click = None;
+            selection.clear();
         }
         Some(owns_press)
     }
 
-    fn begin_selection(
+    fn apply_pointer(
         &self,
         selection: &mut TableTextSelection,
-        press: Pos2,
-        modifiers: Modifiers,
-        time: f64,
-        options: InputOptions,
-    ) {
-        let Some(hit) = self.text_hit(press) else {
-            return;
-        };
-        let unit = selection
-            .last_click
-            .as_ref()
-            .map_or(SelectionUnit::Character, |click| {
-                click.next_unit(press, time, options)
-            });
-        let caret = hit.caret;
-        let unit_range = self.selection_unit(unit, hit);
-        let existing = selection.selected.take().filter(|_| modifiers.shift);
-        let mut text = existing.unwrap_or(SelectedText {
-            anchor: unit_range,
-            range: unit_range,
-            gesture: None,
-            preferred_x: None,
-        });
-        text.preferred_x = None;
-        text.gesture = Some(SelectionGesture {
-            unit,
-            origin: press,
-            start_time: time,
-            extending: modifiers.shift,
-            within_click_distance: true,
-        });
-        text.extend(caret, unit_range);
-        selection.selected = Some(text);
-    }
-
-    fn extend_selection(
-        &self,
-        selection: &mut TableTextSelection,
-        position: Pos2,
-        max_click_distance: f32,
-    ) {
-        let Some(text) = &mut selection.selected else {
-            return;
-        };
-        let Some(gesture) = &mut text.gesture else {
-            return;
-        };
-        gesture.within_click_distance &= gesture.origin.distance(position) <= max_click_distance;
-        if let Some(hit) = self.text_hit(position) {
-            let caret = hit.caret;
-            let unit_range = self.selection_unit(gesture.unit, hit);
-            text.extend(caret, unit_range);
-        }
-    }
-
-    fn complete_selection(
-        selection: &mut TableTextSelection,
-        position: Pos2,
-        time: f64,
-        options: InputOptions,
+        intent: PointerIntent,
+        limits: GestureLimits,
     ) -> Option<PointerCompletion> {
-        let text = selection.selected.as_mut()?;
-        let gesture = text.gesture.take()?;
-        let selecting_characters =
-            gesture.unit == SelectionUnit::Character && !text.range.ordered().is_empty();
-        selection.last_click = (gesture.within_click_distance
-            && time - gesture.start_time <= options.max_click_duration
-            && !selecting_characters)
-            .then_some(CompletedClick {
-                position,
-                time,
-                unit: gesture.unit,
-            });
-        Some(
-            if selecting_characters || gesture.unit != SelectionUnit::Character || gesture.extending
-            {
-                PointerCompletion::Selection
-            } else {
-                PointerCompletion::Caret
-            },
-        )
+        selection.apply_pointer(intent, limits, |unit, position| {
+            let hit = self.text_hit(position)?;
+            Some(SelectionTarget {
+                caret: hit.caret,
+                range: self.selection_unit(unit, hit),
+            })
+        })
+    }
+
+    fn settled_primary(
+        &self,
+        ui: &egui::Ui,
+        selection: &mut TableTextSelection,
+    ) -> Option<OutputCommand> {
+        if ui.ctx().os() != OperatingSystem::Nix || ui.input(|input| input.pointer.any_down()) {
+            return None;
+        }
+        let text = self.document.clipboard_text(selection.settle()?)?;
+        (!text.is_empty()).then_some(OutputCommand::TextSelectionSettled(text))
     }
 
     fn scroll_during_drag(&self, ui: &egui::Ui, pointer_y: f32) {
@@ -977,13 +840,13 @@ impl<'grid> TableTextUi<'grid> {
                 );
             }
         }
-        let primary = selection.settled_primary(ui, self.document);
+        let primary = self.settled_primary(ui, selection);
         outcome
             .commands
             .emit(ui, self.document, outcome.clear_label_selection, primary);
-        let text = selection.selected.as_ref();
+        let range = selection.range();
         if available
-            && (text.is_some_and(|text| text.gesture.is_some())
+            && (selection.dragging()
                 || (ui.rect_contains_pointer(self.drag_target.rect)
                     && !self
                         .scrollbar
@@ -993,7 +856,7 @@ impl<'grid> TableTextUi<'grid> {
         }
         for row in self.rows {
             for (cell, shape) in row.layout.into_cells().into_iter().zip(row.shapes) {
-                cell.paint(ui, shape, text.map(|text| text.range));
+                cell.paint(ui, shape, range);
             }
         }
         outcome.selected_on_release
@@ -1009,24 +872,7 @@ mod tests {
     use super::super::row_grid::RowGrid;
     use super::super::row_layout::{RowLayoutRequest, RowLayoutStyle};
     use super::super::tests as line_table_tests;
-    use super::{
-        DocumentRevision, DocumentRow, FontsView, ShownRows, TableTextSelection, TableTextUi,
-    };
-
-    #[test]
-    fn selection_preserves_the_range_only_within_its_document() {
-        let log = line_table_tests::source_log("2026-01-01 14:02:11 hello\n");
-        let rows = LineTableRows::of(&log);
-        let mut selection = TableTextSelection::default();
-        selection.replace_document(Some(rows.document_revision()));
-        selection.select_all(&rows);
-
-        selection.replace_document(Some(rows.document_revision()));
-        assert!(selection.nonempty_range().is_some());
-
-        selection.replace_document(Some(DocumentRevision::next()));
-        assert!(selection.nonempty_range().is_none());
-    }
+    use super::{DocumentRow, FontsView, ShownRows, TableTextUi};
 
     #[test]
     fn table_selection_rejects_geometry_for_another_document_or_row() {
