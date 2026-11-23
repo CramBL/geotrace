@@ -1413,6 +1413,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "doctest-file"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2205,6 +2211,7 @@ dependencies = [
  "gt-plot",
  "gt-query",
  "gt-query-run",
+ "gt-session-bridge",
  "gt-side-panel",
  "gt-sky",
  "gt-snap",
@@ -3027,6 +3034,26 @@ dependencies = [
  "rstest",
  "rustc-hash 2.1.3",
  "uom",
+]
+
+[[package]]
+name = "gt-session-bridge"
+version = "0.19.0"
+dependencies = [
+ "chrono",
+ "gt-loaded-files",
+ "gt-test-utils",
+ "interprocess",
+ "log",
+ "proptest",
+ "rustix 1.1.6",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "widestring",
+ "win-custody",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3902,6 +3929,21 @@ dependencies = [
  "once_cell",
  "similar",
  "tempfile",
+]
+
+[[package]]
+name = "interprocess"
+version = "2.4.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f243523bf126ddfc5cddf87a8193a941bfca29476ce3c842e24c916cf5a22ec"
+dependencies = [
+ "doctest-file",
+ "futures-core",
+ "libc",
+ "recvmsg",
+ "tokio",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5780,6 +5822,12 @@ dependencies = [
  "font-types",
  "once_cell",
 ]
+
+[[package]]
+name = "recvmsg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "redox_syscall"
@@ -7997,6 +8045,15 @@ name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
+name = "win-custody"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3ac317571806f48e6b0131e06cd9047c942a5db502c633efedf0e13a832b121"
+dependencies = [
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "winapi"

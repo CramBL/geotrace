@@ -223,11 +223,7 @@ mod tests {
             ),
         );
 
-        let page = ListRecordings {
-            after: None,
-            limit: NonZeroUsize::MIN,
-        }
-        .execute(files.view(), "{identity}");
+        let page = ListRecordings::new(None, NonZeroUsize::MIN).execute(files.view(), "{identity}");
 
         let summary = page.recordings.first().expect("one recording");
         assert_eq!(summary.display_name, expected_name);

@@ -17,6 +17,7 @@ use gt_map::NavMap;
 use gt_map::mapbox_tiles;
 use gt_pending_writes::PendingWrites;
 use gt_plot::PlotState;
+use gt_session_bridge::Server as SessionBridge;
 use gt_side_panel::{FilterPanelState, TreeState};
 use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
@@ -385,6 +386,7 @@ pub struct App {
     solar_flare_settings: crate::settings::SolarFlareSettings,
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
+    session_bridge: Option<SessionBridge>,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
     pending_writes: PendingWrites,
@@ -483,6 +485,11 @@ pub struct App {
 }
 
 impl App {
+    pub(crate) fn start_session_bridge(&mut self, ctx: egui::Context) -> std::io::Result<()> {
+        self.session_bridge = Some(SessionBridge::start(move || ctx.request_repaint())?);
+        Ok(())
+    }
+
     pub fn new_with_files(
         cc: &eframe::CreationContext<'_>,
         paths: &[PathBuf],
@@ -628,6 +635,7 @@ impl App {
             solar_flare_settings,
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
+            session_bridge: None,
             pending_writes: options.pending_writes,
             shutdown: shutdown::ShutdownState::default(),
             interference_backfill_ui: backfill_ui::BackfillUi::default(),

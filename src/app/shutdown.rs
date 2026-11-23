@@ -329,6 +329,7 @@ impl App {
         if self.shutdown.has_begun() {
             return;
         }
+        self.session_bridge = None;
         self.pending_writes.begin_shutdown();
         self.flush_settings_during_shutdown();
         self.shut_down_history_worker_off_the_gui_thread();

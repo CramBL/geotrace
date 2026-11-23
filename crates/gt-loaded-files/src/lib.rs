@@ -38,6 +38,12 @@ pub fn display_identity(identity: &str) -> (&str, bool) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LoadedFileId(u64);
 
+impl From<LoadedFileId> for u64 {
+    fn from(id: LoadedFileId) -> Self {
+        id.0
+    }
+}
+
 /// App/session-side history metadata for one loaded file.
 ///
 /// This is not persisted history schema. It describes how the currently loaded
