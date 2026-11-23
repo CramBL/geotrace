@@ -274,7 +274,7 @@ impl HistoryDatabase for PureDb {
 
     fn clear_write_lock(path: &Path) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        hdf5_pure::File::clear_swmr_flag(path).map_err(classify_hdf5_error)?;
+        hdf5_pure::File::clear_status_flags(path).map_err(classify_hdf5_error)?;
         log::debug!(
             "Cleared the write lock on history database at {}",
             path.display()

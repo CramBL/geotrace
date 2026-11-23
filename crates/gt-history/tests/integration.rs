@@ -26,7 +26,7 @@ use gt_test_utils::navigation_evidence_fixtures::{self, NavigationDetail};
 use gt_track_builder::{FixPlacementRule, SegmentationConfig};
 use gt_types::{LoadedFile, LoadedTrack, SatelliteQueryScope};
 use hdf5::File as NativeFile;
-use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceStrategy};
+use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceSettings, FileSpaceStrategy};
 use rstest::rstest;
 
 /// Single-track convenience wrappers over the per-track API.
@@ -1978,17 +1978,26 @@ fn persistent_free_space_survives_file_reopening() {
     let path = dir.path().join("test.h5");
     let timestamps: Vec<i64> = (0..100).collect();
     let mut builder = FileBuilder::new();
-    builder.with_file_space_strategy(FileSpaceStrategy::FsmAggr, true, 1);
+    builder.with_file_space_settings(
+        FileSpaceSettings::new(FileSpaceStrategy::FsmAggr).with_persistence(true),
+    );
     let mut group = builder.create_group("nav_points");
     group.create_dataset("time").with_i64_data(&timestamps);
     builder.add_group(group.finish());
     builder.write(&path).expect("write");
 
     let file = File::open(&path).expect("open");
-    let strategy = file.file_space_info().expect("file space strategy");
+    let strategy = file
+        .file_space_info()
+        .expect("read file space info")
+        .expect("file space info");
     assert_eq!(strategy.strategy, FileSpaceStrategy::FsmAggr);
     assert!(strategy.persist);
-    assert!(!file.persisted_free_space().expect("free space").is_empty());
+    let persisted = file
+        .persisted_free_sections()
+        .expect("read free space")
+        .expect("persisted free space");
+    assert!(persisted.free_sections().section_count() > 0);
     assert_eq!(
         file.dataset("nav_points/time")
             .expect("dataset")

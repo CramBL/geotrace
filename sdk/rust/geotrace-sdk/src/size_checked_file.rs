@@ -119,19 +119,28 @@ impl SizeCheckedGroup {
                 actual,
             });
         }
-        let mut datatype = column.datatype()?;
-        let actual = format!("{datatype:?}");
-        match &mut datatype {
-            Datatype::FixedPoint { byte_order, .. }
-            | Datatype::FloatingPoint { byte_order, .. }
-                if *byte_order == DatatypeByteOrder::BigEndian =>
-            {
-                *byte_order = DatatypeByteOrder::LittleEndian
+        let datatype = column.datatype()?;
+        let normalized_byte_order = |byte_order| match byte_order {
+            DatatypeByteOrder::BigEndian => DatatypeByteOrder::LittleEndian,
+            other => other,
+        };
+        // The wire fields occupy every bit regardless of padding flags.
+        let matches_datatype = match (&datatype, expected_datatype) {
+            (Datatype::FixedPoint(actual), Datatype::FixedPoint(expected)) => {
+                actual.size() == expected.size()
+                    && normalized_byte_order(actual.byte_order()) == expected.byte_order()
+                    && actual.with_padding(false, false).layout() == expected.layout()
             }
-            _ => {}
-        }
-        if &datatype != expected_datatype {
+            (Datatype::FloatingPoint(actual), Datatype::FloatingPoint(expected)) => {
+                actual.size() == expected.size()
+                    && normalized_byte_order(actual.byte_order()) == expected.byte_order()
+                    && actual.with_padding(false, false, false).layout() == expected.layout()
+            }
+            _ => &datatype == expected_datatype,
+        };
+        if !matches_datatype {
             let expected = format!("{expected_datatype:?}");
+            let actual = format!("{datatype:?}");
             return Err(match context {
                 ColumnContext::Navigation => Error::InvalidNavigationColumnType {
                     dataset,
