@@ -7,7 +7,7 @@ use geotrace_sdk::{
     Angle, BootTime, BootTimeError, Duration, Error, NavFile, NavFileBuilder, NavFix, NavFixTime,
 };
 use geotrace_sdk_test_util as test_util;
-use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, File, FileBuilder, FixedPointLayout};
+use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, File, FileBuilder, FixedPointType};
 use proptest::prelude::*;
 use rstest::rstest;
 
@@ -163,15 +163,7 @@ impl BootColumnFixture {
         group
             .create_dataset("boot_time_us")
             .with_raw_data(
-                Datatype::FixedPoint {
-                    size: 8,
-                    byte_order: self.byte_order,
-                    layout: FixedPointLayout {
-                        signed: self.signed,
-                        bit_offset: 0,
-                        bit_precision: 64,
-                    },
-                },
+                Datatype::FixedPoint(FixedPointType::new(8, self.byte_order, self.signed, 0, 64)?),
                 bytes,
                 self.values.len() as u64,
             )
