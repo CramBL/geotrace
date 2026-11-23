@@ -18,7 +18,6 @@ fn main() {
             "FileDescription",
             "GeoTrace - GNSS navigation data visualizer",
         );
-        res.set("OriginalFilename", "geotrace.exe");
         res.compile()
             .expect("failed to embed the Windows app icon and metadata");
     }
