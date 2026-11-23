@@ -1,8 +1,8 @@
 use std::fmt::Write as _;
 
 use hdf5_pure::{
-    AttrValue, Dataset, Datatype, DatatypeByteOrder, DeflateLevel, FileBuilder, FixedPointLayout,
-    FloatingPointLayout, GroupBuilder,
+    AttrValue, Dataset, Datatype, DatatypeByteOrder, DeflateLevel, FileBuilder, FixedPointType,
+    FloatingPointType, GroupBuilder,
 };
 use strum::IntoEnumIterator as _;
 
@@ -27,26 +27,13 @@ enum NumericType {
 
 impl NumericType {
     fn datatype(self) -> Datatype {
-        let (size, signed) = match self {
-            Self::U8 => (1, false),
-            Self::U32 => (4, false),
-            Self::U64 => (8, false),
-            Self::F32 => {
-                return Datatype::FloatingPoint {
-                    size: 4,
-                    byte_order: DatatypeByteOrder::LittleEndian,
-                    layout: FloatingPointLayout::IEEE754_BINARY32,
-                };
-            }
-        };
-        Datatype::FixedPoint {
-            size,
-            byte_order: DatatypeByteOrder::LittleEndian,
-            layout: FixedPointLayout {
-                signed,
-                bit_offset: 0,
-                bit_precision: (size * 8) as u16,
-            },
+        match self {
+            Self::U8 => Datatype::FixedPoint(FixedPointType::u8()),
+            Self::U32 => Datatype::FixedPoint(FixedPointType::u32()),
+            Self::U64 => Datatype::FixedPoint(FixedPointType::u64()),
+            Self::F32 => Datatype::FloatingPoint(FloatingPointType::ieee754_binary32(
+                DatatypeByteOrder::LittleEndian,
+            )),
         }
     }
 }

@@ -11,7 +11,8 @@ use geotrace_sdk::{
 };
 use geotrace_sdk_test_util as test_util;
 use hdf5_pure::{
-    AttrValue, Datatype, DatatypeByteOrder, FileBuilder, FixedPointLayout, FloatingPointLayout,
+    AttrValue, Datatype, DatatypeByteOrder, FileBuilder, FixedPointType, FloatingPointType,
+    FormatError, MantissaNormalization,
 };
 use rstest::rstest;
 
@@ -902,21 +903,42 @@ fn version_three_requires_navigation_columns() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+const BINARY64_LE: Datatype = Datatype::FloatingPoint(FloatingPointType::ieee754_binary64(
+    DatatypeByteOrder::LittleEndian,
+));
+
+fn reduced_precision_dop_datatype() -> Result<Datatype, FormatError> {
+    FloatingPointType::builder()
+        .size(8)
+        .byte_order(DatatypeByteOrder::LittleEndian)
+        .mantissa_normalization(MantissaNormalization::ImpliedLeadingOne)
+        .sign_location(62)
+        .bit_offset(0)
+        .bit_precision(63)
+        .exponent_location(51)
+        .exponent_size(11)
+        .mantissa_location(0)
+        .mantissa_size(51)
+        .exponent_bias(1023)
+        .build()
+        .map(Datatype::FloatingPoint)
+}
+
 #[rstest]
-#[case::fractional_state("state", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 1.5_f64.to_le_bytes().to_vec())]
-#[case::fractional_presence("used_count_present", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 1.5_f64.to_le_bytes().to_vec())]
-#[case::fractional_count("used_count", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 1.5_f64.to_le_bytes().to_vec())]
-#[case::signed_tag("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: true, bit_offset: 0, bit_precision: 8 } }, vec![1])]
-#[case::wide_tag("state", Datatype::FixedPoint { size: 2, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 16 } }, 1_u16.to_le_bytes().to_vec())]
-#[case::tag_precision("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 7 } }, vec![1])]
-#[case::tag_offset("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 1, bit_precision: 7 } }, vec![2])]
-#[case::signed_count("used_count", Datatype::FixedPoint { size: 4, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: true, bit_offset: 0, bit_precision: 32 } }, 8_i32.to_le_bytes().to_vec())]
-#[case::narrow_count("used_count", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 8 } }, vec![8])]
-#[case::narrow_dop("hdop", Datatype::FloatingPoint { size: 4, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY32 }, 0.9_f32.to_le_bytes().to_vec())]
-#[case::dop_precision("hdop", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout { bit_precision: 63, ..FloatingPointLayout::IEEE754_BINARY64 } }, 0.9_f64.to_le_bytes().to_vec())]
+#[case::fractional_state("state", Ok(BINARY64_LE), 1.5_f64.to_le_bytes().to_vec())]
+#[case::fractional_presence("used_count_present", Ok(BINARY64_LE), 1.5_f64.to_le_bytes().to_vec())]
+#[case::fractional_count("used_count", Ok(BINARY64_LE), 1.5_f64.to_le_bytes().to_vec())]
+#[case::signed_tag("state", Ok(Datatype::FixedPoint(FixedPointType::i8())), vec![1])]
+#[case::wide_tag("state", Ok(Datatype::FixedPoint(FixedPointType::u16())), 1_u16.to_le_bytes().to_vec())]
+#[case::tag_precision("state", FixedPointType::new(1, DatatypeByteOrder::LittleEndian, false, 0, 7).map(Datatype::FixedPoint), vec![1])]
+#[case::tag_offset("state", FixedPointType::new(1, DatatypeByteOrder::LittleEndian, false, 1, 7).map(Datatype::FixedPoint), vec![2])]
+#[case::signed_count("used_count", Ok(Datatype::FixedPoint(FixedPointType::i32())), 8_i32.to_le_bytes().to_vec())]
+#[case::narrow_count("used_count", Ok(Datatype::FixedPoint(FixedPointType::u8())), vec![8])]
+#[case::narrow_dop("hdop", Ok(Datatype::FloatingPoint(FloatingPointType::ieee754_binary32(DatatypeByteOrder::LittleEndian))), 0.9_f32.to_le_bytes().to_vec())]
+#[case::dop_precision("hdop", reduced_precision_dop_datatype(), 0.9_f64.to_le_bytes().to_vec())]
 fn malformed_navigation_column_types_fail_before_conversion(
     #[case] dataset: &str,
-    #[case] datatype: Datatype,
+    #[case] datatype: Result<Datatype, FormatError>,
     #[case] bytes: Vec<u8>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = NavigationColumnFixture {
@@ -924,7 +946,10 @@ fn malformed_navigation_column_types_fail_before_conversion(
         dataset,
         tags: &[0],
         shape: &[1],
-        replacement: Some(NavigationColumnReplacement { datatype, bytes }),
+        replacement: Some(NavigationColumnReplacement {
+            datatype: datatype?,
+            bytes,
+        }),
     }
     .to_bytes()?;
     let error = NavFile::read(bytes.as_slice()).unwrap_err();
@@ -936,12 +961,14 @@ fn malformed_navigation_column_types_fail_before_conversion(
 }
 
 #[rstest]
-#[case::tag("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::BigEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 8 } }, vec![4])]
-#[case::count("used_count", Datatype::FixedPoint { size: 4, byte_order: DatatypeByteOrder::BigEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 32 } }, 8_u32.to_be_bytes().to_vec())]
-#[case::dop("hdop", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::BigEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 0.9_f64.to_be_bytes().to_vec())]
-fn navigation_columns_accept_standard_big_endian_numeric_types(
+#[case::big_endian_tag("state", FixedPointType::new(1, DatatypeByteOrder::BigEndian, false, 0, 8).map(Datatype::FixedPoint), vec![4])]
+#[case::big_endian_count("used_count", FixedPointType::new(4, DatatypeByteOrder::BigEndian, false, 0, 32).map(Datatype::FixedPoint), 8_u32.to_be_bytes().to_vec())]
+#[case::big_endian_dop("hdop", Ok(Datatype::FloatingPoint(FloatingPointType::ieee754_binary64(DatatypeByteOrder::BigEndian))), 0.9_f64.to_be_bytes().to_vec())]
+#[case::tag_padding("state", Ok(Datatype::FixedPoint(FixedPointType::u8().with_padding(true, true))), vec![4])]
+#[case::dop_padding("hdop", Ok(Datatype::FloatingPoint(FloatingPointType::ieee754_binary64(DatatypeByteOrder::LittleEndian).with_padding(true, true, true))), 0.9_f64.to_le_bytes().to_vec())]
+fn navigation_columns_accept_equivalent_numeric_types(
     #[case] dataset: &str,
-    #[case] datatype: Datatype,
+    #[case] datatype: Result<Datatype, FormatError>,
     #[case] bytes: Vec<u8>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = NavigationColumnFixture {
@@ -949,7 +976,10 @@ fn navigation_columns_accept_standard_big_endian_numeric_types(
         dataset,
         tags: &[0],
         shape: &[1],
-        replacement: Some(NavigationColumnReplacement { datatype, bytes }),
+        replacement: Some(NavigationColumnReplacement {
+            datatype: datatype?,
+            bytes,
+        }),
     }
     .to_bytes()?;
     let decoded = NavFile::read(bytes.as_slice())?;

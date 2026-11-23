@@ -10,7 +10,7 @@ use geotrace_sdk::{
     SatelliteReport, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
 };
 use geotrace_sdk_test_util as test_util;
-use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, File, FileBuilder, FixedPointLayout};
+use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, File, FileBuilder, FixedPointType};
 use rstest::rstest;
 
 fn independent_evidence() -> SatelliteEvidence {
@@ -415,15 +415,13 @@ fn numeric_columns_require_exact_wire_types(
     #[case] dataset: &str,
     #[case] width: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let datatype = Datatype::FixedPoint {
-        size: width,
-        byte_order: DatatypeByteOrder::LittleEndian,
-        layout: FixedPointLayout {
-            signed: true,
-            bit_offset: 0,
-            bit_precision: u16::try_from(width * 8)?,
-        },
-    };
+    let datatype = Datatype::FixedPoint(FixedPointType::new(
+        width,
+        DatatypeByteOrder::LittleEndian,
+        true,
+        0,
+        u16::try_from(width * 8)?,
+    )?);
     let bytes = ModifiedColumn {
         group,
         dataset,

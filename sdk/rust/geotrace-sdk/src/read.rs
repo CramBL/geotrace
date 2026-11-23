@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
+use geotrace_sdk_units::{ChannelUnit, snr};
+use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, FixedPointType, FloatingPointType};
+use strum::IntoEnumIterator as _;
 
 use crate::builder::ABSENT_TIMESTAMP_MICROS;
 use crate::error::{Error, FieldLocation};
@@ -23,9 +26,6 @@ use crate::{
     Angle, BootTime, PositionProvenance, SatelliteEvidence, SolutionDimension, SolutionMethod,
     SolutionState, Velocity,
 };
-use geotrace_sdk_units::{ChannelUnit, snr};
-use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, FixedPointLayout, FloatingPointLayout};
-use strum::IntoEnumIterator;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFile, Error> {
     let file = SizeCheckedFile::from_bytes(bytes)?;
@@ -1750,36 +1750,10 @@ const ABSENT_VALUE: &str = "—";
 
 const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
 
-const BOOT_TIME_DATATYPE: Datatype = Datatype::FixedPoint {
-    size: 8,
-    byte_order: DatatypeByteOrder::LittleEndian,
-    layout: FixedPointLayout {
-        signed: false,
-        bit_offset: 0,
-        bit_precision: 64,
-    },
-};
+const BOOT_TIME_DATATYPE: Datatype = Datatype::FixedPoint(FixedPointType::u64());
 
-const NAVIGATION_TAG_DATATYPE: Datatype = Datatype::FixedPoint {
-    size: 1,
-    byte_order: DatatypeByteOrder::LittleEndian,
-    layout: FixedPointLayout {
-        signed: false,
-        bit_offset: 0,
-        bit_precision: 8,
-    },
-};
-const NAVIGATION_COUNT_DATATYPE: Datatype = Datatype::FixedPoint {
-    size: 4,
-    byte_order: DatatypeByteOrder::LittleEndian,
-    layout: FixedPointLayout {
-        signed: false,
-        bit_offset: 0,
-        bit_precision: 32,
-    },
-};
-const NAVIGATION_DOP_DATATYPE: Datatype = Datatype::FloatingPoint {
-    size: 8,
-    byte_order: DatatypeByteOrder::LittleEndian,
-    layout: FloatingPointLayout::IEEE754_BINARY64,
-};
+const NAVIGATION_TAG_DATATYPE: Datatype = Datatype::FixedPoint(FixedPointType::u8());
+const NAVIGATION_COUNT_DATATYPE: Datatype = Datatype::FixedPoint(FixedPointType::u32());
+const NAVIGATION_DOP_DATATYPE: Datatype = Datatype::FloatingPoint(
+    FloatingPointType::ieee754_binary64(DatatypeByteOrder::LittleEndian),
+);
