@@ -2,6 +2,7 @@
 name = "geotrace"
 version.workspace = true
 description.workspace = true
+default-run = "geotrace"
 edition.workspace = true
 license.workspace = true
 # The GUI app ships as prebuilt binaries via dist, never to crates.io (it also
@@ -354,13 +355,14 @@ log.workspace = true
 mimalloc = { version = "0.1.52" }
 parking_lot.workspace = true
 rfd = "0.17.2"
+rmcp = { version = "3.11.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rustc-hash.workspace = true
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
-# Current-thread runtime for driving axoupdater's `async` API off the UI thread.
-tokio = { version = "1", features = ["rt", "net", "time"] }
+# Current-thread runtime for the updater and the companion.
+tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
 toml.workspace = true
 uom.workspace = true
 

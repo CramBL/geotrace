@@ -104,6 +104,31 @@ The check can be turned off under Settings.
 > On macOS, the first launch needs right-click &rarr; **Open** (or `xattr -d com.apple.quarantine /path/to/geotrace`).
 > On Windows, SmartScreen shows **More info &rarr; Run anyway**.
 
+## List recordings from an MCP client
+
+Start the desktop app with `geotrace --session-bridge` and open a recording.
+Configure your MCP client to launch the companion from the same GeoTrace installation under the same operating system account.
+The client starts the companion via standard input and output using a configuration like this:
+
+```json
+{
+  "mcpServers": {
+    "geotrace": {
+      "command": "/absolute/path/to/geotrace-mcp"
+    }
+  }
+}
+```
+
+On Windows, use the path to `geotrace-mcp.exe` and escape backslashes in JSON.
+Stop active MCP sessions before updating GeoTrace on Windows.
+The `list_recordings` tool lists the recordings that are currently loaded.
+It accepts an optional `limit` and an `after` cursor.
+Each page contains at most 100 recordings, which is the default limit.
+Use the returned `next_after` as `after` to continue, and stop when `next_after` is null.
+Recording IDs and cursors apply to one desktop session.
+Start listing from the beginning after restarting GeoTrace.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.
