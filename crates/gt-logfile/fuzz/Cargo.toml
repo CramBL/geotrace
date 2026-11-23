@@ -28,3 +28,7 @@ bench = false
 chrono = "0.4"
 gt-logfile = { path = ".." }
 libfuzzer-sys = "0.4"
+
+[patch.crates-io]
+# Match the root workspace patch for the `geo` dependency of `gt-logfile`.
+geo-types = { git = "https://github.com/georust/geo", rev = "b2195847d898bcaf343351fe18384ad18df8e578" }

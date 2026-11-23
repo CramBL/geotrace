@@ -115,7 +115,8 @@ fd-lock = "4"
 # The IONEX archives serve their files gzipped without a transfer encoding,
 # so the client decompresses them itself.
 flate2 = "1"
-geo = "0.33.1"
+# This Geo revision uses `rstar` 0.14 with `heapless` 0.9.
+geo = { git = "https://github.com/georust/geo", rev = "b2195847d898bcaf343351fe18384ad18df8e578" }
 geo-types = "0.7.20"
 # H3 cell indices: the interference datasets are published in that addressing
 # scheme. Pure Rust, with no C bindings. The `geo` feature stays off because
@@ -146,7 +147,7 @@ regex = "1"
 # Without transparent decoding, the body arrives as compressed bytes: gpsjam.org
 # serves datasets gzip-encoded regardless of the client's Accept-Encoding.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "gzip", "json", "rustls"] }
-rstar = "0.13"
+rstar = "0.14"
 rstest = "0.27"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
@@ -389,6 +390,10 @@ hdf5-pure.workspace = true
 insta.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
+
+[patch.crates-io]
+# Use the same `geo-types` revision for `walkers` and workspace crates.
+geo-types = { git = "https://github.com/georust/geo", rev = "b2195847d898bcaf343351fe18384ad18df8e578" }
 
 # The self-updater end-to-end test only builds with the updater compiled in, so
 # the `--update` flag it drives exists. See tests/self_update.rs.
