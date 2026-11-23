@@ -31,6 +31,7 @@ enum CliAction {
         paths: Vec<PathBuf>,
         /// [`OFFLINE_FLAG`] was given.
         offline: bool,
+        session_bridge: bool,
     },
 }
 
@@ -47,10 +48,11 @@ impl CliAction {
             Self::Launch {
                 paths: args
                     .iter()
-                    .filter(|arg| arg.as_str() != OFFLINE_FLAG)
+                    .filter(|arg| !matches!(arg.as_str(), OFFLINE_FLAG | SESSION_BRIDGE_FLAG))
                     .map(PathBuf::from)
                     .collect(),
                 offline: has(&[OFFLINE_FLAG]),
+                session_bridge: has(&[SESSION_BRIDGE_FLAG]),
             }
         }
     }
@@ -154,7 +156,7 @@ fn main() -> ExitCode {
     // binary launches without the GUI. On Windows the release build has no
     // attached console, so the clean exit code is the cross-platform signal and
     // the printed version is checked on Unix.
-    let (initial_paths, offline) = match CliAction::parse(&raw_args) {
+    let (initial_paths, offline, session_bridge) = match CliAction::parse(&raw_args) {
         CliAction::Version => {
             println!("geotrace {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
@@ -169,14 +171,19 @@ fn main() -> ExitCode {
                  -V, --version    Print version and exit\n  \
                  -h, --help       Print help and exit\n      \
                  --offline    Run without network access: no map tiles, downloads, \
-                 snapping, or update check{}",
+                 snapping, or update check\n      \
+                 --session-bridge    Allow local clients to list loaded recordings{}",
                 env!("CARGO_PKG_VERSION"),
                 SELF_UPDATE_HELP,
             );
             return ExitCode::SUCCESS;
         }
         CliAction::SelfUpdate => return run_self_update_cli(),
-        CliAction::Launch { paths, offline } => (paths, offline),
+        CliAction::Launch {
+            paths,
+            offline,
+            session_bridge,
+        } => (paths, offline, session_bridge),
     };
 
     // Dependencies whose debug logging floods the output with per-frame or
@@ -267,7 +274,7 @@ fn main() -> ExitCode {
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
         native_options,
         Box::new(move |cc| {
-            Ok(Box::new(app::App::new_with_files(
+            let mut app = app::App::new_with_files(
                 cc,
                 &initial_paths,
                 app::StartupOptions {
@@ -283,7 +290,11 @@ fn main() -> ExitCode {
                     pending_writes: app_pending_writes,
                     instance_lock: app_instance_lock,
                 },
-            )))
+            );
+            if session_bridge {
+                app.start_session_bridge(cc.egui_ctx.clone())?;
+            }
+            Ok(Box::new(app))
         }),
     );
     let shutdown_exit_code =
@@ -307,6 +318,7 @@ const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
 /// Under this flag GeoTrace is offline: no map tiles, no downloads, no
 /// snapping, no update check.
 const OFFLINE_FLAG: &str = "--offline";
+const SESSION_BRIDGE_FLAG: &str = "--session-bridge";
 
 /// Extra `--help` line for the `--update` flag, present only in dist builds
 /// that carry the updater. Empty otherwise so the flag is never advertised by a
@@ -461,7 +473,8 @@ mod tests {
             CliAction::parse(&[]),
             CliAction::Launch {
                 paths: vec![],
-                offline: false
+                offline: false,
+                session_bridge: false,
             }
         );
     }
@@ -473,7 +486,8 @@ mod tests {
             CliAction::parse(&args),
             CliAction::Launch {
                 paths: vec![PathBuf::from("a.gtd"), PathBuf::from("b.log")],
-                offline: false
+                offline: false,
+                session_bridge: false,
             }
         );
     }
@@ -485,7 +499,21 @@ mod tests {
             CliAction::parse(&args),
             CliAction::Launch {
                 paths: vec![PathBuf::from("a.gtd")],
-                offline: true
+                offline: true,
+                session_bridge: false,
+            }
+        );
+    }
+
+    #[test]
+    fn session_bridge_flag_enables_local_access() {
+        let args = ["--session-bridge", "--offline", "a.gtd"].map(str::to_owned);
+        assert_eq!(
+            CliAction::parse(&args),
+            CliAction::Launch {
+                paths: vec![PathBuf::from("a.gtd")],
+                offline: true,
+                session_bridge: true,
             }
         );
     }

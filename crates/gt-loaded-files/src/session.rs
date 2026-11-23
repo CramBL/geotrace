@@ -8,18 +8,22 @@ pub const MAX_RECORDINGS_PER_PAGE: usize = 100;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ListRecordings {
-    /// Resume after this ID even if its recording has been unloaded.
-    pub after: Option<LoadedFileId>,
-    pub limit: NonZeroUsize,
+    after: Option<u64>,
+    limit: NonZeroUsize,
 }
 
 impl ListRecordings {
+    /// Resume after the numeric cursor even if its recording has been unloaded.
+    pub fn new(after: Option<u64>, limit: NonZeroUsize) -> Self {
+        Self { after, limit }
+    }
+
     /// List recordings in load order, up to [`MAX_RECORDINGS_PER_PAGE`].
     pub fn execute(self, files: LoadedFilesView<'_>, name_template: &str) -> RecordingPage {
         let ids = &files.loaded_files.storage.get().ids;
         let start = self
             .after
-            .map_or(0, |after| ids.partition_point(|id| *id <= after));
+            .map_or(0, |after| ids.partition_point(|id| u64::from(*id) <= after));
         let limit = self.limit.get().min(MAX_RECORDINGS_PER_PAGE);
         let end = start.saturating_add(limit).min(ids.len());
         let recordings: Vec<_> = (start..end)
@@ -147,11 +151,8 @@ mod tests {
             ),
         );
 
-        let page = ListRecordings {
-            after: None,
-            limit: NonZeroUsize::MIN,
-        }
-        .execute(files.view(), "{identity} {title} {device} {filename}");
+        let page = ListRecordings::new(None, NonZeroUsize::MIN)
+            .execute(files.view(), "{identity} {title} {device} {filename}");
 
         let [recording] = page.recordings.as_slice() else {
             panic!("expected one recording");
@@ -171,10 +172,7 @@ mod tests {
     #[test]
     fn a_recording_without_tracks_has_no_loaded_time_range() {
         let mut files = LoadedFiles::new();
-        let request = ListRecordings {
-            after: None,
-            limit: NonZeroUsize::MIN,
-        };
+        let request = ListRecordings::new(None, NonZeroUsize::MIN);
         let empty = request.execute(files.view(), "{filename}");
         assert!(empty.recordings.is_empty());
         assert!(empty.next_after.is_none());
@@ -198,11 +196,7 @@ mod tests {
             .get(MAX_RECORDINGS_PER_PAGE)
             .expect("one more file")
             .id();
-        let first = ListRecordings {
-            after: None,
-            limit: NonZeroUsize::MAX,
-        }
-        .execute(view, "{filename}");
+        let first = ListRecordings::new(None, NonZeroUsize::MAX).execute(view, "{filename}");
         assert_eq!(first.recordings.len(), MAX_RECORDINGS_PER_PAGE);
         let cursor = first.next_after.expect("more recordings");
         let cursor_index = MAX_RECORDINGS_PER_PAGE - 1;
@@ -214,11 +208,8 @@ mod tests {
 
         let view = files.view();
         assert!(view.entry_for_id(cursor).is_none());
-        let remaining = ListRecordings {
-            after: Some(cursor),
-            limit: NonZeroUsize::MIN,
-        }
-        .execute(view, "{filename}");
+        let remaining =
+            ListRecordings::new(Some(cursor.into()), NonZeroUsize::MIN).execute(view, "{filename}");
 
         assert_eq!(remaining.recordings.len(), 1);
         assert_eq!(

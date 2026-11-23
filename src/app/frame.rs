@@ -59,6 +59,13 @@ impl PendingTrackDataDetach {
 }
 
 impl eframe::App for App {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(bridge) = &mut self.session_bridge {
+            let shared = self.shared.borrow();
+            bridge.dispatch(shared.loaded_files.view(), &shared.recording_name_template);
+        }
+    }
+
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         self.flush_settings();
     }
