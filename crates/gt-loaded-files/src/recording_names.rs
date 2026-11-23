@@ -3,7 +3,7 @@
 use gt_fmt::NameFields;
 use gt_types::{FileIdx, LoadedFile, TrackRef};
 
-use crate::{LoadedFileId, LoadedFilesView};
+use crate::{LoadedFileEntry, LoadedFileId, LoadedFilesView};
 
 /// The display name of every loaded file, resolved from the user's
 /// recording-name template.
@@ -43,15 +43,7 @@ impl RecordingNames {
                     .get(prefix_len..)
                     .filter(|name| !name.is_empty())
                     .unwrap_or(filename);
-                let fields = NameFields {
-                    title: metadata.title.as_deref(),
-                    device: metadata.device.as_deref(),
-                    // The identity's internal `auto:` marker never reaches a
-                    // label.
-                    identity: entry.identity().map(|id| crate::display_identity(id).0),
-                    filename: stripped,
-                };
-                gt_fmt::render_name_template(template, &fields)
+                gt_fmt::render_name_template(template, &entry.name_fields(stripped))
             })
             .collect();
         Self { names }
@@ -77,8 +69,8 @@ impl RecordingNames {
         recordings: LoadedFilesView<'a>,
         id: LoadedFileId,
     ) -> Option<&'a str> {
-        let index = recordings.entries().position(|entry| entry.id() == id)?;
-        self.display_name(recordings.files(), FileIdx::new(index))
+        let entry = recordings.entry_for_id(id)?;
+        self.display_name(recordings.files(), entry.fi)
     }
 
     /// How a surface labels one track: the recording's display name, with the
@@ -103,6 +95,22 @@ impl RecordingNames {
 
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
+    }
+}
+
+impl<'a> LoadedFileEntry<'a> {
+    pub fn basename(self) -> &'a str {
+        let filename = self.file.metadata.filename.as_str();
+        filename.rsplit(['/', '\\']).next().unwrap_or(filename)
+    }
+
+    pub fn name_fields(self, filename: &'a str) -> NameFields<'a> {
+        NameFields {
+            title: self.file.metadata.title.as_deref(),
+            device: self.file.metadata.device.as_deref(),
+            identity: self.identity().map(|id| crate::display_identity(id).0),
+            filename,
+        }
     }
 }
 
