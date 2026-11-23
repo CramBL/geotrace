@@ -8,8 +8,12 @@ use gt_types::{
 };
 
 pub use recording_names::RecordingNames;
+pub use session::{
+    ListRecordings, MAX_RECORDINGS_PER_PAGE, RecordingPage, RecordingSummary, SessionTrackRef,
+};
 
 mod recording_names;
+mod session;
 mod test_util;
 
 /// Split an identity into its user-facing text and whether it was auto-derived.
@@ -175,7 +179,9 @@ impl<'a> LoadedFilesView<'a> {
 
     /// The file `id` names, or `None` once it has been unloaded.
     pub fn entry_for_id(&self, id: LoadedFileId) -> Option<LoadedFileEntry<'a>> {
-        self.entries().find(|entry| entry.id() == id)
+        let storage = self.loaded_files.storage.get();
+        let index = storage.ids.binary_search(&id).ok()?;
+        self.get(index)
     }
 
     pub fn entries(&self) -> impl ExactSizeIterator<Item = LoadedFileEntry<'a>> + 'a {
@@ -308,6 +314,7 @@ fn tracks_are_time_ordered(tracks: &[LoadedTrack]) -> bool {
 pub struct IndexAlignedFiles {
     files: Vec<LoadedFile>,
     history: Vec<FileHistory>,
+    // IDs increase in file order, including across removals.
     ids: Vec<LoadedFileId>,
 }
 
@@ -378,8 +385,9 @@ impl LoadedFiles {
     }
 
     pub fn push(&mut self, file: LoadedFile, history: FileHistory) {
+        assert!(self.next_id < u64::MAX, "loaded file ids exhausted");
         let id = LoadedFileId(self.next_id);
-        self.next_id = self.next_id.saturating_add(1);
+        self.next_id += 1;
         let storage = self.storage.get_mut();
         storage.files.push(file);
         storage.history.push(history);

@@ -31,20 +31,13 @@ impl TemplatePreviewRecording {
     /// file name: with one recording in the preview there is no shared directory
     /// prefix to strip, unlike [`gt_loaded_files::RecordingNames`].
     pub fn from_loaded_file(entry: LoadedFileEntry<'_>) -> Self {
-        let metadata = &entry.file().metadata;
-        let filename = metadata
-            .filename
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(metadata.filename.as_str());
+        let fields = entry.name_fields(entry.basename());
         Self {
             origin: PreviewOrigin::LoadedFile,
-            title: metadata.title.clone(),
-            device: metadata.device.clone(),
-            identity: entry
-                .identity()
-                .map(|id| gt_loaded_files::display_identity(id).0.to_owned()),
-            filename: filename.to_owned(),
+            title: fields.title.map(ToOwned::to_owned),
+            device: fields.device.map(ToOwned::to_owned),
+            identity: fields.identity.map(ToOwned::to_owned),
+            filename: fields.filename.to_owned(),
         }
     }
 
@@ -175,10 +168,71 @@ const TOKEN_LIMIT_EXAMPLE_CHARS: usize = 12;
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
+    use geotrace_sdk::{Meta, NavFileBuilder};
     use gt_fmt::{NameFields, Token};
+    use gt_loaded_files::{FileHistory, ListRecordings, LoadedFiles};
+    use gt_track_builder::SegmentationConfig;
+    use rstest::rstest;
     use strum::IntoEnumIterator as _;
 
     use super::{STRUCTURE_FIELDS, TOKEN_LIMIT_EXAMPLE_CHARS};
+
+    #[rstest]
+    #[case::absolute_path(r"C:\private\morning.gtd", None, "morning.gtd", "morning.gtd")]
+    #[case::prefixed_path("auto:/private/morning.gtd", None, "morning.gtd", "morning.gtd")]
+    #[case::prefixed_basename("auto:morning.gtd", None, "morning.gtd", "auto:morning.gtd")]
+    #[case::explicit_identity(
+        r"C:\private\morning.gtd",
+        Some(r"C:\private\morning.gtd"),
+        r"C:\private\morning.gtd",
+        "morning.gtd"
+    )]
+    fn discovery_names_recordings_imported_from_bytes(
+        #[case] import_name: &str,
+        #[case] explicit_identity: Option<&str>,
+        #[case] expected_name: &str,
+        #[case] expected_filename: &str,
+    ) {
+        let meta = Meta::builder()
+            .maybe_identity(explicit_identity)
+            .build()
+            .expect("metadata");
+        let recording = NavFileBuilder::new()
+            .with_meta(meta)
+            .open()
+            .finish()
+            .expect("recording");
+        let mut bytes = Vec::new();
+        recording.write(&mut bytes).expect("encode recording");
+        let loaded = gt_loader::load_gtd_bytes_with_progress(
+            &bytes,
+            import_name.to_owned(),
+            |_, _| {},
+            &SegmentationConfig::default(),
+        )
+        .expect("load recording bytes");
+        let mut files = LoadedFiles::new();
+        files.push(
+            loaded.file,
+            FileHistory::recording(
+                loaded.identity,
+                gt_store::extract_meta(&bytes).expect("history metadata"),
+                None,
+            ),
+        );
+
+        let page = ListRecordings {
+            after: None,
+            limit: NonZeroUsize::MIN,
+        }
+        .execute(files.view(), "{identity}");
+
+        let summary = page.recordings.first().expect("one recording");
+        assert_eq!(summary.display_name, expected_name);
+        assert_eq!(summary.filename, expected_filename);
+    }
 
     /// Every token stands for its own name in the structure preview, so a token
     /// renamed in `gt-fmt` cannot leave the preview rendering the old name.
