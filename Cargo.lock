@@ -1417,9 +1417,9 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "earcut"
-version = "0.4.5"
+version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88459a2a8e3a514b6e6de38cf3aaa9250a894cb098f74a932db77fcc8341b6d0"
+checksum = "beecb4bee051769371e9fd229b2168782e484bd50fc5f48e9ccce4172a0037d7"
 dependencies = [
  "num-traits",
 ]
@@ -2104,8 +2104,7 @@ dependencies = [
 [[package]]
 name = "geo"
 version = "0.33.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30eb1fdc57c1e5cfd11826fe0caec4b9dc7901f3758263bb506228d88c8d9e9a"
+source = "git+https://github.com/georust/geo?rev=b2195847d898bcaf343351fe18384ad18df8e578#b2195847d898bcaf343351fe18384ad18df8e578"
 dependencies = [
  "earcut",
  "float_next_after 2.0.0",
@@ -2117,21 +2116,21 @@ dependencies = [
  "rand 0.10.2",
  "rand_pcg",
  "robust",
- "rstar 0.12.2",
+ "rstar",
  "sif-itree",
  "spade",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "geo-types"
 version = "0.7.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "777d18aa0f12f8b285331cd867133ee14422b3f023f6d388034c47d43e28786a"
+source = "git+https://github.com/georust/geo?rev=b2195847d898bcaf343351fe18384ad18df8e578#b2195847d898bcaf343351fe18384ad18df8e578"
 dependencies = [
  "approx",
  "num-traits",
  "rayon",
- "rstar 0.12.2",
+ "rstar",
  "serde",
  "spade",
  "thiserror 2.0.20",
@@ -2886,7 +2885,7 @@ dependencies = [
  "postcard",
  "proptest",
  "reqwest",
- "rstar 0.13.0",
+ "rstar",
  "rstest",
  "rustc-hash 2.1.3",
  "serde",
@@ -3167,7 +3166,7 @@ dependencies = [
  "gt-track-builder",
  "gt-types",
  "proptest",
- "rstar 0.13.0",
+ "rstar",
  "rstest",
  "rustc-hash 2.1.3",
  "uom",
@@ -3183,7 +3182,7 @@ dependencies = [
  "geo-types",
  "geotrace-sdk-units",
  "proptest",
- "rstar 0.13.0",
+ "rstar",
  "rstest",
  "rustc-hash 2.1.3",
  "serde",
@@ -3441,9 +3440,9 @@ dependencies = [
 
 [[package]]
 name = "heapless"
-version = "0.8.0"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+checksum = "411fdef4df93751117bd9ef8caa0e7f99c65dafec5bd84313eb8e2fdd75e32f2"
 dependencies = [
  "hash32",
  "stable_deref_trait",
@@ -5055,9 +5054,9 @@ dependencies = [
 
 [[package]]
 name = "ordered-float"
-version = "5.4.0"
+version = "5.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c860fd3227ca4ac3cc032e2cd20cba3f02ccdf4b610538f8ee6584d56bb62e96"
+checksum = "7f59006ce1e204c30956638535b74d317bca99477b9356dfaec54c37f6f600ab"
 dependencies = [
  "num-traits",
 ]
@@ -5985,23 +5984,13 @@ dependencies = [
 
 [[package]]
 name = "rstar"
-version = "0.12.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "421400d13ccfd26dfa5858199c30a5d76f9c54e0dba7575273025b43c5175dbb"
+checksum = "d95c33d01e9acee7be3363f99e9ef88b1a587186e81e03843fbe39d77d9a0c1f"
 dependencies = [
  "heapless",
  "num-traits",
- "smallvec",
-]
-
-[[package]]
-name = "rstar"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5912b862fa5ffb462607bfd1e35036c458c537921f508c8235a83d5f3987edfe"
-dependencies = [
- "heapless",
- "num-traits",
+ "ordered-float",
  "smallvec",
 ]
 
