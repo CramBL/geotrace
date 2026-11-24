@@ -33,6 +33,7 @@ use log_viewer::association_dialog::LogAssociationDialog;
 use panes::MainPane;
 use recording_name_template::TemplatePreviewRecording;
 use rustc_hash::{FxHashMap, FxHashSet};
+use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use settings_ui::SettingsPage;
 use settings_ui::search::SettingsSearch;
@@ -90,6 +91,7 @@ mod recording_name_template;
 mod recording_names_cache;
 mod recording_ui_state;
 mod reference_window;
+mod session_map;
 mod session_query;
 mod settings_autosave;
 mod settings_ui;
@@ -139,9 +141,9 @@ struct SharedAppState {
     popup_pos_request: Option<egui::Pos2>,
     /// When `true`, `NavMap::draw` zooms the map to fit all currently visible data.
     zoom_to_visible_request: bool,
-    /// Set by a map button in the query window, consumed by `NavMap::draw`
-    /// to frame the matches it identifies and play the reveal animation again.
     reveal_query_matches_request: Option<gt_ui_types::MatchRevealTarget>,
+    pending_session_map: Option<QueuedMapPresentation>,
+    presented_session_map: Option<AppliedMapPresentation>,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
     /// The recording whose metadata-details dialog is open, if any.
@@ -669,6 +671,8 @@ impl App {
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
                 reveal_query_matches_request: None,
+                pending_session_map: None,
+                presented_session_map: None,
                 sky_trails_request: None,
                 reference_document_request: None,
                 warnings_popup: None,

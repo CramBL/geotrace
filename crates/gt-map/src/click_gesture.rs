@@ -1,5 +1,5 @@
 use egui::{Key, PointerButton};
-use gt_ui_types::{LogMatchGlyph, MapElementRef};
+use gt_ui_types::{LogMatchGlyph, PinRevision, PinSelection};
 use walkers::{MapMemory, Position};
 
 use crate::controls::DoubleClickBehavior;
@@ -34,7 +34,7 @@ pub(crate) struct ClassifiedMapClick {
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct ClickSelection {
-    pub(crate) sticky: Option<MapElementRef>,
+    pub(crate) pin: Option<PinSelection>,
     pub(crate) sticky_pos: egui::Pos2,
     pub(crate) candidates: HoverCandidates,
     pub(crate) disambiguation_pos: egui::Pos2,
@@ -70,6 +70,10 @@ impl ClickCamera {
 }
 
 impl PendingClick {
+    fn matches_view(&self, selection: ClickSelection, camera: &ClickCamera) -> bool {
+        self.after == selection && &self.camera == camera
+    }
+
     fn receives_popup_double_click(&self, ui: &egui::Ui, response: &egui::Response) -> bool {
         let Some(position) = ui.input(|input| input.pointer.interact_pos()) else {
             return false;
@@ -81,8 +85,9 @@ impl PendingClick {
             ))
         } else {
             self.after
-                .sticky
-                .filter(|sticky| Some(*sticky) != self.before.sticky)
+                .pin
+                .and_then(PinSelection::element)
+                .filter(|sticky| Some(*sticky) != self.before.pin.and_then(PinSelection::element))
                 .map(|sticky| {
                     egui::LayerId::new(
                         egui::Order::Middle,
@@ -101,6 +106,30 @@ impl PendingClick {
 }
 
 impl PrimaryClickState {
+    pub(crate) fn pin_rollback_revision(
+        &self,
+        selection: ClickSelection,
+        camera: &MapMemory,
+    ) -> Option<PinRevision> {
+        let pending = self.pending.as_ref()?;
+        if !pending.matches_view(selection, &ClickCamera::of(camera)) {
+            return None;
+        }
+        pending
+            .before
+            .pin
+            .filter(|pin| pin.element().is_some())
+            .map(PinSelection::revision)
+    }
+
+    pub(crate) fn discard_pin_rollback(&mut self, revision: PinRevision) {
+        if let Some(pending) = &mut self.pending
+            && pending.before.pin.map(PinSelection::revision) == Some(revision)
+        {
+            pending.before.pin = None;
+        }
+    }
+
     pub(crate) fn classify(
         &mut self,
         ui: &egui::Ui,
@@ -125,7 +154,7 @@ impl PrimaryClickState {
         let pending = self
             .pending
             .take()
-            .filter(|pending| pending.after == selection && pending.camera == camera);
+            .filter(|pending| pending.matches_view(selection, &camera));
         let position = response
             .interact_pointer_pos()
             .or_else(|| ui.input(|input| input.pointer.interact_pos()));

@@ -802,7 +802,7 @@ enum ResultsTable {
 }
 
 /// The topmost point row's time cell and the time it states.
-fn topmost_point_row(harness: &Harness<'_, App>) -> (egui::Rect, String) {
+pub(super) fn topmost_point_row(harness: &Harness<'_, App>) -> (egui::Rect, String) {
     time_rows(harness, ResultsTable::Points)
         .into_iter()
         .next()

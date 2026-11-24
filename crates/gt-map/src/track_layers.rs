@@ -330,12 +330,12 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                     continue;
                 }
                 let track_ref = TrackRef::new(fi, ti);
-                let hover_match = self
+                let highlighted_match = self
                     .highlight
-                    .hover_match
+                    .map_match()
                     .filter(|hm| hm.track == track_ref);
                 let query_highlights_present = entry.query_highlights()
-                    && (hover_match.is_some()
+                    && (highlighted_match.is_some()
                         || self.query_matches.is_some_and(|matches| {
                             matches
                                 .draws
@@ -386,7 +386,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                 let walked_level_indices = walk.walked_level_indices();
                 let mut occupied_ring_cells = FxHashSet::default();
                 let mut occupied_band_cells = FxHashSet::default();
-                let highlighted_paths = hover_match
+                let highlighted_paths = highlighted_match
                     .filter(|_| entry.query_highlights())
                     .into_iter()
                     .flat_map(|highlight| {
@@ -465,8 +465,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
     /// Paint every track's query-match halos beneath its lines, for the
     /// entries that pass the `filter(index)` predicate. Runs in the same
     /// phases as the tracklines so the fade overlay dims halos consistently.
-    /// The match hovered in the results table paints last, in the highlight
-    /// blue, so it reads above the draw layers it may overlap.
+    /// The hovered or presented range appears above the run's draw layers.
     fn paint_match_halos<F>(
         &self,
         ui: &Ui,
@@ -485,8 +484,8 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
             .query_matches
             .map(|m| (m.draws.as_slice(), m.stale))
             .filter(|(draws, _)| !draws.is_empty());
-        let hover_match = self.highlight.hover_match;
-        if draws.is_none() && hover_match.is_none() {
+        let highlighted_match = self.highlight.map_match();
+        if draws.is_none() && highlighted_match.is_none() {
             return;
         }
         let halo = HaloStyle::new(style, self.match_reveal);
@@ -515,8 +514,6 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                     !key.hidden && key.matched.contains(layer_idx)
                 });
             }
-            // The hovered match paints settled: the reveal belongs to the
-            // draw layers of the run.
             for path in &geo.highlighted_paths {
                 Self::paint_halo_path(
                     ui,

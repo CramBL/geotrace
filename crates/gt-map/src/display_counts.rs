@@ -10,8 +10,8 @@ use gt_types::{
 use gt_ui_types::log_matches::LogMatchScope;
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatches, MapElementRef,
-    MapEligibility, MapEligibilityResult, QueryMatches, SkyGlyphVariant, SnappedTracks,
-    TrackDataVisibility,
+    MapEligibility, MapEligibilityResult, MatchHighlight, QueryMatches, SkyGlyphVariant,
+    SnappedTracks, TrackDataVisibility,
 };
 
 use crate::MapFiles;
@@ -61,6 +61,11 @@ pub struct DisplayCounts {
 }
 
 impl DisplayCounts {
+    pub(crate) fn including_map_presentation(mut self, presented: Option<MatchHighlight>) -> Self {
+        self.query_highlights += usize::from(presented.is_some());
+        self
+    }
+
     pub fn sky_glyphs(self, variant: SkyGlyphVariant) -> usize {
         match variant {
             SkyGlyphVariant::Ring => self.sky_glyphs,

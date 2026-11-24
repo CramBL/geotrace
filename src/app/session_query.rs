@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::App;
 use super::query_run::{BackgroundQuery, QuerySeries};
+use super::session_map::MapPresentation;
 
 #[derive(Default)]
 pub(super) struct SessionQuery {
@@ -92,6 +93,19 @@ struct Job {
     query: BackgroundQuery,
     phase: JobPhase,
     data_generation: Generation<RecordingData>,
+}
+
+#[derive(Default)]
+struct StagedSessionChanges {
+    job: Option<Job>,
+    map: Option<MapPresentation>,
+}
+
+impl StagedSessionChanges {
+    fn queue_map(&mut self, presentation: MapPresentation) -> Reply {
+        self.map = Some(presentation);
+        Reply::MapPresentationQueued
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -206,11 +220,11 @@ impl App {
     pub(super) fn dispatch_session_request(&mut self, ctx: &egui::Context) {
         self.session_query.poll();
         if let Some(mut bridge) = self.session_bridge.take() {
-            let mut staged = None;
+            let mut staged = StagedSessionChanges::default();
             let handed_off =
                 bridge.dispatch(|request| self.execute_session_request(request, &mut staged));
-            if handed_off && let Some(job) = staged {
-                self.session_query.job = Some(job);
+            if handed_off {
+                self.adopt_session_changes(staged);
             }
             self.session_bridge = Some(bridge);
         }
@@ -232,18 +246,25 @@ impl App {
 
     #[cfg(test)]
     pub(super) fn execute_session_request_in_test(&mut self, request: SessionRequest) -> Reply {
-        let mut staged = None;
+        let mut staged = StagedSessionChanges::default();
         let reply = self.execute_session_request(request, &mut staged);
-        if let Some(job) = staged {
+        self.adopt_session_changes(staged);
+        reply
+    }
+
+    fn adopt_session_changes(&mut self, staged: StagedSessionChanges) {
+        if let Some(job) = staged.job {
             self.session_query.job = Some(job);
         }
-        reply
+        if let Some(presentation) = staged.map {
+            self.shared.borrow_mut().queue_session_map(presentation);
+        }
     }
 
     fn execute_session_request(
         &mut self,
         request: SessionRequest,
-        staged: &mut Option<Job>,
+        staged: &mut StagedSessionChanges,
     ) -> Reply {
         let mut queries = std::mem::take(&mut self.session_query);
         let result = match request.request {
@@ -264,12 +285,18 @@ impl App {
                     job.reply()
                 })
             }
+            Request::OpenPoint(args) => self
+                .session_open_point(request.session, args)
+                .map(|presentation| staged.queue_map(presentation)),
             Request::RunQuery(args) => queries.submit(
                 self.shared.borrow().loaded_files.view(),
                 request.session,
                 args.text,
-                staged,
+                &mut staged.job,
             ),
+            Request::ShowOnMap(args) => self
+                .session_show_on_map(request.session, args)
+                .map(|presentation| staged.queue_map(presentation)),
             _ => {
                 let shared = self.shared.borrow();
                 Ok(request.inspect(shared.loaded_files.view(), &shared.recording_name_template))

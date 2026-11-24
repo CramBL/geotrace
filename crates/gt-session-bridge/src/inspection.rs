@@ -1,9 +1,7 @@
 use std::num::NonZeroUsize;
 
 use chrono::{DateTime, Utc};
-use gt_loaded_files::{
-    ListRecordings as ListLoadedRecordings, LoadedFileEntry, LoadedFilesView, RecordingSummary,
-};
+use gt_loaded_files::{ListRecordings as ListLoadedRecordings, LoadedFilesView, RecordingSummary};
 use gt_types::{GeoBounds, GpsTime, LoadedTrack, NavPoint, PointIdx, SysTime, TrackIdx, TrackRef};
 use serde::{Deserialize, Serialize};
 use uom::si::length::meter;
@@ -12,8 +10,8 @@ use uuid::Uuid;
 
 use crate::metrics::Metrics;
 use crate::protocol::{
-    ErrorCode, GetRangeDetails, GetRecording, ListRecordings, Recording, RecordingReference,
-    Recordings, Reply, Request, TimeRange, TrackReference,
+    ErrorCode, GetRangeDetails, GetRecording, ListRecordings, Recording, Recordings, Reply,
+    Request, TimeRange, TrackReference,
 };
 use crate::query_validation::QueryValidation;
 
@@ -29,7 +27,9 @@ impl<'a> Inspection<'a> {
             Request::CancelQuery(_)
             | Request::GetQueryResults(_)
             | Request::GetQueryStatus(_)
-            | Request::RunQuery(_) => Err(ErrorCode::InvalidRequest),
+            | Request::OpenPoint(_)
+            | Request::RunQuery(_)
+            | Request::ShowOnMap(_) => Err(ErrorCode::InvalidRequest),
             Request::CheckQuery(args) => QueryValidation::check(args.text, self.files.files())
                 .map(|validation| Reply::QueryCheck { validation }),
             Request::GetRangeDetails(args) => {
@@ -56,7 +56,7 @@ impl<'a> Inspection<'a> {
         ListRecordings { after, limit }: ListRecordings,
     ) -> Result<Recordings, ErrorCode> {
         let after = after
-            .map(|reference| self.recording_number(reference))
+            .map(|reference| reference.number_in(self.session))
             .transpose()?;
         let page = ListLoadedRecordings::new(after, limit.unwrap_or(NonZeroUsize::MAX))
             .execute(self.files, self.name_template);
@@ -71,7 +71,7 @@ impl<'a> Inspection<'a> {
             limit,
         }: GetRecording,
     ) -> Result<RecordingDetails, ErrorCode> {
-        let entry = self.recording(recording)?;
+        let entry = recording.resolve(self.files, self.session)?;
         let start = if let Some(after) = after {
             if after.recording != recording {
                 return Err(ErrorCode::StaleTrack);
@@ -141,41 +141,11 @@ impl<'a> Inspection<'a> {
         })
     }
 
-    fn track(
-        &self,
-        TrackReference {
-            recording,
-            index,
-            revision,
-        }: TrackReference,
-    ) -> Result<&'a LoadedTrack, ErrorCode> {
-        let entry = self.recording(recording)?;
-        let address = self
-            .files
-            .resolve_track_at_revision(entry.id(), TrackIdx::new(index), revision)
-            .ok_or(ErrorCode::StaleTrack)?;
+    fn track(&self, reference: TrackReference) -> Result<&'a LoadedTrack, ErrorCode> {
+        let address = reference.resolve(self.files, self.session)?;
         address
-            .index
-            .get(&entry.file().tracks)
+            .resolve(self.files.files())
             .ok_or(ErrorCode::StaleTrack)
-    }
-
-    fn recording(&self, reference: RecordingReference) -> Result<LoadedFileEntry<'a>, ErrorCode> {
-        let number = self.recording_number(reference)?;
-        self.files
-            .entry_for_id_number(number)
-            .ok_or(ErrorCode::RecordingNotFound)
-    }
-
-    fn recording_number(
-        &self,
-        RecordingReference { session, number }: RecordingReference,
-    ) -> Result<u64, ErrorCode> {
-        if session == self.session {
-            Ok(number)
-        } else {
-            Err(ErrorCode::StaleSession)
-        }
     }
 }
 

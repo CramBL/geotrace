@@ -195,6 +195,17 @@ Cells have status `finite` with a numeric value, `missing`, or `non_finite`.
 Both page kinds return at most 100 entries and 2,048 values.
 Column metadata that exceeds 64 KiB causes a size error.
 
+Pass a `target` with `kind` set to `track` and a checked `track` reference to `show_on_map` to frame and highlight its visible path.
+Set `target.start` and `target.end` for a half-open range of original point indices, or omit them for the whole track.
+Range highlighting uses the map's Query highlights setting.
+Pass a `track` and a zero-based `point` index to `open_point` to center the map and open point information.
+Both tools use the current filters and visibility and report an error for a target with no visible geometry.
+The `map_presentation_queued` status acknowledges the request.
+GeoTrace applies the request when the map next draws if the recording, filter, query run, and target visibility still permit it.
+A later camera request supersedes a queued request.
+A later pin change supersedes a queued point request.
+Use Query highlights to hide or show an active range.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

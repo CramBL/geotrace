@@ -70,6 +70,11 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
         match pane {
             MainPane::Map => {
                 let s = &mut *self.state;
+                let presentation_camera = if ui.max_rect().intersect(ui.clip_rect()).is_positive() {
+                    s.apply_session_map(self.map, self.query_matches)
+                } else {
+                    None
+                };
                 let center_req = s.map_center_request.take();
                 let popup_pos = s.popup_pos_request.take();
                 let zoom_to_visible = std::mem::replace(&mut s.zoom_to_visible_request, false);
@@ -105,6 +110,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         zoom_to_visible,
                         reveal_query_matches,
                         sticky_pos_override: popup_pos,
+                        presentation_camera,
                     },
                 ) {
                     match action {

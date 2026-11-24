@@ -5,7 +5,7 @@ use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
     CheckQuery, ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, QueryJobRequest, Reply, Request,
+    ListRecordings, OpenPoint, QueryJobRequest, Reply, Request, ShowOnMap,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -128,6 +128,18 @@ impl Companion {
     }
 
     #[tool(
+        description = "Center the map on a visible recorded point and open its point information.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn open_point(&self, Parameters(args): Parameters<OpenPoint>) -> CallToolResult {
+        self.inspect(Request::OpenPoint(args)).await
+    }
+
+    #[tool(
         description = "Start a background query using the current filter and enabled tracks. A busy response includes the active job ID. Poll the job with get_query_status.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
@@ -135,9 +147,22 @@ impl Companion {
         self.inspect(Request::RunQuery(args)).await
     }
 
+    #[tool(
+        description = "Frame and highlight a visible track or half-open range of original point indices on the map.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn show_on_map(&self, Parameters(args): Parameters<ShowOnMap>) -> CallToolResult {
+        self.inspect(Request::ShowOnMap(args)).await
+    }
+
     async fn inspect(&self, request: Request) -> CallToolResult {
         let checking_query = matches!(&request, Request::CheckQuery(_) | Request::RunQuery(_));
         let result = match self.bridge.request(request).await {
+            Ok(reply @ Reply::MapPresentationQueued) => serde_json::to_value(reply),
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
             Ok(Reply::QueryJob { job }) => serde_json::to_value(job),
@@ -167,17 +192,23 @@ impl Companion {
     fn reply_error_message(code: ErrorCode) -> &'static str {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
+            ErrorCode::InvalidPoint => "The point index is outside the track.",
             ErrorCode::InvalidQueryCursor => "The query, match or row index is outside the result.",
             ErrorCode::InvalidRange => "Choose an ordered point range within the track.",
             ErrorCode::InvalidRequest => {
                 "GeoTrace could not read the request. Use the companion from the same release."
+            }
+            ErrorCode::NoVisibleMapGeometry => {
+                "The selected points have no visible geometry under the current map settings."
             }
             ErrorCode::QueryColumnsTooLarge => "Query result columns exceed the page size limit.",
             ErrorCode::QueryJobNotFound => {
                 "GeoTrace no longer has that query job. Start the query again."
             }
             ErrorCode::QueryNotComplete => "The query is still in progress. Poll its status.",
-            ErrorCode::QueryResultsUnavailable => "The query job completed without results.",
+            ErrorCode::QueryResultsUnavailable => {
+                "This query job has no results. Check its status."
+            }
             ErrorCode::RecordingNotFound => {
                 "The recording is no longer loaded. List the loaded recordings again."
             }

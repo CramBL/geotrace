@@ -45,8 +45,8 @@ use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
 use crate::{
-    MapAction, MapDrawContext, MapFiles, NavMap, SpaceWeatherIndicator, TecHeatmapSnapshot,
-    TecLayer, TileAccess, ViewportBounds, icon_mesh,
+    MapAction, MapDrawContext, MapFiles, NavMap, PresentationCamera, SpaceWeatherIndicator,
+    TecHeatmapSnapshot, TecLayer, TileAccess, ViewportBounds, icon_mesh,
 };
 
 /// [`TestHarness::builder`] plus the GPU icon pipeline the application
@@ -520,6 +520,7 @@ impl DrawState {
             zoom_to_visible: false,
             reveal_query_matches: None,
             sticky_pos_override: None,
+            presentation_camera: None,
         }
     }
 }
@@ -532,6 +533,7 @@ pub struct Overlays {
     pub jamming_dataset: Option<JamDataset>,
     pub query_matches: Option<QueryMatches>,
     pub reveal: Option<MatchRevealTarget>,
+    pub presentation_camera: Option<PresentationCamera>,
 }
 
 /// The recordings and overlays one case draws, the canvas it draws them on,
@@ -711,6 +713,7 @@ impl MapScene {
                         jamming_dataset: overlays.jamming_dataset.as_ref(),
                         query_matches: overlays.query_matches.as_ref(),
                         reveal_query_matches: overlays.reveal.clone(),
+                        presentation_camera: overlays.presentation_camera,
                         ..draw.context(files, visibility)
                     },
                 );
@@ -761,6 +764,12 @@ pub struct RenderedMap {
 }
 
 impl RenderedMap {
+    pub fn add_file(&mut self, file: LoadedFile) {
+        let state = self.harness.state_mut();
+        state.files.push(file);
+        state.visibility = TrackDataVisibility::from_loaded(&state.files);
+    }
+
     /// Renders one more frame, with the pointer where the last one left it.
     pub fn render_one_more_frame(&mut self) {
         self.harness.step();

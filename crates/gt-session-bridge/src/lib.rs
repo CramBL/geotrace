@@ -20,7 +20,8 @@ pub use crate::metrics::{
 };
 pub use crate::protocol::{
     CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
-    Recording, RecordingReference, Recordings, Reply, Request, TimeRange, TrackReference,
+    MapTarget, OpenPoint, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap,
+    TimeRange, TrackReference,
 };
 pub use crate::query_job::{
     QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
