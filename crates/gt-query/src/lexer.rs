@@ -163,6 +163,19 @@ pub struct Tok<'src> {
     pub text: &'src str,
 }
 
+/// Format a channel reference if the labels are valid query identifiers.
+pub fn channel_reference(name: &str, component: Option<&str>) -> Option<String> {
+    if name.contains('.') || component.is_some_and(|label| label.contains('.')) {
+        return None;
+    }
+    let reference = match component {
+        Some(component) => format!("@{name}.{component}"),
+        None => format!("@{name}"),
+    };
+    let mut lexer = Token::lexer(&reference);
+    (lexer.next() == Some(Ok(Token::Channel)) && lexer.slice() == reference).then_some(reference)
+}
+
 /// Tokenize the whole input for parsing: comments are dropped, and the first
 /// offending character is an error.
 pub fn lex(src: &str) -> Result<Vec<Tok<'_>>, Diagnostic> {

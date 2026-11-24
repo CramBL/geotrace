@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListRecordings, Reply, Request,
+    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings, Reply, Request,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -66,6 +66,14 @@ impl Companion {
     }
 
     #[tool(
+        description = "List built-in query metric definitions and a page of loaded recording channels.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_metrics(&self, Parameters(args): Parameters<ListMetrics>) -> CallToolResult {
+        self.inspect(Request::ListMetrics(args)).await
+    }
+
+    #[tool(
         description = "List loaded GeoTrace recordings. Use next_after as after for the next page.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -78,6 +86,7 @@ impl Companion {
 
     async fn inspect(&self, request: Request) -> CallToolResult {
         let result = match self.bridge.request(request).await {
+            Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::Range { details }) => serde_json::to_value(details),
             Ok(Reply::Recording { details }) => serde_json::to_value(details),
             Ok(Reply::Recordings { page }) => serde_json::to_value(page),

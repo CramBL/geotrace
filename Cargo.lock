@@ -3084,6 +3084,8 @@ version = "0.19.0"
 dependencies = [
  "chrono",
  "gt-loaded-files",
+ "gt-query",
+ "gt-query-run",
  "gt-test-utils",
  "gt-types",
  "interprocess",

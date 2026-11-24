@@ -10,6 +10,7 @@ use uom::si::length::meter;
 use uom::si::velocity::meter_per_second;
 use uuid::Uuid;
 
+use crate::metrics::Metrics;
 use crate::protocol::{
     ErrorCode, GetRangeDetails, GetRecording, ListRecordings, Recording, RecordingReference,
     Recordings, Reply, Request, TimeRange, TrackReference,
@@ -32,6 +33,9 @@ impl<'a> Inspection<'a> {
                 .map(|details| Reply::Recording { details }),
             Request::GetTrack(args) => self.track(args.track).map(|track| Reply::Track {
                 details: TrackDetails::new(track),
+            }),
+            Request::ListMetrics(args) => Ok(Reply::Metrics {
+                page: Metrics::from_files(self.files.files(), args),
             }),
             Request::ListRecordings(args) => {
                 self.recordings(args).map(|page| Reply::Recordings { page })

@@ -39,6 +39,12 @@ pub struct ChannelInfo {
 }
 
 impl ChannelInfo {
+    pub fn component_index(&self, label: &str) -> Option<usize> {
+        self.components
+            .iter()
+            .position(|component| component == label)
+    }
+
     /// The period this channel's samples wrap at. `None` for a channel whose
     /// unit is not an angle, whose declared period is absent, or whose
     /// declared period is not finite and positive.
@@ -100,9 +106,13 @@ impl ChannelSchema {
         self.channels.get(name)
     }
 
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut ChannelInfo> {
+        self.channels.get_mut(name)
+    }
+
     /// Every channel as a `(name, info)` pair, in the map's arbitrary order.
     /// Callers that show the channels (completion, hover) sort as they see fit.
-    pub(crate) fn iter_unsorted(&self) -> impl Iterator<Item = (&str, &ChannelInfo)> {
+    pub fn iter_unsorted(&self) -> impl Iterator<Item = (&str, &ChannelInfo)> {
         self.channels
             .iter()
             .map(|(name, info)| (name.as_str(), info))
@@ -600,7 +610,7 @@ fn resolve_component(c: &ChannelRef, info: &ChannelInfo) -> Result<Option<usize>
                     format!("reference the scalar @{} without a component", c.name),
                 ));
             }
-            match info.components.iter().position(|comp| comp == label) {
+            match info.component_index(label) {
                 Some(index) => Ok(Some(index)),
                 None => Err(err_hint(
                     c.span,
@@ -1387,7 +1397,7 @@ fn reject_channel_conflicts(name: &str, info: &ChannelInfo, span: Span) -> Resul
 }
 
 impl ChannelConflict {
-    fn description(&self) -> String {
+    pub fn description(&self) -> String {
         match self {
             Self::Unit { expected, found } => format!(
                 "units {} and {}",

@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta};
 use gt_session_bridge::{
-    GetRangeDetails, ListRecordings, PointDetails, RangeDetails, Recording, RecordingReference,
-    Recordings, Reply, Request, TrackReference,
+    GetRangeDetails, ListMetrics, ListRecordings, Metrics, PointDetails, RangeDetails, Recording,
+    RecordingReference, Recordings, Reply, Request, TrackReference,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -77,6 +77,7 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
             "get_range_details",
             "get_recording",
             "get_track",
+            "list_metrics",
             "list_recordings"
         ]
     );
@@ -148,6 +149,17 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
         points.pointer("/result/structuredContent/points/0/time"),
         Some(&json!("1970-01-01T00:00:00.000000021Z"))
     );
+    let metrics = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": "list_metrics", "arguments": {"channel_start": 3, "channel_limit": 1}}
+        }))
+        .await;
+    assert_eq!(metrics.pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(
+        metrics.pointer("/result/structuredContent"),
+        Some(&json!({"definitions": [], "channels": [], "next_channel_start": 4}))
+    );
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -165,6 +177,16 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
             after: Some(after),
             limit: Some(NonZeroUsize::MIN),
         }) if after == self::recording_id(6) => Ok(self::recording_page()),
+        Request::ListMetrics(ListMetrics {
+            channel_start: Some(3),
+            channel_limit: Some(NonZeroUsize::MIN),
+        }) => Ok(Reply::Metrics {
+            page: Metrics {
+                definitions: Vec::new(),
+                channels: Vec::new(),
+                next_channel_start: Some(4),
+            },
+        }),
         Request::GetRangeDetails(GetRangeDetails {
             track,
             start: None,
