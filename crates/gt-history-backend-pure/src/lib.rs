@@ -1,16 +1,17 @@
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
+
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
-    GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentId,
-    LogAttachmentListingEntry, NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingDebugTag,
-    RecordingEntry, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording,
-    StoredSegmentation, TrackRange, TrackState, UiStateVersionReporter,
+    GTD_META_TRAVEL_MODE_ATTR, HISTORY_LOCK as DB_LOCK, HistoryAccess, HistoryDatabase,
+    LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
+    ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState,
+    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, TrackState,
+    UiStateVersionReporter,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
-use parking_lot::Mutex;
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
 
 pub mod copy;
 
@@ -303,7 +304,8 @@ impl HistoryDatabase for PureDb {
         settings: StoredSegmentation,
         bytes: &[u8],
     ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_recording_snapshots(self, std::slice::from_ref(db_ref))?;
         copy::replace_recording(&self.path, db_ref, meta, tracks, settings, bytes)
             .map_err(Into::into)
     }
@@ -314,7 +316,8 @@ impl HistoryDatabase for PureDb {
         tracks: &[TrackRange],
         settings: StoredSegmentation,
     ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_track_snapshots(self, db_ref)?;
         copy::set_tracks(
             &self.path,
             &db_ref.identity,
@@ -387,7 +390,8 @@ impl HistoryDatabase for PureDb {
     }
 
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_recording_snapshots(self, refs)?;
         if refs.is_empty() {
             return Ok(());
         }
@@ -395,7 +399,10 @@ impl HistoryDatabase for PureDb {
     }
 
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        if old != new {
+            access.invalidate_identity_snapshots(self, [old, new])?;
+        }
         copy::rename_identity(&self.path, old, new).map_err(Into::into)
     }
 }
@@ -595,5 +602,3 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         debug_tag: None,
     })
 }
-
-static DB_LOCK: Mutex<()> = Mutex::new(());

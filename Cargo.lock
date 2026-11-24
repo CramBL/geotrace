@@ -2703,7 +2703,6 @@ dependencies = [
  "gt-history-types",
  "hdf5-pure",
  "log",
- "parking_lot",
  "thiserror 2.0.20",
  "uuid",
 ]
@@ -2715,7 +2714,6 @@ dependencies = [
  "gt-history-types",
  "hdf5-metno",
  "log",
- "parking_lot",
  "rstest",
  "tempfile",
  "thiserror 2.0.20",
@@ -2732,6 +2730,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rstest",
+ "same-file",
  "serde",
  "serde_json",
  "strum",

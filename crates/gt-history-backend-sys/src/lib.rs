@@ -1,13 +1,12 @@
-use gt_history_types::{
-    CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
-    LogAttachmentListingEntry, NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry,
-    RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
-    TrackRange, UiStateVersionReporter, log_attachment,
-};
-
-use parking_lot::Mutex;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+
+use gt_history_types::{
+    CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HISTORY_LOCK as DB_LOCK, HistoryAccess,
+    HistoryDatabase, LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
+    ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR,
+    StoredRecording, StoredSegmentation, TrackRange, UiStateVersionReporter, log_attachment,
+};
 
 pub mod copy;
 
@@ -332,7 +331,8 @@ impl HistoryDatabase for SysDb {
         settings: StoredSegmentation,
         bytes: &[u8],
     ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_recording_snapshots(self, std::slice::from_ref(db_ref))?;
         crate::copy::replace_recording(&self.path, db_ref, meta, tracks, settings, bytes)
             .map_err(Into::into)
     }
@@ -343,7 +343,8 @@ impl HistoryDatabase for SysDb {
         tracks: &[TrackRange],
         settings: StoredSegmentation,
     ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_track_snapshots(self, db_ref)?;
         crate::copy::set_tracks(
             &self.path,
             &db_ref.identity,
@@ -422,51 +423,29 @@ impl HistoryDatabase for SysDb {
     }
 
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_recording_snapshots(self, refs)?;
         let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
         let by_id = file
             .group("by_identity")
             .map_err(|e| DbError::Backend(e.to_string()))?;
         let mut attachments = Vec::new();
+        let mut groups_to_delete = Vec::new();
         for db_ref in refs {
-            let storage_name = gt_history_types::identity_group_name(&db_ref.identity);
-            let id_grp = match by_id.group(&storage_name) {
-                Ok(group) => Some(group),
-                Err(encoded_err) => {
-                    if db_ref.identity.contains('/') {
-                        log::debug!(
-                            "delete_batch could not open encoded identity group for identity={:?}: {encoded_err}",
-                            db_ref.identity
-                        );
-                        None
-                    } else {
-                        match by_id.group(&db_ref.identity) {
-                            Ok(group) => Some(group),
-                            Err(raw_err) => {
-                                log::debug!(
-                                    "delete_batch could not open encoded or legacy identity group for identity={:?}: encoded={encoded_err}; legacy={raw_err}",
-                                    db_ref.identity
-                                );
-                                None
-                            }
-                        }
-                    }
-                }
-            };
-            let Some(id_grp) = id_grp else {
-                log::warn!(
-                    "delete_batch could not find identity={:?}, group={:?}",
-                    db_ref.identity,
-                    db_ref.group_name
-                );
-                continue;
-            };
-            if id_grp.link_exists(&db_ref.group_name) {
-                if let Ok(rec_grp) = id_grp.group(&db_ref.group_name) {
+            if let Some((_, group)) =
+                crate::copy::find_identity_group(&by_id, &db_ref.identity, Some(&db_ref.group_name))
+                    .map_err(DbError::from)?
+            {
+                groups_to_delete.push((group, &db_ref.group_name));
+            }
+        }
+        for (id_grp, group_name) in groups_to_delete {
+            if id_grp.link_exists(group_name) {
+                if let Ok(rec_grp) = id_grp.group(group_name) {
                     attachments.extend(crate::copy::log_attachment_ids(&rec_grp));
                 }
                 id_grp
-                    .unlink(&db_ref.group_name)
+                    .unlink(group_name)
                     .map_err(|e| DbError::Backend(e.to_string()))?;
             }
         }
@@ -478,12 +457,13 @@ impl HistoryDatabase for SysDb {
     }
 
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        if old != new {
+            access.invalidate_identity_snapshots(self, [old, new])?;
+        }
         crate::copy::rename_identity(&self.path, old, new).map_err(Into::into)
     }
 }
-
-static DB_LOCK: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
 mod tests {

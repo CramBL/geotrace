@@ -20,6 +20,7 @@ chrono = { workspace = true, features = ["serde"] }
 gt-types = { path = "../gt-types" }
 log.workspace = true
 parking_lot.workspace = true
+same-file = "1"
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 strum.workspace = true

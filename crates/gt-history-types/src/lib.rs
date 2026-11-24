@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::path::Path;
@@ -13,6 +14,7 @@ pub use log_attachment::{
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
     StoredLogSettings, StoredYearResolution, logs_directory_for_database,
 };
+pub use track_snapshot::{HISTORY_LOCK, HistoryAccess, StoredTrackSnapshot};
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,
     UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, UiStateVersionTooNew,
@@ -21,6 +23,7 @@ pub use ui_state::{
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures;
 pub mod log_attachment;
+mod track_snapshot;
 pub mod ui_state;
 
 /// Return the HDF5 child-group name used to store an identity.
@@ -55,6 +58,21 @@ pub fn identity_from_group_name(group_name: &str) -> Option<String> {
         bytes.push((hi << 4) | lo);
     }
     String::from_utf8(bytes).ok()
+}
+
+pub fn is_history_link_name(name: &str) -> bool {
+    !matches!(name, "" | "." | "..") && !name.contains('/')
+}
+
+pub fn identity_group_candidates(identity: &str) -> impl Iterator<Item = Cow<'_, str>> {
+    std::iter::once(Cow::Owned(identity_group_name(identity)))
+        .chain(is_history_link_name(identity).then_some(Cow::Borrowed(identity)))
+}
+
+pub fn stored_identity_for_group(group_name: &str, declared_identity: Option<String>) -> String {
+    declared_identity
+        .or_else(|| identity_from_group_name(group_name))
+        .unwrap_or_else(|| group_name.to_owned())
 }
 
 fn hex_nibble(byte: u8) -> Option<u8> {
@@ -191,7 +209,9 @@ impl<'a> TrackStateColumn<'a> {
 /// A reference to a specific recording stored in the history database.
 ///
 /// Identifies the HDF5 group at `by_identity/{identity}/{group_name}`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub struct DatabaseRef {
     pub identity: String,
     pub group_name: String,
@@ -657,6 +677,10 @@ pub enum DbError {
     Io(#[from] std::io::Error),
     #[error("database schema version {found} is newer than supported {supported}")]
     SchemaTooNew { found: i64, supported: i64 },
+    #[error(
+        "the stored recording or its track layout changed. Reopen the recording before changing its tracks"
+    )]
+    StoredTrackLayoutChanged,
     #[error("track {index} of the recording was already deleted permanently")]
     TrackAlreadyDeleted { index: usize },
     #[error(

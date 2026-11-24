@@ -1,14 +1,15 @@
 pub use gt_history_types::{
-    ChannelSummary, DatabaseRef, DbError, HistoryDatabase, InvalidStoredLogFilterStack,
-    LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId, LogAttachmentListingEntry,
-    LogAttachmentReadError, LogContentHash, NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase,
-    RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState, StoredFixPlacementRule,
-    StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
+    ChannelSummary, DatabaseRef, DbError, HistoryAccess, HistoryDatabase,
+    InvalidStoredLogFilterStack, LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry,
+    LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError, LogContentHash,
+    NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry,
+    RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter,
+    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
-    StoredLogSettings, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
-    StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter, UiStateVersionTooNew,
-    format_count_suffix, identity_from_group_name, identity_group_name, listed_track_rows,
-    log_attachment, logs_directory_for_database, make_group_name,
+    StoredLogSettings, StoredRecording, StoredSegmentation, StoredTrackSnapshot,
+    StoredTrackSplitRule, StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter,
+    UiStateVersionTooNew, format_count_suffix, identity_from_group_name, identity_group_name,
+    listed_track_rows, log_attachment, logs_directory_for_database, make_group_name,
 };
 
 #[cfg(feature = "backend-pure")]
