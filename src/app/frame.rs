@@ -170,6 +170,13 @@ impl eframe::App for App {
         if self.config.take_flush() {
             self.flush_settings();
         }
+
+        // Process the current input before replacing the editor text.
+        if let Some(text) = self.pending_session_query_draft.take() {
+            self.query_window.set_text(text);
+            self.query_window.open = true;
+            ui.ctx().request_repaint();
+        }
     }
 }
 

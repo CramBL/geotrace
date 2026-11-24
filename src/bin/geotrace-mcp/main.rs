@@ -4,8 +4,8 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    CheckQuery, ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, OpenPoint, QueryJobRequest, Reply, Request, ShowOnMap, ShowOnPlot,
+    ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
+    ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -55,7 +55,7 @@ impl Companion {
         description = "Check query editor text against the loaded recording channels. Returns diagnostics with byte spans into the full text.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
-    async fn check_query(&self, Parameters(args): Parameters<CheckQuery>) -> CallToolResult {
+    async fn check_query(&self, Parameters(args): Parameters<QueryText>) -> CallToolResult {
         self.inspect(Request::CheckQuery(args)).await
     }
 
@@ -140,10 +140,22 @@ impl Companion {
     }
 
     #[tool(
+        description = "Open the Query window and replace the editor text with an editable draft.",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn open_query(&self, Parameters(args): Parameters<QueryText>) -> CallToolResult {
+        self.inspect(Request::OpenQuery(args)).await
+    }
+
+    #[tool(
         description = "Start a background query using the current filter and enabled tracks. A busy response includes the active job ID. Poll the job with get_query_status.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
-    async fn run_query(&self, Parameters(args): Parameters<CheckQuery>) -> CallToolResult {
+    async fn run_query(&self, Parameters(args): Parameters<QueryText>) -> CallToolResult {
         self.inspect(Request::RunQuery(args)).await
     }
 
@@ -174,9 +186,11 @@ impl Companion {
     async fn inspect(&self, request: Request) -> CallToolResult {
         let checking_query = matches!(&request, Request::CheckQuery(_) | Request::RunQuery(_));
         let result = match self.bridge.request(request).await {
-            Ok(reply @ (Reply::MapPresentationQueued | Reply::PlotPresentationQueued)) => {
-                serde_json::to_value(reply)
-            }
+            Ok(
+                reply @ (Reply::MapPresentationQueued
+                | Reply::PlotPresentationQueued
+                | Reply::QueryDraftQueued),
+            ) => serde_json::to_value(reply),
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
             Ok(Reply::QueryJob { job }) => serde_json::to_value(job),

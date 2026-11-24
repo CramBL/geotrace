@@ -19,8 +19,8 @@ pub use crate::metrics::{
     ChannelComponent, ChannelDefinition, ChannelEntry, MetricDefinition, Metrics,
 };
 pub use crate::protocol::{
-    CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
-    OpenPoint, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap,
+    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings, OpenPoint,
+    QueryText, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap,
     ShowOnPlot, TimeRange, TrackReference,
 };
 pub use crate::query_job::{

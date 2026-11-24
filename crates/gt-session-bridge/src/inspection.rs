@@ -28,6 +28,7 @@ impl<'a> Inspection<'a> {
             | Request::GetQueryResults(_)
             | Request::GetQueryStatus(_)
             | Request::OpenPoint(_)
+            | Request::OpenQuery(_)
             | Request::RunQuery(_)
             | Request::ShowOnMap(_)
             | Request::ShowOnPlot(_) => Err(ErrorCode::InvalidRequest),
