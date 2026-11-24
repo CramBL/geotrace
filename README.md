@@ -222,12 +222,14 @@ The `plot_presentation_queued` status acknowledges the request.
 GeoTrace applies a current request on the next frame with a visible plot area.
 With Sync to map enabled, the plot keeps that time range until the map's visible time range changes or the user changes the plot view.
 
-Use `get_settings` to list the current values and descriptions on the Analysis page.
+Use `get_settings` to list the current values and descriptions for Analysis controls and recording controls on the Processing page.
 Pass a setting's `key` to `describe_setting` for its help, value, and limits, or to `open_setting` to reveal the control in Settings.
 For numeric settings, the description includes the unit and inclusive bounds.
 The `value` field is null if a loaded configuration contains a non-finite number.
 An `apply` value of `live` means the plot updates as the control changes.
 With `live_with_deferred_markers`, the plot updates as the control changes and GeoTrace regenerates affected markers on load or through Apply to loaded data.
+With `deferred_processing`, GeoTrace uses the setting when it processes a recording.
+Use Apply to loaded data in Settings to process the current recordings with updated settings.
 `open_setting` returns `setting_open_queued` when the bridge schedules the navigation.
 
 ## Network access

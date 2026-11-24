@@ -113,7 +113,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "List current Analysis settings with their limits and help.",
+        description = "List Analysis settings and recording Processing settings with their limits and help.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn get_settings(&self) -> CallToolResult {
