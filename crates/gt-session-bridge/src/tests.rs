@@ -3,15 +3,22 @@ use std::mem;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+use chrono::{DateTime, TimeDelta};
 use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_types::PointIdx;
 use proptest::strategy::Strategy as _;
 use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
-use super::{ErrorCode, Recording, Recordings, Reply, Request, Server};
+use super::inspection::Inspection;
+use super::{
+    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListRecordings, MAX_POINTS_PER_PAGE,
+    MAX_TRACKS_PER_PAGE, Recording, RecordingReference, Recordings, Reply, Request, Server,
+};
 
 struct TestEndpoint {
     endpoint: Endpoint,
@@ -47,7 +54,10 @@ async fn local_request_dispatches_on_the_calling_thread() {
     file.metadata.title = Some("Survey".to_owned());
     let mut files = LoadedFiles::new();
     files.push(file, FileHistory::None);
-    let id = u64::from(files.view().get(0).unwrap().id());
+    let id = RecordingReference {
+        session: server.session,
+        number: files.view().get(0).unwrap().id().into(),
+    };
     let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, REQUEST), async {
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(1), wakes.recv())
@@ -73,6 +83,151 @@ async fn local_request_dispatches_on_the_calling_thread() {
                 next_after: None
             }
         }
+    );
+}
+
+#[test]
+fn inspection_pages_tracks_and_rejects_old_session_and_track_references() {
+    let mut files = LoadedFiles::new();
+    files.push(
+        gt_test_utils::segmented_recording(MAX_TRACKS_PER_PAGE + 1),
+        FileHistory::None,
+    );
+    let id = RecordingReference {
+        session: Uuid::nil(),
+        number: files.view().get(0).unwrap().id().into(),
+    };
+    let mut args = GetRecording {
+        recording: id,
+        after: None,
+        limit: Some(NonZeroUsize::MAX),
+    };
+    let view = Inspection {
+        files: files.view(),
+        name_template: "{filename}",
+        session: id.session,
+    };
+    let Reply::Recording { details } = view.execute(Request::GetRecording(args)) else {
+        panic!("expected recording");
+    };
+    assert_eq!(details.recording.id, id);
+    assert_eq!(details.tracks.len(), MAX_TRACKS_PER_PAGE);
+    let track = *details.tracks.first().unwrap();
+    let get_track = Request::GetTrack(GetTrack { track });
+    let Reply::Track {
+        details: track_details,
+    } = view.execute(get_track)
+    else {
+        panic!("expected track");
+    };
+    assert_eq!(track_details.track_number, 1);
+    assert_eq!(track_details.duration_seconds, 600.0);
+    assert_eq!(track_details.distance_m, Some(1000.0));
+    assert_eq!(track_details.point_count, 2);
+    assert_eq!(track_details.fix_loss_count, Some(1));
+    assert!(track_details.map_bounds.is_some());
+    args.after = details.next_after;
+    let Reply::Recording { details: last } = view.execute(Request::GetRecording(args)) else {
+        panic!("expected next page");
+    };
+    assert_eq!(last.tracks.first().unwrap().index, MAX_TRACKS_PER_PAGE);
+    assert_eq!(last.next_after, None);
+
+    let restarted = Inspection {
+        session: Uuid::from_u128(1),
+        ..view
+    };
+    assert_eq!(
+        restarted.execute(Request::GetRecording(args)),
+        ErrorCode::StaleSession.into()
+    );
+    let cursor = Request::ListRecordings(ListRecordings {
+        after: Some(id),
+        limit: None,
+    });
+    assert_eq!(restarted.execute(cursor), ErrorCode::StaleSession.into());
+    files.replace_file(0, gt_test_utils::segmented_recording(1), FileHistory::None);
+    let updated = Inspection {
+        files: files.view(),
+        name_template: "{filename}",
+        session: id.session,
+    };
+    assert_eq!(updated.execute(get_track), ErrorCode::StaleTrack.into());
+}
+
+#[test]
+fn point_pages_keep_recorded_order_and_missing_values() {
+    let start = DateTime::UNIX_EPOCH + TimeDelta::nanoseconds(739);
+    let mut points =
+        gt_test_utils::fixtures::nav_points_without_a_valid_position(MAX_POINTS_PER_PAGE + 1);
+    let mut earlier = gt_test_utils::fixtures::nav_points_from(start, 1, 1);
+    points.append(&mut earlier);
+    let mut files = LoadedFiles::new();
+    files.push(
+        gt_test_utils::loaded_file_with_tracks(vec![gt_test_utils::loaded_track_with_points(
+            points,
+        )]),
+        FileHistory::None,
+    );
+    let view = Inspection {
+        files: files.view(),
+        name_template: "{filename}",
+        session: Uuid::nil(),
+    };
+    let recording = RecordingReference {
+        session: view.session,
+        number: files.view().get(0).unwrap().id().into(),
+    };
+    let Reply::Recording { details } = view.execute(Request::GetRecording(GetRecording {
+        recording,
+        after: None,
+        limit: None,
+    })) else {
+        panic!("expected recording");
+    };
+    let track = *details.tracks.first().unwrap();
+    let mut args = GetRangeDetails {
+        track,
+        start: Some(1),
+        end: None,
+        limit: Some(NonZeroUsize::MAX),
+    };
+    let Reply::Range { details: page } = view.execute(Request::GetRangeDetails(args)) else {
+        panic!("expected point page");
+    };
+    assert_eq!(page.points.len(), MAX_POINTS_PER_PAGE);
+    let previous = page.points.last().unwrap();
+    assert_eq!(previous.position, None);
+    assert_eq!(previous.eph_m, None);
+    assert_eq!(previous.system_time, None);
+    assert_eq!(
+        page.next_start,
+        Some(PointIdx::new(MAX_POINTS_PER_PAGE + 1))
+    );
+
+    args.start = page.next_start.map(PointIdx::as_usize);
+    let Reply::Range { details: page } = view.execute(Request::GetRangeDetails(args)) else {
+        panic!("expected last point");
+    };
+    assert_eq!(page.points.first().unwrap().time, start);
+    assert!(previous.time > start);
+    assert_eq!(page.next_start, None);
+    args.end = args.start;
+    let Reply::Range { details: empty } = view.execute(Request::GetRangeDetails(args)) else {
+        panic!("expected empty interval");
+    };
+    assert!(empty.points.is_empty());
+    args.end = Some(0);
+    assert_eq!(
+        view.execute(Request::GetRangeDetails(args)),
+        ErrorCode::InvalidRange.into()
+    );
+    args.start = Some(0);
+    args.end = Some(MAX_POINTS_PER_PAGE + 3);
+    args.limit = Some(NonZeroUsize::MIN);
+    assert_eq!(
+        view.execute(Request::GetRangeDetails(args)),
+        ErrorCode::InvalidRange.into()
     );
 }
 
@@ -182,8 +337,8 @@ async fn frame_decoder_accepts_a_payload_at_the_limit() {
     assert_eq!(decoded, body);
 }
 
-const REQUEST: Request = Request::ListRecordings {
+const REQUEST: Request = Request::ListRecordings(ListRecordings {
     after: None,
-    limit: NonZeroUsize::MIN,
-};
+    limit: Some(NonZeroUsize::MIN),
+});
 const FRAME_TEST_LIMIT: u8 = 32;

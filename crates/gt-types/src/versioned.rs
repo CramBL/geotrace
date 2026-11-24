@@ -38,6 +38,11 @@ impl<T: Versionable> Generation<T> {
             versioned_type: PhantomData,
         }
     }
+
+    /// This value is unique within the current process.
+    pub fn as_u64(self) -> u64 {
+        self.count
+    }
 }
 
 // Each of the following impls is written out because a derive would add a bound

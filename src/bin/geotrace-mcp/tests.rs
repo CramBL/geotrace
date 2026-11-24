@@ -2,21 +2,26 @@ use std::io::{self, ErrorKind};
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use gt_session_bridge::{Recording, Recordings, Reply, Request};
+use chrono::{DateTime, TimeDelta};
+use gt_session_bridge::{
+    GetRangeDetails, ListRecordings, PointDetails, RangeDetails, Recording, RecordingReference,
+    Recordings, Reply, Request, TrackReference,
+};
+use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
 use serde_json::{Value, json};
 use tokio::io::{
     AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, DuplexStream, Lines, ReadHalf, WriteHalf,
 };
 
-use super::{Bridge, COMPANION_NAME, Companion, DEFAULT_PAGE_LIMIT, START_DESKTOP, VERSION};
+use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
 
 #[tokio::test]
-async fn the_companion_lists_one_tool_and_returns_a_recording_page() {
+async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
     let (server, stream) = tokio::io::duplex(8192);
     let worker = tokio::spawn(async move {
         Companion {
-            bridge: Bridge::Fixture(self::recording_page),
+            bridge: Bridge::Fixture(self::inspection_fixture),
         }
         .serve(server)
         .await
@@ -61,10 +66,24 @@ async fn the_companion_lists_one_tool_and_returns_a_recording_page() {
         .pointer("/result/tools")
         .and_then(Value::as_array)
         .unwrap();
-    let [tool] = tools.as_slice() else {
-        panic!("expected one tool");
-    };
-    assert_eq!(tool.get("name"), Some(&json!("list_recordings")));
+    let mut names: Vec<_> = tools
+        .iter()
+        .filter_map(|tool| tool.get("name")?.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "get_range_details",
+            "get_recording",
+            "get_track",
+            "list_recordings"
+        ]
+    );
+    let tool = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("list_recordings")))
+        .unwrap();
     assert_eq!(
         tool.pointer("/annotations/readOnlyHint"),
         Some(&json!(true))
@@ -84,19 +103,21 @@ async fn the_companion_lists_one_tool_and_returns_a_recording_page() {
         Some(&json!(START_DESKTOP))
     );
 
+    let cursor = self::recording_id(6);
+    let recording = self::recording_id(7);
     let page = client
         .exchange(json!({
             "jsonrpc": "2.0", "id": 4, "method": "tools/call",
-            "params": {"name": "list_recordings", "arguments": {"after": 6, "limit": 1}}
+            "params": {"name": "list_recordings", "arguments": {"after": cursor, "limit": 1}}
         }))
         .await;
     assert_eq!(page.pointer("/result/isError"), Some(&json!(false)));
     let expected = json!({
         "recordings": [{
-            "id": 7, "display_name": "Survey", "filename": "survey.gtd",
+            "id": recording, "display_name": "Survey", "filename": "survey.gtd",
             "title": null, "device": null, "time_range": null, "track_count": 2
         }],
-        "next_after": 7
+        "next_after": recording
     });
     assert_eq!(page.pointer("/result/structuredContent"), Some(&expected));
     assert_eq!(
@@ -106,7 +127,7 @@ async fn the_companion_lists_one_tool_and_returns_a_recording_page() {
     let invalid = client
         .exchange(json!({
             "jsonrpc": "2.0", "id": 5, "method": "tools/call",
-            "params": {"name": "list_recordings", "arguments": {"after": 6, "limit": 0}}
+            "params": {"name": "list_recordings", "arguments": {"after": cursor, "limit": 0}}
         }))
         .await;
     assert_eq!(invalid.pointer("/result/isError"), Some(&json!(true)));
@@ -116,6 +137,17 @@ async fn the_companion_lists_one_tool_and_returns_a_recording_page() {
             .and_then(Value::as_str)
             .is_some_and(|text| text.contains("failed to deserialize parameters"))
     );
+    let points = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+            "params": {"name": "get_range_details", "arguments": {"track": self::track_reference()}}
+        }))
+        .await;
+    assert_eq!(points.pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(
+        points.pointer("/result/structuredContent/points/0/time"),
+        Some(&json!("1970-01-01T00:00:00.000000021Z"))
+    );
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -123,17 +155,44 @@ async fn the_companion_lists_one_tool_and_returns_a_recording_page() {
         .unwrap();
 }
 
-fn recording_page(Request::ListRecordings { after, limit }: Request) -> io::Result<Reply> {
-    if after.is_none() && limit == DEFAULT_PAGE_LIMIT {
-        return Err(ErrorKind::NotFound.into());
+fn inspection_fixture(request: Request) -> io::Result<Reply> {
+    match request {
+        Request::ListRecordings(ListRecordings {
+            after: None,
+            limit: None,
+        }) => Err(ErrorKind::NotFound.into()),
+        Request::ListRecordings(ListRecordings {
+            after: Some(after),
+            limit: Some(NonZeroUsize::MIN),
+        }) if after == self::recording_id(6) => Ok(self::recording_page()),
+        Request::GetRangeDetails(GetRangeDetails {
+            track,
+            start: None,
+            end: None,
+            limit: None,
+        }) if track == self::track_reference() => Ok(Reply::Range {
+            details: RangeDetails {
+                points: vec![PointDetails {
+                    index: PointIdx::new(0),
+                    time: DateTime::UNIX_EPOCH + TimeDelta::nanoseconds(21),
+                    gps_time: None,
+                    system_time: None,
+                    position: None,
+                    eph_m: None,
+                    velocity_mps: None,
+                }],
+                next_start: None,
+            },
+        }),
+        _ => Err(ErrorKind::InvalidInput.into()),
     }
-    if after != Some(6) || limit != NonZeroUsize::MIN {
-        return Err(ErrorKind::InvalidInput.into());
-    }
-    Ok(Reply::Recordings {
+}
+
+fn recording_page() -> Reply {
+    Reply::Recordings {
         page: Recordings {
             recordings: vec![Recording {
-                id: 7,
+                id: self::recording_id(7),
                 display_name: "Survey".to_owned(),
                 filename: "survey.gtd".to_owned(),
                 title: None,
@@ -141,9 +200,24 @@ fn recording_page(Request::ListRecordings { after, limit }: Request) -> io::Resu
                 time_range: None,
                 track_count: 2,
             }],
-            next_after: Some(7),
+            next_after: Some(self::recording_id(7)),
         },
-    })
+    }
+}
+
+fn recording_id(number: u64) -> RecordingReference {
+    RecordingReference {
+        session: "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+        number,
+    }
+}
+
+fn track_reference() -> TrackReference {
+    TrackReference {
+        recording: self::recording_id(7),
+        index: 0,
+        revision: 2,
+    }
 }
 
 struct Client {

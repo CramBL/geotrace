@@ -3,20 +3,31 @@ use std::sync::mpsc as startup;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use gt_loaded_files::{ListRecordings, LoadedFilesView};
+use gt_loaded_files::LoadedFilesView;
 use tokio::io::AsyncReadExt as _;
 use tokio::sync::{mpsc, oneshot};
+use uuid::Uuid;
 
 use crate::endpoint::{BoundListener, Endpoint};
 use crate::framing::{Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
-pub use crate::protocol::{ErrorCode, Recording, Recordings, Reply, Request, TimeRange};
+use crate::inspection::Inspection;
+pub use crate::inspection::{
+    MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, MapBounds, PointDetails, Position, RangeDetails,
+    RecordingDetails, TrackDetails,
+};
+pub use crate::protocol::{
+    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListRecordings, Recording,
+    RecordingReference, Recordings, Reply, Request, TimeRange, TrackReference,
+};
 
 mod endpoint;
 mod framing;
+mod inspection;
 mod protocol;
 
 #[derive(Debug)]
 pub struct Server {
+    session: Uuid,
     pending: mpsc::Receiver<Pending>,
     stop: Option<oneshot::Sender<()>>,
     worker: Option<JoinHandle<()>>,
@@ -65,6 +76,7 @@ impl Server {
             })?;
         ready_rx.recv().map_err(io::Error::other)??;
         Ok(Self {
+            session: Uuid::new_v4(),
             pending,
             stop: Some(stop_tx),
             worker: Some(worker),
@@ -75,8 +87,12 @@ impl Server {
         if let Ok(pending) = self.pending.try_recv()
             && !pending.reply.is_closed()
         {
-            let page = ListRecordings::from(pending.request).execute(files, name_template);
-            drop(pending.reply.send(page.into()));
+            let inspection = Inspection {
+                files,
+                name_template,
+                session: self.session,
+            };
+            drop(pending.reply.send(inspection.execute(pending.request)));
         }
     }
 }
