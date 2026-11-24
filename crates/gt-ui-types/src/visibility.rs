@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use chrono::{DateTime, Utc};
-use gt_filter::GlobalFilter;
+use gt_filter::{GlobalFilter, TimeWindow};
 use gt_types::satellites::Satellites;
 use gt_types::{
     CustomMarker, DataCategory, DataCategorySet, EventMarker, FileIdx, GeneratedMarker, LoadedFile,
@@ -435,6 +435,22 @@ impl<'a> PreparedTrackEligibility<'a> {
             })
     }
 
+    pub fn available_fix_ranges(
+        self,
+        points: Range<usize>,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        let track = self.track().filter(|track| {
+            self.is_in_scope() && !points.is_empty() && points.end <= track.points.len()
+        });
+        track
+            .into_iter()
+            .flat_map(move |track| {
+                let window = self.eligibility.filter.time_window();
+                self::time_filtered_fix_ranges(track, points.clone(), window)
+            })
+            .flat_map(move |range| self::exclude_hidden_fix_ranges(range, self.hidden_ranges))
+    }
+
     #[inline]
     pub fn fix_is_available(self, point: PointIdx) -> bool {
         self.is_in_scope()
@@ -584,6 +600,82 @@ impl<'a> PreparedTrackEligibility<'a> {
             })
         }
     }
+}
+
+fn time_filtered_fix_ranges(
+    track: &LoadedTrack,
+    selection: Range<usize>,
+    window: TimeWindow,
+) -> impl Iterator<Item = Range<usize>> {
+    let chunks = match window {
+        TimeWindow::All | TimeWindow::Empty => &[],
+        _ => track.lod.full_point_chunks(),
+    };
+    let first_chunk = chunks.partition_point(|chunk| chunk.slots().end <= selection.start);
+    let unchunked = chunks.is_empty().then(|| (selection.clone(), None));
+    let chunks = chunks
+        .iter()
+        .skip(first_chunk)
+        .map(|chunk| (chunk.slots(), Some(chunk.extent().time())))
+        .take_while(move |(slots, _)| slots.start < selection.end)
+        .map(move |(slots, time)| {
+            (
+                slots.start.max(selection.start)..slots.end.min(selection.end),
+                time,
+            )
+        });
+    let mut ranges = unchunked
+        .into_iter()
+        .chain(chunks)
+        .flat_map(move |(slots, time)| {
+            let covered = window == TimeWindow::All || time.is_some_and(|time| window.covers(time));
+            let scan = !covered
+                && window != TimeWindow::Empty
+                && time.is_none_or(|time| window.overlaps(time));
+            let whole = covered.then(|| slots.clone());
+            let mut pending = if scan { slots } else { Range::default() };
+            let partial = std::iter::from_fn(move || {
+                let inside = |index: usize| {
+                    track
+                        .points
+                        .get(index)
+                        .is_some_and(|point| window.contains(point.tpv.time().utc()))
+                };
+                let first = pending.find(|&index| inside(index))?;
+                let next_outside = pending.find(|&index| !inside(index));
+                Some(first..next_outside.unwrap_or(pending.end))
+            });
+            whole.into_iter().chain(partial)
+        })
+        .peekable();
+    std::iter::from_fn(move || {
+        let mut run = ranges.next()?;
+        while let Some(next) = ranges.next_if(|next| next.start == run.end) {
+            run.end = next.end;
+        }
+        Some(run)
+    })
+}
+
+fn exclude_hidden_fix_ranges(
+    mut visible: Range<usize>,
+    hidden: &[Range<usize>],
+) -> impl Iterator<Item = Range<usize>> + '_ {
+    let first = hidden.partition_point(|range| range.end <= visible.start);
+    let mut hidden = hidden.iter().skip(first);
+    std::iter::from_fn(move || {
+        while !visible.is_empty() {
+            let Some(gap) = hidden.next().filter(|gap| gap.start < visible.end) else {
+                return Some(std::mem::take(&mut visible));
+            };
+            let run = visible.start..gap.start;
+            visible.start = gap.end;
+            if !run.is_empty() {
+                return Some(run);
+            }
+        }
+        None
+    })
 }
 
 #[derive(Clone, Copy)]

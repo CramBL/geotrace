@@ -542,6 +542,7 @@ pub struct MapScene {
     size: egui::Vec2,
     dark_mode: Option<bool>,
     zoom: Option<f64>,
+    clip_rect: Option<egui::Rect>,
     draw: DrawState,
     overlays: Overlays,
 }
@@ -556,6 +557,7 @@ impl MapScene {
             size: VIEWPORT,
             dark_mode: None,
             zoom: None,
+            clip_rect: None,
             draw: DrawState::default(),
             overlays: Overlays::default(),
         }
@@ -581,6 +583,12 @@ impl MapScene {
     /// Holds the camera at `zoom`, which overrides the fit on every frame.
     pub fn zoomed_to(mut self, zoom: f64) -> Self {
         self.zoom = Some(zoom);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clipped_to(mut self, clip_rect: egui::Rect) -> Self {
+        self.clip_rect = Some(clip_rect);
         self
     }
 
@@ -680,12 +688,16 @@ impl MapScene {
                  map,
                  tiles,
                  zoom,
+                 clip_rect,
                  draw,
                  overlays,
                  files,
                  visibility,
                  returned_action,
              }: &mut MapSceneState| {
+                if let Some(clip_rect) = *clip_rect {
+                    ui.set_clip_rect(ui.clip_rect().intersect(clip_rect));
+                }
                 let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), tiles.clone()));
                 if let Some(zoom) = *zoom {
                     map.map_memory
@@ -710,6 +722,7 @@ impl MapScene {
                 map: None,
                 tiles: self.tiles,
                 zoom: self.zoom,
+                clip_rect: self.clip_rect,
                 draw: self.draw,
                 overlays: self.overlays,
                 files: self.files,
@@ -727,6 +740,7 @@ pub struct MapSceneState {
     map: Option<NavMap>,
     tiles: TileAccess,
     zoom: Option<f64>,
+    clip_rect: Option<egui::Rect>,
     draw: DrawState,
     overlays: Overlays,
     files: Vec<LoadedFile>,

@@ -1,18 +1,26 @@
+use std::ops::Range;
 use std::path::PathBuf;
 
-use super::*;
-use crate::hover_labels;
-use crate::test_util::{self, DrawState, MapScene};
-use crate::viewport;
+use chrono::TimeDelta;
+use egui::epaint::ColorMode;
+use gt_types::fixtures::{self, FixKind};
 use gt_types::{
     DataCategory, EventMarker, FileIdx, FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack,
     Longitude, MercBounds, MercPoint, PointIdx, SolutionState, SpatialPoint, TimeRange,
     TotalDistance, TrackIdx, TrackMetadata,
 };
-use gt_ui_types::{DisplayCategory, DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
+use gt_ui_types::{
+    DisplayCategory, DrawLayer, FileVisibility, MatchHighlight, TrackRanges, TrackVisibility,
+};
 use rustc_hash::FxHashMap;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
+
+use super::*;
+use crate::hover_labels;
+use crate::match_reveal::HaloStyle;
+use crate::test_util::{self, DrawState, MapScene};
+use crate::viewport;
 
 fn tpv_spatial_point(fi: usize, ti: usize, pi: usize) -> SpatialPoint {
     SpatialPoint {
@@ -30,6 +38,320 @@ pub(crate) fn vis_all_visible() -> TrackDataVisibility {
             enabled: true,
             tracks: vec![TrackVisibility::all_visible()],
         }],
+    }
+}
+
+#[rstest::rstest]
+#[case::one_omitted_fix(25..26, Vec::new())]
+#[case::coincident_omitted_fixes(1..63, (2..63).step_by(2).map(|i| i..i + 1).collect())]
+fn query_hover_paints_one_ring_for_omitted_fixes_at_the_same_position(
+    #[case] points: Range<usize>,
+    #[case] hidden: Vec<Range<usize>>,
+) {
+    let mut files = test_util::a_recording_of(64, 0.0);
+    let stationary = &mut files[0].tracks[0];
+    stationary.lod = gt_track_builder::build_track_lod(stationary.placed_points().unwrap());
+    let track = test_util::track0();
+    let zoom = 16.0_f64;
+    let level = track
+        .resolve(&files)
+        .unwrap()
+        .lod
+        .select(256.0 * zoom.exp2(), crate::polyline::MAX_LOD_ERROR_PX)
+        .unwrap();
+    assert_eq!(level.indices(), &[0, 63]);
+
+    let map = MapScene::of(files)
+        .zoomed_to(zoom)
+        .centred_on_fix(25)
+        .draw_state(|state| {
+            state.highlight.hover_match = Some(MatchHighlight::new(track, &points));
+        })
+        .overlays(|overlays| {
+            overlays.query_matches = Some(QueryMatches {
+                hidden: TrackRanges::from_iter([(track, hidden)]),
+                ..Default::default()
+            });
+        })
+        .render();
+    let shapes = &map.harness.inner.output().shapes;
+    assert_eq!(
+        shapes
+            .iter()
+            .filter(|shape| matches!(&shape.shape, egui::Shape::Circle(circle)
+                if circle.stroke.color == gt_ui_theme::QUERY_MATCH_HOVER_HALO))
+            .count(),
+        1,
+    );
+}
+
+#[derive(Clone, Copy)]
+enum HaloGap {
+    QueryExclusion,
+    TimeReversal,
+}
+
+#[rstest::rstest]
+#[case::simplified(12.0, true, HaloGap::QueryExclusion)]
+#[case::west_of_the_antimeridian(179.999_98, false, HaloGap::QueryExclusion)]
+#[case::reversed_time(12.0, true, HaloGap::TimeReversal)]
+fn query_hover_halo_stops_at_hidden_and_time_filtered_fixes(
+    #[case] longitude_origin: f64,
+    #[case] simplified: bool,
+    #[case] gap: HaloGap,
+) {
+    let count = 128;
+    let step_degrees = 0.000_004;
+    let start = 15;
+    let first_run_last = 74;
+    let isolated = 96;
+    let excluded = first_run_last + 1..isolated;
+    let points = (0..count)
+        .map(|index| {
+            let lon =
+                (longitude_origin + index as f64 * step_degrees + 180.0).rem_euclid(360.0) - 180.0;
+            let minute = if matches!(gap, HaloGap::TimeReversal) && excluded.contains(&index) {
+                index + count
+            } else {
+                index
+            };
+            fixtures::nav_point(
+                test_util::epoch() + TimeDelta::minutes(minute as i64),
+                Latitude::new(0.0),
+                Longitude::new(lon),
+                FixKind::Measured,
+            )
+        })
+        .collect();
+    let built = test_util::track_built_from(points);
+    let zoom = 16.0_f64;
+    let world_px = 256.0 * zoom.exp2();
+    let level = built
+        .lod
+        .select(world_px, crate::polyline::MAX_LOD_ERROR_PX);
+    assert_eq!(
+        level.is_some_and(|level| level.indices().len() < count),
+        simplified
+    );
+    let time = |index: usize| built.points[index].tpv.time().utc();
+    let filter = GlobalFilter::default().with_time_bounds(Some(time(start)), Some(time(isolated)));
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![built])];
+    let track = test_util::track0();
+    let matches = matches!(gap, HaloGap::QueryExclusion).then(|| QueryMatches {
+        hidden: TrackRanges::from_iter([(track, vec![excluded])]),
+        ..Default::default()
+    });
+    let map = MapScene::of(files)
+        .zoomed_to(zoom)
+        .centred_on_fix(start)
+        .draw_state(|state| {
+            state.filter = filter;
+            state.highlight.hover_match = Some(MatchHighlight::new(track, &(9..120)));
+        })
+        .overlays(|overlays| overlays.query_matches = matches)
+        .render();
+    let color = gt_ui_theme::QUERY_MATCH_HOVER_HALO;
+    let shapes = &map.harness.inner.output().shapes;
+    let bands: Vec<_> = shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Path(path) if path.stroke.color == ColorMode::Solid(color) => {
+                Some(&path.points)
+            }
+            _ => None,
+        })
+        .collect();
+    let rings: Vec<_> = shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Circle(circle) if circle.stroke.color == color => Some(circle.center),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bands.len(), 1);
+    assert_eq!(rings.len(), 1);
+    let expected_x = |index| {
+        test_util::viewport_center().x
+            + ((index - start) as f64 * step_degrees * world_px / 360.0) as f32
+    };
+    let band = bands[0];
+    assert!(band.len() > 2);
+    assert!((band.first().unwrap().x - expected_x(start)).abs() < 0.1);
+    assert!((band.last().unwrap().x - expected_x(first_run_last)).abs() < 1.0);
+    assert!((rings[0].x - expected_x(isolated)).abs() < 0.1);
+}
+
+#[test]
+fn query_hover_paints_one_short_band_for_overlapping_omitted_runs() {
+    let offsets_px = [
+        0.0, 0.36, 0.53, -0.36, -0.53, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ];
+    let repeats = 64;
+    let count = repeats * offsets_px.len();
+    let world_px = 0.185 / gt_types::track::LOD_BASE_TOLERANCE_MERC;
+    let zoom = (world_px / 256.0).log2();
+    let points = offsets_px
+        .into_iter()
+        .cycle()
+        .take(count)
+        .enumerate()
+        .map(|(index, offset)| {
+            fixtures::nav_point(
+                test_util::epoch() + TimeDelta::minutes(index as i64),
+                Latitude::new(0.0),
+                Longitude::new(12.0 + offset * 360.0 / world_px),
+                FixKind::Measured,
+            )
+        })
+        .collect();
+    let built = test_util::track_built_from(points);
+    let level = built
+        .lod
+        .select(world_px, crate::polyline::MAX_LOD_ERROR_PX)
+        .unwrap();
+    assert_eq!(level.indices(), &[0, (count - 1) as u32]);
+
+    let hidden = std::iter::once(0..2)
+        .chain((0..repeats).map(|index| {
+            let wave = index * offsets_px.len();
+            wave + 5..(wave + offsets_px.len() + 2).min(count)
+        }))
+        .collect();
+    let track = test_util::track0();
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![built])];
+    let rendered = MapScene::of(files)
+        .zoomed_to(zoom)
+        .centred_on_fix(0)
+        .draw_state(|state| {
+            state.highlight.hover_match = Some(MatchHighlight::new(track, &(0..count)));
+        })
+        .overlays(|overlays| {
+            overlays.query_matches = Some(QueryMatches {
+                hidden: TrackRanges::from_iter([(track, hidden)]),
+                ..Default::default()
+            });
+        })
+        .render();
+    let color = ColorMode::Solid(gt_ui_theme::QUERY_MATCH_HOVER_HALO);
+    let bands = rendered
+        .harness
+        .inner
+        .output()
+        .shapes
+        .iter()
+        .filter(
+            |shape| matches!(&shape.shape, egui::Shape::Path(path) if path.stroke.color == color),
+        )
+        .count();
+    assert_eq!(bands, 1);
+}
+
+#[derive(Clone, Copy)]
+enum ClipHalo {
+    InteriorBand,
+    InteriorRing,
+    MarginBand,
+    MarginRing,
+}
+
+#[rstest::rstest]
+#[case::band(&[(-4.0, 0.0), (-2.0, 0.0), (0.0, 0.0), (2.0, 0.0), (4.0, 0.0)], 2..3, ClipHalo::InteriorBand)]
+#[case::ring(&[(-3.0, 0.0), (0.0, 0.0), (3.0, 0.0)], 1..2, ClipHalo::InteriorRing)]
+#[case::margin_band(&[(-4.0, 0.0), (-2.0, 0.0), (0.0, 0.0), (-2.0, -2.0), (-2.0, 2.0)], 2..3, ClipHalo::MarginBand)]
+#[case::subpixel_cap(&[(-3.75, 0.0), (-0.75, 0.0), (0.0, 0.0), (-2.0, -2.0), (-2.0, 2.0)], 2..3, ClipHalo::MarginBand)]
+#[case::margin_ring(&[(-5.0, 0.0), (0.0, 0.0), (2.0, 0.0)], 1..2, ClipHalo::MarginRing)]
+fn query_hover_preserves_the_halo_inside_a_displaced_map_clip(
+    #[case] offsets: &[(f64, f64)],
+    #[case] hidden: Range<usize>,
+    #[case] expected: ClipHalo,
+) {
+    let zoom = 16.0_f64;
+    let world_px = 256.0 * zoom.exp2();
+    let cell_size = HaloStyle::new(&tpv_renderer::frame_style(zoom), 0.0).ring_radius;
+    let screen_center = test_util::viewport_center();
+    let clip_x = (((screen_center.x / cell_size).floor() + 0.5) * cell_size).round();
+    let origin_x = f64::from(clip_x - screen_center.x);
+    let origin_x = if matches!(expected, ClipHalo::MarginRing) {
+        origin_x - f64::from(cell_size)
+    } else {
+        origin_x
+    };
+    let clip = egui::Rect::from_min_max(
+        egui::pos2(clip_x, 0.0),
+        egui::Pos2::ZERO + test_util::VIEWPORT,
+    );
+    let points = offsets
+        .iter()
+        .enumerate()
+        .map(|(index, &(x, y))| {
+            fixtures::nav_point(
+                test_util::epoch() + TimeDelta::minutes(index as i64),
+                Latitude::new(-y * 360.0 / world_px),
+                Longitude::new(12.0 + (origin_x + x) * 360.0 / world_px),
+                FixKind::Measured,
+            )
+        })
+        .collect();
+    let track = test_util::track0();
+    let count = offsets.len();
+    let built = test_util::track_built_from(points);
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![built])];
+    let mut rendered = MapScene::of(files)
+        .zoomed_to(zoom)
+        .centred_on((0.0, 12.0))
+        .clipped_to(clip)
+        .draw_state(|state| {
+            state.highlight.hover_match = Some(MatchHighlight::new(track, &(0..count)));
+        })
+        .overlays(|overlays| {
+            overlays.query_matches = Some(QueryMatches {
+                hidden: TrackRanges::from_iter([(track, vec![hidden])]),
+                ..Default::default()
+            });
+        })
+        .render();
+    let color = gt_ui_theme::QUERY_MATCH_HOVER_HALO;
+    let margin = matches!(expected, ClipHalo::MarginBand | ClipHalo::MarginRing);
+    let visible = rendered
+        .harness
+        .inner
+        .output()
+        .shapes
+        .iter()
+        .filter(|shape| match (expected, &shape.shape) {
+            (ClipHalo::InteriorRing | ClipHalo::MarginRing, egui::Shape::Circle(circle))
+                if circle.stroke.color == color =>
+            {
+                assert_eq!(shape.clip_rect.min.x, clip.min.x);
+                clip.contains(circle.center) != margin
+            }
+            (ClipHalo::InteriorBand | ClipHalo::MarginBand, egui::Shape::Path(path))
+                if path.stroke.color == ColorMode::Solid(color) =>
+            {
+                assert_eq!(shape.clip_rect.min.x, clip.min.x);
+                path.points
+                    .iter()
+                    .all(|&point| clip.contains(point) != margin)
+            }
+            _ => false,
+        })
+        .count();
+    assert_eq!(visible, 1);
+    if margin {
+        let with_halo = rendered.harness.inner.render().unwrap();
+        rendered.draw_state().highlight.hover_match = None;
+        rendered.render_one_more_frame();
+        let without_halo = rendered.harness.inner.render().unwrap();
+        let side = egui::Rect::from_min_size(
+            egui::pos2(clip_x + 2.0, screen_center.y - 1.0),
+            egui::vec2(2.0, 2.0),
+        );
+        assert!(gt_test_utils::snapshot_harness::pixels_differ(
+            &with_halo,
+            &without_halo,
+            side,
+            rendered.harness.inner.ctx.pixels_per_point(),
+        ));
     }
 }
 
