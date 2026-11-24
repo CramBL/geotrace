@@ -1,7 +1,7 @@
 use gt_loaded_files::{LoadedFilesView, RecordingData};
 use gt_session_bridge::{
-    ErrorCode, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation, Reply, Request,
-    SessionRequest,
+    ErrorCode, GetQueryResults, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation,
+    QueryResults, Reply, Request, SessionRequest,
 };
 use gt_types::Generation;
 use uuid::Uuid;
@@ -178,6 +178,28 @@ impl Job {
             },
         }
     }
+
+    fn results_page(
+        &self,
+        files: LoadedFilesView<'_>,
+        args: GetQueryResults,
+    ) -> Result<Reply, ErrorCode> {
+        let session = self.query.session();
+        let results = match self.phase {
+            JobPhase::Cancelled | JobPhase::Failed => {
+                return Err(ErrorCode::QueryResultsUnavailable);
+            }
+            JobPhase::Cancelling | JobPhase::Preparing => return Err(ErrorCode::QueryNotComplete),
+            JobPhase::Stale => return Err(ErrorCode::StaleQueryResults),
+            JobPhase::Started if session.run_in_flight() => {
+                return Err(ErrorCode::QueryNotComplete);
+            }
+            JobPhase::Started => session
+                .results()
+                .ok_or(ErrorCode::QueryResultsUnavailable)?,
+        };
+        QueryResults::project(results, files, args).map(|results| Reply::QueryResults { results })
+    }
 }
 
 impl App {
@@ -230,6 +252,12 @@ impl App {
                 job.refresh(self);
                 job.reply()
             }),
+            Request::GetQueryResults(args) => {
+                queries.job_mut(request.session, args.job).and_then(|job| {
+                    job.refresh(self);
+                    job.results_page(self.shared.borrow().loaded_files.view(), args)
+                })
+            }
             Request::GetQueryStatus(args) => {
                 queries.job_mut(request.session, args.job).map(|job| {
                     job.refresh(self);

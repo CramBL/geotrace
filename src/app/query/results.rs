@@ -15,12 +15,10 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::INFO as ICON_INFO;
-use gt_query::{
-    AggregateColumn, ChannelTimeline, Construct, MetricProvider as _, QueryMetric, TableColumn,
-};
+use gt_query::{AggregateColumn, ChannelTimeline, Construct, QueryMetric, TableColumn};
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, PointsResults, QuerySummary, RunResults, SliceProvider,
-    TimeFilteredPoints, TrackProvider,
+    ChannelResults, ChannelTrackResult, PointResultValues, PointsResults, QuerySummary, RunResults,
+    TrackProvider,
 };
 use gt_side_panel::widgets::{self, PointClickRequests};
 use gt_types::{Channel, FixRef, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef};
@@ -125,11 +123,7 @@ struct TrackValues<'a> {
     /// Where the map draws the track's points, absent for a track with no
     /// geometry.
     placed: Option<PlacedPoints<'a>>,
-    provider: TrackProvider<'a>,
-    /// The evaluator's view of the track, for the metrics derived across
-    /// neighbouring points.
-    slice: SliceProvider<'a>,
-    slice_start: usize,
+    points: PointResultValues<'a>,
     /// The track's channels, which only the samples listed under a match are
     /// read from.
     channels: &'a [Channel],
@@ -140,7 +134,7 @@ impl<'a> TrackValues<'a> {
     /// aggregate reduced. The provider the rows read through leaves them out:
     /// a table of metric columns needs no channel.
     fn provider_with_channels(&self) -> TrackProvider<'a> {
-        self.provider.clone().with_channels(self.channels)
+        self.points.provider().clone().with_channels(self.channels)
     }
 
     /// The closed time extent of the points in `rows`, in Unix seconds, which
@@ -151,20 +145,8 @@ impl<'a> TrackValues<'a> {
             return None;
         }
         let last = rows.end.checked_sub(1)?;
-        let first_time = self.value(QueryMetric::Time, rows.start)?;
-        Some((first_time, self.value(QueryMetric::Time, last)?))
-    }
-
-    /// The value a column shows for one point, derived through the same slice
-    /// the run evaluated so a filtered first point shows what the predicate
-    /// used.
-    fn value(&self, metric: QueryMetric, point_index: usize) -> Option<f64> {
-        if metric == QueryMetric::Accel {
-            return point_index
-                .checked_sub(self.slice_start)
-                .and_then(|relative| gt_query::derived_accel(&self.slice, relative));
-        }
-        self.provider.value(metric, point_index)
+        let first_time = self.points.value(QueryMetric::Time, rows.start)?;
+        Some((first_time, self.points.value(QueryMetric::Time, last)?))
     }
 
     fn resolved_position(&self, point_index: usize) -> Option<ResolvedPosition> {
@@ -200,7 +182,9 @@ impl RowSource<'_> {
                 match_row.aggregates.get(index).copied().flatten()
             }
             (Self::NavPoints { track_values }, ColumnSource::Metric(metric)) => {
-                values_of(track_values, track)?.value(metric, source_index)
+                values_of(track_values, track)?
+                    .points
+                    .value(metric, source_index)
             }
             (Self::ChannelSamples { results }, ColumnSource::SampleTime) => {
                 timeline_of(results, track)?
@@ -466,13 +450,9 @@ impl<'a> ResultsTables<'a> {
             .tracks
             .iter()
             .find_map(|result| result.unit.as_ref());
-        let component_names: &[String] = if channel.components.is_empty() {
-            std::slice::from_ref(&channel.channel)
-        } else {
-            &channel.components
-        };
         columns.extend(
-            component_names
+            channel
+                .component_labels()
                 .iter()
                 .enumerate()
                 .map(|(component, name)| ResultColumn {
@@ -1462,21 +1442,10 @@ fn track_values<'a>(
     track: TrackRef,
 ) -> Option<TrackValues<'a>> {
     let loaded = track.resolve(files)?;
-    let points = loaded.points.as_slice();
-    let data = results.track_data(track);
-    // A table's rows read metric columns alone. The samples listed under a
-    // match read the channels through their own provider.
-    let provider = TrackProvider::new(points, &[], data);
-    let filtered_points = data.map_or_else(
-        || TimeFilteredPoints::whole_track(points.len()),
-        |data| data.filtered_points().clone(),
-    );
     Some(TrackValues {
         placed: loaded.placed_points(),
         channels: &loaded.channels,
-        provider: provider.clone(),
-        slice_start: filtered_points.start(),
-        slice: SliceProvider::new(provider, filtered_points),
+        points: PointResultValues::new(&loaded.points, results.track_data(track)),
     })
 }
 

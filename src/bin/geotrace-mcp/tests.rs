@@ -5,8 +5,10 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    CheckQuery, GetRangeDetails, ListMetrics, ListRecordings, Metrics, PointDetails, QueryJobId,
-    QueryJobRequest, QueryJobState, QueryJobStatus, QueryValidation, RangeDetails, Recording,
+    CheckQuery, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics,
+    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
+    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
+    QueryResultTime, QueryResultValue, QueryResults, QueryValidation, RangeDetails, Recording,
     RecordingReference, Recordings, Reply, Request, TrackReference,
 };
 use gt_types::PointIdx;
@@ -79,6 +81,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         [
             "cancel_query",
             "check_query",
+            "get_query_results",
             "get_query_status",
             "get_range_details",
             "get_recording",
@@ -227,6 +230,30 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         cancelled.pointer("/result/structuredContent"),
         Some(&json!({"job": job, "status": "cancelling"}))
     );
+    let completed_job = QueryJobId {
+        id: Uuid::from_u128(4),
+        ..self::query_job_id()
+    };
+    let matched = QueryMatchPosition::default();
+    let rows = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+            "params": {"name": "get_query_results", "arguments": {
+                "job": completed_job, "query": 0, "limit": 1,
+                "page": {"kind": "rows", "matched": matched, "start": 3}
+            }}
+        }))
+        .await;
+    assert_eq!(
+        rows.pointer("/result/structuredContent"),
+        Some(&json!({
+            "job": completed_job, "query": 0, "source": {"kind": "channel", "channel": "accel"},
+            "columns": [{"ordinal": 0, "label": "x", "unit": "g"}],
+            "page": {"kind": "rows", "matched": matched, "next_start": 4, "rows": [{
+                "index": 3, "time": 0.000000021, "values": [{"status": "non_finite"}]
+            }]}
+        }))
+    );
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -236,6 +263,43 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
 
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
+        Request::GetQueryResults(GetQueryResults {
+            job,
+            query: 0,
+            limit: Some(NonZeroUsize::MIN),
+            page:
+                QueryPageRequest::Rows {
+                    matched,
+                    start: Some(3),
+                },
+        }) if job.session == self::query_job_id().session
+            && job.id == Uuid::from_u128(4)
+            && matched == QueryMatchPosition::default() =>
+        {
+            Ok(Reply::QueryResults {
+                results: QueryResults {
+                    job,
+                    query: 0,
+                    source: QueryResultSource::Channel {
+                        channel: "accel".to_owned(),
+                    },
+                    columns: vec![QueryResultColumn {
+                        ordinal: 0,
+                        label: "x".to_owned(),
+                        unit: Some("g".to_owned()),
+                    }],
+                    page: QueryResultPage::Rows {
+                        matched,
+                        next_start: Some(4),
+                        rows: vec![QueryResultRow {
+                            index: 3,
+                            time: Some(QueryResultTime::UnixSeconds(0.000000021)),
+                            values: vec![QueryResultValue::from(Some(f64::NAN))],
+                        }],
+                    },
+                },
+            })
+        }
         Request::RunQuery(CheckQuery { text }) if text == "points | draw" => Ok(Reply::QueryJob {
             job: QueryJobStatus {
                 job: self::query_job_id(),

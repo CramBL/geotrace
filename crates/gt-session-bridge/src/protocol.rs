@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::inspection::{RangeDetails, RecordingDetails, TrackDetails};
 use crate::metrics::Metrics;
 use crate::query_job::{QueryJobRequest, QueryJobStatus};
+use crate::query_results::{GetQueryResults, QueryResults};
 use crate::query_validation::QueryValidation;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -16,6 +17,7 @@ use crate::query_validation::QueryValidation;
 pub enum Request {
     CancelQuery(QueryJobRequest),
     CheckQuery(CheckQuery),
+    GetQueryResults(GetQueryResults),
     GetQueryStatus(QueryJobRequest),
     GetRangeDetails(GetRangeDetails),
     GetRecording(GetRecording),
@@ -116,6 +118,7 @@ pub enum Reply {
     Metrics { page: Metrics },
     QueryCheck { validation: QueryValidation },
     QueryJob { job: QueryJobStatus },
+    QueryResults { results: QueryResults },
     Range { details: RangeDetails },
     Recording { details: RecordingDetails },
     Recordings { page: Recordings },
@@ -132,12 +135,17 @@ impl From<ErrorCode> for Reply {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Busy,
+    InvalidQueryCursor,
     InvalidRange,
     InvalidRequest,
+    QueryColumnsTooLarge,
     QueryJobNotFound,
+    QueryNotComplete,
+    QueryResultsUnavailable,
     RecordingNotFound,
     ReplyTooLarge,
     RequestTooLarge,
+    StaleQueryResults,
     StaleSession,
     StaleTrack,
 }

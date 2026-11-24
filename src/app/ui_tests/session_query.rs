@@ -1,15 +1,22 @@
+use std::num::NonZeroUsize;
+
 use chrono::TimeDelta;
 use egui_kittest::Harness;
 use gt_loaded_files::FileHistory;
+use gt_query::Unit;
 use gt_session_bridge::{
-    CheckQuery, ErrorCode, QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
-    QueryValidation, Reply, Request, SessionRequest,
+    CheckQuery, ErrorCode, GetQueryResults, QueryCounts, QueryJobId, QueryJobRequest,
+    QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest,
+    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResultValue,
+    QueryResults, QueryValidation, Reply, Request, SessionRequest,
 };
 use gt_test_utils::HarnessInteraction as _;
 use gt_test_utils::fixtures;
 use uuid::Uuid;
 
 use super::{self as ui_tests, App};
+use crate::app::test_util;
+use crate::app::test_util::harness::TestDroppedFile;
 
 #[test]
 fn session_query_uses_current_filter_and_visibility_without_changing_the_editor() {
@@ -102,6 +109,278 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
         }
     );
     assert_eq!(self::status(&mut harness, job), QueryJobState::Cancelled);
+    assert_eq!(
+        self::execute(
+            &mut harness,
+            Request::GetQueryResults(self::first_page(job))
+        ),
+        ErrorCode::QueryResultsUnavailable.into()
+    );
+}
+
+#[test]
+fn session_query_pages_point_matches_and_absolute_table_rows() {
+    let mut harness = ui_tests::harness_with_three_files_loaded();
+    let time = ui_tests::base_time() + TimeDelta::seconds(20);
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .set_time_bounds(Some(time), None);
+    let job = self::start(
+        &mut harness,
+        "points | window 2 | where max(velocity) > 1 km/h | table time, accel, max(velocity), velocity\n\npoints | where velocity > 300 km/h",
+    );
+    let request = self::first_page(job);
+    assert_eq!(
+        self::execute(&mut harness, Request::GetQueryResults(request)),
+        ErrorCode::QueryNotComplete.into()
+    );
+    assert!(matches!(
+        self::complete(&mut harness, job),
+        QueryJobState::Completed { .. }
+    ));
+    let results = self::results(&mut harness, request);
+    assert_eq!(results.source, QueryResultSource::Points);
+    assert_eq!(results.columns[0].ordinal, 2);
+    assert_eq!(results.columns[0].unit.as_deref(), Some("m/s"));
+    let (matches, next) = self::match_page(results.page);
+    assert_eq!(matches.len(), 1);
+    let matched = &matches[0];
+    assert_eq!(matched.range, 20..240);
+    assert_eq!(matched.first_time, Some(QueryResultTime::Utc(time)));
+    assert_eq!(
+        matched.last_time,
+        Some(QueryResultTime::Utc(
+            ui_tests::base_time() + TimeDelta::seconds(239)
+        ))
+    );
+    assert_eq!(
+        next,
+        Some(QueryMatchPosition {
+            track_ordinal: 1,
+            match_ordinal: 0
+        })
+    );
+    let (second, _) = self::match_page(
+        self::results(
+            &mut harness,
+            GetQueryResults {
+                page: QueryPageRequest::Matches { start: next },
+                ..request
+            },
+        )
+        .page,
+    );
+    assert_ne!(matched.track.recording, second[0].track.recording);
+
+    self::assert_point_rows(&mut harness, request, matched);
+    assert_eq!(
+        self::results(
+            &mut harness,
+            GetQueryResults {
+                query: 1,
+                ..request
+            }
+        )
+        .page,
+        QueryResultPage::Matches {
+            matches: Vec::new(),
+            next_start: None
+        }
+    );
+}
+
+fn assert_point_rows(
+    harness: &mut Harness<'_, App>,
+    request: GetQueryResults,
+    matched: &QueryMatch,
+) {
+    let rows_request = GetQueryResults {
+        page: QueryPageRequest::Rows {
+            matched: matched.position,
+            start: None,
+        },
+        limit: Some(NonZeroUsize::MAX),
+        ..request
+    };
+    let details = self::results(harness, rows_request);
+    assert_eq!(
+        details
+            .columns
+            .iter()
+            .map(|column| column.ordinal)
+            .collect::<Vec<_>>(),
+        [0, 1, 3]
+    );
+    let (rows, next_start) = self::row_page(details.page);
+    assert_eq!(rows.len(), 100);
+    assert_eq!(rows[0].index, 20);
+    assert_eq!(rows[0].time, matched.first_time);
+    assert_eq!(rows[0].values[1], QueryResultValue::Missing);
+    assert_eq!(rows[1].values[1], QueryResultValue::Finite { value: 0.0 });
+    assert_eq!(rows[0].values[2], matched.aggregates[0]);
+    assert_eq!(next_start, Some(120));
+
+    let invalid = GetQueryResults {
+        page: QueryPageRequest::Rows {
+            matched: matched.position,
+            start: Some(19),
+        },
+        ..rows_request
+    };
+    assert_eq!(
+        self::execute(harness, Request::GetQueryResults(invalid)),
+        ErrorCode::InvalidQueryCursor.into()
+    );
+}
+
+#[test]
+fn session_query_pages_channel_rows_on_the_filtered_timeline() {
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(28.0), "accel.gtd"),
+    );
+    let time = ui_tests::base_time() + TimeDelta::seconds(100);
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .set_time_bounds(Some(time), None);
+    let job = self::start(
+        &mut harness,
+        "@accel | window 2 | where min(@accel.x) > 1 g | table max(@accel.x)",
+    );
+    assert!(matches!(
+        self::complete(&mut harness, job),
+        QueryJobState::Completed { .. }
+    ));
+    let request = self::first_page(job);
+    let results = self::results(&mut harness, request);
+    assert_eq!(
+        results.source,
+        QueryResultSource::Channel {
+            channel: "accel".to_owned()
+        }
+    );
+    assert_eq!(results.columns[0].ordinal, 3);
+    assert_eq!(
+        results.columns[0].unit.as_deref(),
+        Some(Unit::M_PER_S2.label())
+    );
+    let (matches, next) = self::match_page(results.page);
+    assert_eq!(matches[0].range, 0..20);
+    assert_eq!(
+        matches[0].first_time,
+        Some(QueryResultTime::UnixSeconds(time.timestamp() as f64))
+    );
+    assert_eq!(
+        matches[0].aggregates,
+        [QueryResultValue::Finite {
+            value: 1.5 * Unit::G.to_base()
+        }]
+    );
+    assert_eq!(
+        next,
+        Some(QueryMatchPosition {
+            track_ordinal: 0,
+            match_ordinal: 1
+        })
+    );
+    assert_eq!(
+        matches[0].last_time,
+        Some(QueryResultTime::UnixSeconds(
+            (time + TimeDelta::seconds(19)).timestamp() as f64
+        ))
+    );
+    self::assert_channel_rows(&mut harness, request, &matches[0]);
+
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .set_time_bounds(None, None);
+    assert_eq!(
+        self::execute(&mut harness, Request::GetQueryResults(request)),
+        ErrorCode::StaleQueryResults.into()
+    );
+}
+
+fn assert_channel_rows(
+    harness: &mut Harness<'_, App>,
+    request: GetQueryResults,
+    matched: &QueryMatch,
+) {
+    let details = self::results(
+        harness,
+        GetQueryResults {
+            page: QueryPageRequest::Rows {
+                matched: matched.position,
+                start: Some(19),
+            },
+            ..request
+        },
+    );
+    assert_eq!(
+        details
+            .columns
+            .iter()
+            .map(|column| column.label.as_str())
+            .collect::<Vec<_>>(),
+        ["x", "y", "z"]
+    );
+    assert_eq!(details.columns[0].unit.as_deref(), Some("g"));
+    let (rows, next_start) = self::row_page(details.page);
+    assert_eq!(next_start, None);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].index, 19);
+    assert_eq!(rows[0].time, matched.last_time);
+    assert_eq!(rows[0].values[0], QueryResultValue::Finite { value: 1.5 });
+}
+
+fn match_page(page: QueryResultPage) -> (Vec<QueryMatch>, Option<QueryMatchPosition>) {
+    let QueryResultPage::Matches {
+        matches,
+        next_start,
+    } = page
+    else {
+        panic!("expected match page");
+    };
+    (matches, next_start)
+}
+
+fn row_page(page: QueryResultPage) -> (Vec<QueryResultRow>, Option<usize>) {
+    let QueryResultPage::Rows {
+        rows, next_start, ..
+    } = page
+    else {
+        panic!("expected row page");
+    };
+    (rows, next_start)
+}
+
+fn first_page(job: QueryJobId) -> GetQueryResults {
+    GetQueryResults {
+        job,
+        query: 0,
+        page: QueryPageRequest::Matches { start: None },
+        limit: Some(NonZeroUsize::MIN),
+    }
+}
+
+fn results(harness: &mut Harness<'_, App>, args: GetQueryResults) -> QueryResults {
+    let Reply::QueryResults { results } = self::execute(harness, Request::GetQueryResults(args))
+    else {
+        panic!("expected query results");
+    };
+    results
 }
 
 #[test]
@@ -128,13 +407,14 @@ fn session_query_status_becomes_stale_after_replacing_the_recording() {
 }
 
 fn start(harness: &mut Harness<'_, App>, text: &str) -> QueryJobId {
-    let Reply::QueryJob { job } = self::execute(
+    let reply = self::execute(
         harness,
         Request::RunQuery(CheckQuery {
             text: text.to_owned(),
         }),
-    ) else {
-        panic!("expected a running query job");
+    );
+    let Reply::QueryJob { job } = reply else {
+        panic!("expected a running query job, got {reply:?}");
     };
     assert_eq!(job.state, QueryJobState::Preparing);
     job.job

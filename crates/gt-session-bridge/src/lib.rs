@@ -25,6 +25,11 @@ pub use crate::protocol::{
 pub use crate::query_job::{
     QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
 };
+pub use crate::query_results::{
+    GetQueryResults, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
+    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResultValue,
+    QueryResults,
+};
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
 
 mod endpoint;
@@ -33,6 +38,7 @@ mod inspection;
 mod metrics;
 mod protocol;
 mod query_job;
+mod query_results;
 mod query_validation;
 
 #[derive(Debug)]

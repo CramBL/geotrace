@@ -26,9 +26,10 @@ pub(crate) struct Inspection<'a> {
 impl<'a> Inspection<'a> {
     pub(crate) fn execute(&self, request: Request) -> Reply {
         match request {
-            Request::CancelQuery(_) | Request::GetQueryStatus(_) | Request::RunQuery(_) => {
-                Err(ErrorCode::InvalidRequest)
-            }
+            Request::CancelQuery(_)
+            | Request::GetQueryResults(_)
+            | Request::GetQueryStatus(_)
+            | Request::RunQuery(_) => Err(ErrorCode::InvalidRequest),
             Request::CheckQuery(args) => QueryValidation::check(args.text, self.files.files())
                 .map(|validation| Reply::QueryCheck { validation }),
             Request::GetRangeDetails(args) => {

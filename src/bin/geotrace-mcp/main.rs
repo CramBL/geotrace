@@ -4,8 +4,8 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
-    QueryJobRequest, Reply, Request,
+    CheckQuery, ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
+    ListRecordings, QueryJobRequest, Reply, Request,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -57,6 +57,17 @@ impl Companion {
     )]
     async fn check_query(&self, Parameters(args): Parameters<CheckQuery>) -> CallToolResult {
         self.inspect(Request::CheckQuery(args)).await
+    }
+
+    #[tool(
+        description = "Read a page of matches or the rows of one match from a completed query job. Use next_start for the next page.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_query_results(
+        &self,
+        Parameters(args): Parameters<GetQueryResults>,
+    ) -> CallToolResult {
+        self.inspect(Request::GetQueryResults(args)).await
     }
 
     #[tool(
@@ -130,6 +141,7 @@ impl Companion {
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
             Ok(Reply::QueryJob { job }) => serde_json::to_value(job),
+            Ok(Reply::QueryResults { results }) => serde_json::to_value(results),
             Ok(Reply::Range { details }) => serde_json::to_value(details),
             Ok(Reply::Recording { details }) => serde_json::to_value(details),
             Ok(Reply::Recordings { page }) => serde_json::to_value(page),
@@ -155,13 +167,17 @@ impl Companion {
     fn reply_error_message(code: ErrorCode) -> &'static str {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
+            ErrorCode::InvalidQueryCursor => "The query, match or row index is outside the result.",
             ErrorCode::InvalidRange => "Choose an ordered point range within the track.",
             ErrorCode::InvalidRequest => {
                 "GeoTrace could not read the request. Use the companion from the same release."
             }
+            ErrorCode::QueryColumnsTooLarge => "Query result columns exceed the page size limit.",
             ErrorCode::QueryJobNotFound => {
                 "GeoTrace no longer has that query job. Start the query again."
             }
+            ErrorCode::QueryNotComplete => "The query is still in progress. Poll its status.",
+            ErrorCode::QueryResultsUnavailable => "The query job completed without results.",
             ErrorCode::RecordingNotFound => {
                 "The recording is no longer loaded. List the loaded recordings again."
             }
@@ -169,6 +185,7 @@ impl Companion {
             ErrorCode::RequestTooLarge => {
                 "The request is too large. Shorten the request and try again."
             }
+            ErrorCode::StaleQueryResults => "The query results are stale. Run the query again.",
             ErrorCode::StaleSession => {
                 "The desktop session has changed. Use references from the current session."
             }
