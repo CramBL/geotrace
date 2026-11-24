@@ -3,7 +3,7 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
 use gt_map::{MapAction, MapDrawContext, MapFiles, NavMap};
-use gt_types::LoadedFile;
+use gt_types::{Generation, LoadedFile};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
 use super::SharedAppState;
@@ -17,6 +17,7 @@ pub(super) enum MainPane {
 /// Behavior implementation that renders each pane of the central tiles tree.
 pub(super) struct MainBehavior<'a> {
     pub(super) map: &'a mut NavMap,
+    pub(super) checked_plot_visibility: Generation<TrackDataVisibility>,
     pub(super) state: &'a mut SharedAppState,
     /// The display names of the loaded recordings, resolved once for the frame.
     pub(super) recording_names: &'a RecordingNames,
@@ -156,7 +157,19 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     None
                 };
-                gt_plot::show_track_plot(
+                let view_request = s
+                    .pending_session_plot
+                    .as_ref()
+                    .filter(|_| !self.toggle_plot_request)
+                    .and_then(|request| {
+                        if self.checked_plot_visibility == s.tree.visibility_generation() {
+                            Some(&request.view)
+                        } else {
+                            ui.ctx().request_repaint();
+                            None
+                        }
+                    });
+                let framed = gt_plot::show_track_plot(
                     ui,
                     &s.loaded_files,
                     self.recording_names,
@@ -174,8 +187,12 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         context_lines: self.context_lines,
                         solar_flares: self.solar_flares,
                     },
+                    view_request,
                     &mut s.plot_state,
                 );
+                if framed {
+                    s.pending_session_plot = None;
+                }
             }
         }
         UiResponse::None

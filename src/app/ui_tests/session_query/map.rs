@@ -2,8 +2,8 @@ use chrono::TimeDelta;
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use gt_session_bridge::{
-    ErrorCode, GetQueryResults, GetRecording, ListRecordings, MapTarget, OpenPoint, QueryJobId,
-    QueryJobState, QueryMatchPosition, QueryPageRequest, Reply, Request, ShowOnMap, TrackReference,
+    ErrorCode, GetQueryResults, OpenPoint, QueryJobId, QueryJobState, QueryMatchPosition,
+    QueryPageRequest, RangeTarget, Reply, Request, ShowOnMap,
 };
 use gt_test_utils::{HarnessInteraction as _, Queryable as _, SyntheticGtdSpec};
 use gt_types::{
@@ -18,7 +18,7 @@ use super::{App, ui_tests};
 #[test]
 fn session_map_frames_a_range_when_the_map_draws() {
     let mut harness = ui_tests::app_with_a_recording();
-    let reference = self::first_track_reference(&mut harness);
+    let reference = super::first_track_reference(&mut harness);
     let initial = harness.state().map.viewport_geo_bounds().unwrap();
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, false);
@@ -31,7 +31,7 @@ fn session_map_frames_a_range_when_the_map_draws() {
         super::execute(
             &mut harness,
             Request::ShowOnMap(ShowOnMap {
-                target: MapTarget::Track {
+                target: RangeTarget::Track {
                     track: reference,
                     start: Some(0),
                     end: Some(33)
@@ -98,7 +98,7 @@ fn session_map_discards_a_query_match_without_a_status_request(
         match_ordinal: 0,
     };
     let request = Request::ShowOnMap(ShowOnMap {
-        target: MapTarget::QueryMatch {
+        target: RangeTarget::QueryMatch {
             job,
             query: 1,
             matched: position,
@@ -224,7 +224,7 @@ fn session_map_validates_query_match_indices_and_geometry() {
         (job, 0, position, ErrorCode::NoVisibleMapGeometry),
     ] {
         let request = Request::ShowOnMap(ShowOnMap {
-            target: MapTarget::QueryMatch {
+            target: RangeTarget::QueryMatch {
                 job,
                 query,
                 matched,
@@ -252,7 +252,7 @@ fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] sta
             start_lat_deg,
             ..ui_tests::minimal_gtd_spec()
         }));
-    let track = self::first_track_reference(&mut harness);
+    let track = super::first_track_reference(&mut harness);
     let point = 20;
     let request = Request::OpenPoint(OpenPoint { track, point });
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
@@ -295,7 +295,7 @@ fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] sta
 fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filter: bool) {
     let mut harness = ui_tests::app_with_a_recording();
     harness.set_size(egui::vec2(1400.0, 900.0));
-    let track = self::first_track_reference(&mut harness);
+    let track = super::first_track_reference(&mut harness);
     let point = 20;
     assert_eq!(
         super::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
@@ -347,7 +347,7 @@ fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filte
             super::execute(
                 &mut harness,
                 Request::ShowOnMap(ShowOnMap {
-                    target: MapTarget::Track {
+                    target: RangeTarget::Track {
                         track,
                         start: Some(30),
                         end: Some(33),
@@ -370,7 +370,7 @@ fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filte
 #[case::gui_last_with_zero_height(CameraOrder::GuiLastWithZeroHeight)]
 fn the_latest_camera_request_applies_when_the_map_draws(#[case] order: CameraOrder) {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = self::first_track_reference(&mut harness);
+    let track = super::first_track_reference(&mut harness);
     let point = 60;
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     let (gui_latitude, session_latitude) = {
@@ -464,14 +464,14 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
     let Some(MapElementRef::Fix(fix)) = harness.state().shared.borrow().highlight.sticky() else {
         panic!("the result row pins a fix");
     };
-    let track = self::first_track_reference(&mut harness);
+    let track = super::first_track_reference(&mut harness);
     let requests = [
         Request::OpenPoint(OpenPoint {
             track,
             point: fix.point.as_usize(),
         }),
         Request::ShowOnMap(ShowOnMap {
-            target: MapTarget::Track {
+            target: RangeTarget::Track {
                 track,
                 start: Some(30),
                 end: Some(33),
@@ -537,7 +537,7 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
             shared.popup_pos_request.unwrap(),
         )
     };
-    let track = self::first_track_reference(&mut harness);
+    let track = super::first_track_reference(&mut harness);
     let point = 60;
     assert_ne!(
         gui_pin,
@@ -566,7 +566,7 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
 #[test]
 fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = self::first_track_reference(&mut harness);
+    let track = super::first_track_reference(&mut harness);
     let custom_mask = {
         let mut shared = harness.state_mut().shared.borrow_mut();
         shared
@@ -578,7 +578,7 @@ fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
         super::execute(
             &mut harness,
             Request::ShowOnMap(ShowOnMap {
-                target: MapTarget::Track {
+                target: RangeTarget::Track {
                     track,
                     start: None,
                     end: None
@@ -615,9 +615,9 @@ fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
 #[test]
 fn session_map_drops_a_queued_range_when_its_inputs_change() {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = self::first_track_reference(&mut harness);
+    let track = super::first_track_reference(&mut harness);
     let request = Request::ShowOnMap(ShowOnMap {
-        target: MapTarget::Track {
+        target: RangeTarget::Track {
             track,
             start: None,
             end: None,
@@ -648,7 +648,7 @@ fn session_map_rejects_invalid_point_references(
     #[case] expected: ErrorCode,
 ) {
     let mut harness = ui_tests::app_with_a_recording();
-    let mut track = self::first_track_reference(&mut harness);
+    let mut track = super::first_track_reference(&mut harness);
     if stale {
         track.revision += 1;
     }
@@ -656,29 +656,6 @@ fn session_map_rejects_invalid_point_references(
         super::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
         expected.into()
     );
-}
-
-fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {
-    let Reply::Recordings { page } = super::execute(
-        harness,
-        Request::ListRecordings(ListRecordings {
-            after: None,
-            limit: None,
-        }),
-    ) else {
-        panic!("expected recordings");
-    };
-    let Reply::Recording { details } = super::execute(
-        harness,
-        Request::GetRecording(GetRecording {
-            recording: page.recordings[0].id,
-            after: None,
-            limit: None,
-        }),
-    ) else {
-        panic!("expected recording details");
-    };
-    details.tracks[0]
 }
 
 fn exclude_recording_times(harness: &mut Harness<'_, App>) {

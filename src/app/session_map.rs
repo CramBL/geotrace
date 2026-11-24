@@ -3,7 +3,9 @@ use std::ops::Range;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::RecordingData;
 use gt_map::{NavMap, PresentationCamera};
-use gt_session_bridge::{ErrorCode, MapTarget, OpenPoint, PointQueryMatch, QueryJobId, ShowOnMap};
+use gt_session_bridge::{
+    ErrorCode, OpenPoint, QueryJobId, QueryMatchExtent, QueryMatchRange, RangeTarget, ShowOnMap,
+};
 use gt_types::{DataCategory, FixRef, Generation, Latitude, Longitude, PointIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, MapElementRef, MapEligibility, MapPresence, MapPresenceResult, MatchHighlight,
@@ -171,18 +173,13 @@ impl App {
         ShowOnMap { target }: ShowOnMap,
     ) -> Result<MapPresentation, ErrorCode> {
         let (track, points, query_job) = match target {
-            MapTarget::Track { track, start, end } => {
+            RangeTarget::Track { track, start, end } => {
                 let shared = self.shared.borrow();
                 let files = shared.loaded_files.view();
-                let track = track.resolve(files, session)?;
-                let loaded = track.resolve(files.files()).ok_or(ErrorCode::StaleTrack)?;
-                let points = start.unwrap_or_default()..end.unwrap_or(loaded.points.len());
-                if points.is_empty() || points.end > loaded.points.len() {
-                    return Err(ErrorCode::InvalidRange);
-                }
+                let (track, points) = track.resolve_range(files, session, start..end)?;
                 (track, points, None)
             }
-            MapTarget::QueryMatch {
+            RangeTarget::QueryMatch {
                 job,
                 query,
                 matched,
@@ -190,8 +187,11 @@ impl App {
                 let results = queries.results(self, session, job)?;
                 let files = self.shared.borrow();
                 let matched =
-                    PointQueryMatch::resolve(results, files.loaded_files.view(), query, matched)?;
-                (matched.track, matched.points, Some(job))
+                    QueryMatchRange::resolve(results, files.loaded_files.view(), query, matched)?;
+                let QueryMatchExtent::Points(points) = matched.extent else {
+                    return Err(ErrorCode::QueryMatchIsChannel);
+                };
+                (matched.track, points, Some(job))
             }
         };
         MapPresentation::track_range(
