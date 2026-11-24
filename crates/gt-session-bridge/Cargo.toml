@@ -10,14 +10,21 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+schema = ["dep:schemars"]
+
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 gt-loaded-files = { path = "../gt-loaded-files" }
+gt-types = { path = "../gt-types" }
 interprocess = { version = "2.4.9", features = ["tokio"] }
 log.workspace = true
+schemars = { version = "1", features = ["uuid1"], optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+uom.workspace = true
+uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 gt-test-utils = { path = "../gt-test-utils" }

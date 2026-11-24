@@ -190,6 +190,10 @@ impl<'a> LoadedFilesView<'a> {
         self.get(index)
     }
 
+    pub fn entry_for_id_number(&self, id: u64) -> Option<LoadedFileEntry<'a>> {
+        self.entry_for_id(LoadedFileId(id))
+    }
+
     pub fn entries(&self) -> impl ExactSizeIterator<Item = LoadedFileEntry<'a>> + 'a {
         let storage = self.loaded_files.storage.get();
         storage
@@ -229,6 +233,10 @@ impl<'a> LoadedFilesView<'a> {
 impl<'a> LoadedFileEntry<'a> {
     pub fn id(&self) -> LoadedFileId {
         self.id
+    }
+
+    pub fn file_index(&self) -> FileIdx {
+        self.fi
     }
 
     pub fn file(&self) -> &'a LoadedFile {

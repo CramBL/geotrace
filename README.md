@@ -104,7 +104,7 @@ The check can be turned off under Settings.
 > On macOS, the first launch needs right-click &rarr; **Open** (or `xattr -d com.apple.quarantine /path/to/geotrace`).
 > On Windows, SmartScreen shows **More info &rarr; Run anyway**.
 
-## List recordings from an MCP client
+## Inspect recordings from an MCP client
 
 Start the desktop app with `geotrace --session-bridge` and open a recording.
 Configure your MCP client to launch the companion from the same GeoTrace installation under the same operating system account.
@@ -126,8 +126,22 @@ The `list_recordings` tool lists the recordings that are currently loaded.
 It accepts an optional `limit` and an `after` cursor.
 Each page contains at most 100 recordings, which is the default limit.
 Use the returned `next_after` as `after` to continue, and stop when `next_after` is null.
-Recording IDs and cursors apply to one desktop session.
-Start listing from the beginning after restarting GeoTrace.
+
+Pass a recording's returned `id` as `recording` to `get_recording`.
+It returns the recording summary and up to 100 track references per page.
+Pass its `next_after` as `after` to continue.
+Pass a track reference as `track` to `get_track` for its recorded time range and counts, or to `get_range_details` for points in recorded order.
+`get_track` reports distance and bounds from the map geometry when available.
+Longitude bounds extend east from `longitude_start_deg` by `longitude_span_deg`, including across the antimeridian.
+`get_range_details` accepts a zero-based inclusive `start` and exclusive `end`.
+Use `next_start` as `start` with the same `end` to continue through pages of up to 100 points.
+The tool reports exact UTC timestamps in recorded order, including across clock reversals.
+The source for `time` is the receiver clock when available and the host clock otherwise.
+Missing recorded coordinates and measurements appear as null.
+
+Use recording IDs and cursors from the current desktop session.
+Start again with `list_recordings` after restarting GeoTrace.
+Get fresh track references with `get_recording` after changing the loaded recordings.
 
 ## Network access
 

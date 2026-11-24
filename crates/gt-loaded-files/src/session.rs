@@ -61,7 +61,7 @@ pub struct RecordingSummary {
 }
 
 impl RecordingSummary {
-    fn new(entry: LoadedFileEntry<'_>, name_template: &str) -> Self {
+    pub fn new(entry: LoadedFileEntry<'_>, name_template: &str) -> Self {
         let file = entry.file();
         let filename = entry.basename();
         let mut name_fields = entry.name_fields(filename);
@@ -93,6 +93,20 @@ pub struct SessionTrackRef {
     generation: Generation<IndexAlignedFiles>,
 }
 
+impl SessionTrackRef {
+    pub fn recording(self) -> LoadedFileId {
+        self.recording
+    }
+
+    pub fn index(self) -> TrackIdx {
+        self.index
+    }
+
+    pub fn revision(self) -> u64 {
+        self.generation.as_u64()
+    }
+}
+
 impl LoadedFilesView<'_> {
     pub fn session_track_ref(&self, track: TrackRef) -> Option<SessionTrackRef> {
         let entry = self.entry_for(track.fi)?;
@@ -112,6 +126,23 @@ impl LoadedFilesView<'_> {
         let entry = self.entry_for_id(track.recording)?;
         track.index.get(&entry.file().tracks)?;
         Some(TrackRef::new(entry.fi, track.index))
+    }
+
+    pub fn resolve_track_at_revision(
+        &self,
+        recording: LoadedFileId,
+        index: TrackIdx,
+        revision: u64,
+    ) -> Option<TrackRef> {
+        let generation = self.generation();
+        if generation.as_u64() != revision {
+            return None;
+        }
+        self.resolve_session_track(SessionTrackRef {
+            recording,
+            index,
+            generation,
+        })
     }
 }
 

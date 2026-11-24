@@ -48,4 +48,4 @@ impl Drop for Connection {
     }
 }
 
-const ENDPOINT_PREFIX: &str = "geotrace-session-v1";
+const ENDPOINT_PREFIX: &str = "geotrace-session-v2";
