@@ -25,6 +25,7 @@ use gt_ionex::quiet_time::{self, QuietTimeDeviationPeak};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
+use gt_loaded_files::LoadedFilesView;
 use gt_map::{TecHeatmapSnapshot, TecLayer};
 use gt_pending_writes::PendingWrites;
 use gt_store::{
@@ -426,17 +427,15 @@ impl TecMapScheduler {
     /// TEC values for the plot: one point per fix of every loaded track,
     /// interpolated from the archived maps over that fix's own position and
     /// time.
-    ///
-    /// A track's points are rebuilt only when the archive gains one of the
-    /// days it spans, so the `Arc` the plot caches on stays stable.
-    pub fn plot_series(&mut self, files: &[LoadedFile]) -> TecSeries {
+    pub fn plot_series(&mut self, files: LoadedFilesView<'_>) -> TecSeries {
+        self.plot_points.sync_recordings(files);
         let mut series = TecSeries::default();
         let mut live: FxHashSet<TrackRef> = FxHashSet::default();
         // Shared across tracks: a batch of recordings from one drive all read
         // the same day.
         let mut archived: FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>> = FxHashMap::default();
 
-        for (fi, file) in files.iter().enumerate() {
+        for (fi, file) in files.files().iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref =
                     TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
@@ -715,6 +714,7 @@ mod tests {
     use gt_fetch::test_util::{ScriptedTransport, UrlPrefixResponses};
     use gt_ionex::quiet_time::{IonosphericStormGrade, QuietTimeDeviation};
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
+    use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::Store;
     use gt_test_utils::{ionex_fixtures, pending_writes};
@@ -1606,15 +1606,20 @@ mod tests {
         track
     }
 
-    fn loaded_files_of(track: gt_types::LoadedTrack) -> Vec<gt_types::LoadedFile> {
-        vec![gt_types::LoadedFile {
-            metadata: gt_test_utils::empty_file_metadata(),
-            tracks: vec![track],
-            event_marker_styles: FxHashMap::default(),
-            orphaned_event_markers: vec![],
-            load_warnings: vec![],
-            source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
-        }]
+    fn loaded_files_of(track: LoadedTrack) -> LoadedFiles {
+        let mut files = LoadedFiles::new();
+        files.push(
+            LoadedFile {
+                metadata: gt_test_utils::empty_file_metadata(),
+                tracks: vec![track],
+                event_marker_styles: FxHashMap::default(),
+                orphaned_event_markers: vec![],
+                load_warnings: vec![],
+                source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
+            },
+            FileHistory::None,
+        );
+        files
     }
 
     /// Archive `archived` with the last two maps a published day carries: one
@@ -1647,7 +1652,7 @@ mod tests {
             1800,
         ));
 
-        let series = scheduler.plot_series(&files);
+        let series = scheduler.plot_series(files.view());
         let points = series
             .points_by_track
             .values()
@@ -2270,7 +2275,7 @@ mod tests {
             1800,
         ));
 
-        assert!(scheduler.plot_series(&files).is_empty());
+        assert!(scheduler.plot_series(files.view()).is_empty());
     }
 
     /// Until the day arrives the track has no points to draw.
@@ -2283,7 +2288,7 @@ mod tests {
             1800,
         ));
 
-        assert!(scheduler.plot_series(&files).is_empty());
+        assert!(scheduler.plot_series(files.view()).is_empty());
     }
 
     /// The context line over the UTC days `from..=to`.
@@ -2389,7 +2394,7 @@ mod tests {
             4,
             1800,
         ));
-        assert!(scheduler.plot_series(&files).is_empty());
+        assert!(scheduler.plot_series(files.view()).is_empty());
 
         archive_last_maps_of(&store, archived);
         scheduler
@@ -2404,7 +2409,7 @@ mod tests {
             .expect("send");
         scheduler.poll();
 
-        let series = scheduler.plot_series(&files);
+        let series = scheduler.plot_series(files.view());
         let points = series
             .points_by_track
             .values()

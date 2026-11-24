@@ -154,6 +154,10 @@ impl<'a> LoadedFilesView<'a> {
         self.loaded_files.generation()
     }
 
+    pub fn data_generation(&self) -> Generation<RecordingData> {
+        self.loaded_files.data_generation()
+    }
+
     pub fn files(&self) -> &'a [LoadedFile] {
         self.loaded_files.files()
     }
@@ -169,7 +173,7 @@ impl<'a> LoadedFilesView<'a> {
     pub fn get(&self, index: usize) -> Option<LoadedFileEntry<'a>> {
         let storage = self.loaded_files.storage.get();
         let id = *storage.ids.get(index)?;
-        let file = storage.files.get(index)?;
+        let file = storage.files().get(index)?;
         let history = storage.history.get(index)?;
         Some(LoadedFileEntry {
             id,
@@ -199,7 +203,7 @@ impl<'a> LoadedFilesView<'a> {
         storage
             .ids
             .iter()
-            .zip(&storage.files)
+            .zip(storage.files())
             .zip(&storage.history)
             .enumerate()
             .map(|(index, ((&id, file), history))| LoadedFileEntry {
@@ -326,13 +330,28 @@ fn tracks_are_time_ordered(tracks: &[LoadedTrack]) -> bool {
 /// [`LoadedFiles::generation`] returns. The fields stay private.
 #[derive(Debug, Clone, Default)]
 pub struct IndexAlignedFiles {
-    files: Vec<LoadedFile>,
+    files: Versioned<RecordingData>,
     history: Vec<FileHistory>,
     // IDs increase in file order, including across removals.
     ids: Vec<LoadedFileId>,
 }
 
+impl IndexAlignedFiles {
+    fn files(&self) -> &[LoadedFile] {
+        &self.files.get().0
+    }
+
+    fn files_mut(&mut self) -> &mut Vec<LoadedFile> {
+        &mut self.files.get_mut().0
+    }
+}
+
 impl Versionable for IndexAlignedFiles {}
+
+#[derive(Debug, Clone, Default)]
+pub struct RecordingData(Vec<LoadedFile>);
+
+impl Versionable for RecordingData {}
 
 /// Loaded files plus app/session metadata that must remain index-aligned.
 ///
@@ -359,43 +378,48 @@ impl LoadedFiles {
         self.storage.generation()
     }
 
+    /// A new generation follows a mutable borrow of the files or a change to their indices.
+    pub fn data_generation(&self) -> Generation<RecordingData> {
+        self.storage.get().files.generation()
+    }
+
     pub fn len(&self) -> usize {
-        self.storage.get().files.len()
+        self.files().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.storage.get().files.is_empty()
+        self.files().is_empty()
     }
 
     pub fn files(&self) -> &[LoadedFile] {
-        &self.storage.get().files
+        self.storage.get().files()
     }
 
     pub fn view(&self) -> LoadedFilesView<'_> {
         let storage = self.storage.get();
-        debug_assert_eq!(storage.files.len(), storage.history.len());
-        debug_assert_eq!(storage.files.len(), storage.ids.len());
+        debug_assert_eq!(storage.files().len(), storage.history.len());
+        debug_assert_eq!(storage.files().len(), storage.ids.len());
         LoadedFilesView { loaded_files: self }
     }
 
     pub fn files_mut(&mut self) -> &mut [LoadedFile] {
-        &mut self.storage.get_mut().files
+        self.storage.get_mut().files_mut()
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, LoadedFile> {
-        self.storage.get().files.iter()
+        self.files().iter()
     }
 
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, LoadedFile> {
-        self.storage.get_mut().files.iter_mut()
+        self.files_mut().iter_mut()
     }
 
     pub fn get(&self, index: usize) -> Option<&LoadedFile> {
-        self.storage.get().files.get(index)
+        self.files().get(index)
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut LoadedFile> {
-        self.storage.get_mut().files.get_mut(index)
+        self.files_mut().get_mut(index)
     }
 
     pub fn push(&mut self, file: LoadedFile, history: FileHistory) {
@@ -403,11 +427,11 @@ impl LoadedFiles {
         let id = LoadedFileId(self.next_id);
         self.next_id += 1;
         let storage = self.storage.get_mut();
-        storage.files.push(file);
+        storage.files_mut().push(file);
         storage.history.push(history);
         storage.ids.push(id);
-        debug_assert_eq!(storage.files.len(), storage.history.len());
-        debug_assert_eq!(storage.files.len(), storage.ids.len());
+        debug_assert_eq!(storage.files().len(), storage.history.len());
+        debug_assert_eq!(storage.files().len(), storage.ids.len());
     }
 
     /// Replace the file at `index` and the history entry beside it, keeping
@@ -418,14 +442,14 @@ impl LoadedFiles {
         reason = "the early return leaves index inside both vectors, which hold one entry each per loaded file"
     )]
     pub fn replace_file(&mut self, index: usize, file: LoadedFile, history: FileHistory) {
-        if index >= self.storage.get().files.len() {
+        if index >= self.len() {
             return;
         }
         let storage = self.storage.get_mut();
-        storage.files[index] = file;
+        storage.files_mut()[index] = file;
         storage.history[index] = history;
-        debug_assert_eq!(storage.files.len(), storage.history.len());
-        debug_assert_eq!(storage.files.len(), storage.ids.len());
+        debug_assert_eq!(storage.files().len(), storage.history.len());
+        debug_assert_eq!(storage.files().len(), storage.ids.len());
     }
 
     /// Re-point loaded recordings after their history identity was renamed from
@@ -448,15 +472,15 @@ impl LoadedFiles {
     }
 
     pub fn remove_file(&mut self, index: usize) -> Option<(LoadedFile, FileHistory)> {
-        if index >= self.storage.get().files.len() {
+        if index >= self.len() {
             return None;
         }
         let storage = self.storage.get_mut();
-        let file = storage.files.remove(index);
+        let file = storage.files_mut().remove(index);
         let history = storage.history.remove(index);
         storage.ids.remove(index);
-        debug_assert_eq!(storage.files.len(), storage.history.len());
-        debug_assert_eq!(storage.files.len(), storage.ids.len());
+        debug_assert_eq!(storage.files().len(), storage.history.len());
+        debug_assert_eq!(storage.files().len(), storage.ids.len());
         Some((file, history))
     }
 }
@@ -477,7 +501,7 @@ impl Index<usize> for LoadedFiles {
         reason = "Index follows Vec indexing semantics"
     )]
     fn index(&self, index: usize) -> &Self::Output {
-        &self.storage.get().files[index]
+        &self.files()[index]
     }
 }
 
@@ -487,7 +511,7 @@ impl IndexMut<usize> for LoadedFiles {
         reason = "IndexMut follows Vec indexing semantics"
     )]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.storage.get_mut().files[index]
+        &mut self.files_mut()[index]
     }
 }
 
@@ -616,7 +640,6 @@ mod tests {
     #[case::replace_file(|files: &mut LoadedFiles| {
         files.replace_file(0, test_util::empty_file(), FileHistory::None);
     })]
-    #[case::rename_identity(|files: &mut LoadedFiles| files.rename_identity("auto:old", "Trip"))]
     #[case::files_mut(|files: &mut LoadedFiles| {
         for file in files.files_mut() {
             file.tracks.clear();
@@ -633,14 +656,16 @@ mod tests {
         }
     })]
     #[case::index_mut(|files: &mut LoadedFiles| files[0].tracks.clear())]
-    fn every_mutation_takes_a_new_generation(#[case] mutate: fn(&mut LoadedFiles)) {
+    fn recording_data_mutations_take_new_generations(#[case] mutate: fn(&mut LoadedFiles)) {
         let mut files = LoadedFiles::new();
         files.push(test_util::empty_file(), FileHistory::None);
         let before = files.generation();
+        let data_before = files.data_generation();
 
         mutate(&mut files);
 
         assert_ne!(files.generation(), before);
+        assert_ne!(files.data_generation(), data_before);
     }
 
     #[test]

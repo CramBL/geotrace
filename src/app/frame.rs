@@ -10,7 +10,6 @@ use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_ionex::quiet_time::QuietTimeDeviationPeak;
 use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
-use gt_query_run::RunInputs;
 use gt_side_panel::{
     DetachRequest, DragDetach, PanelContext, SidePanelEvent, SnapCostingTarget, SnapPanelView,
 };
@@ -31,6 +30,7 @@ use super::loader::{
 use super::log_viewer::{self, LogViewerContext};
 use super::modals::{SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice};
 use super::panes::MainBehavior;
+use super::query_run::QuerySeries;
 use super::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use super::shutdown::FrameContents;
 use super::snap_state::PendingSnapRequest;
@@ -762,20 +762,7 @@ impl App {
         // the same frame's map render.
         let snapped_tracks = self.snapped_tracks_view();
         let snap_error = self.snap_error_view();
-        let snap_error_values = self.snap_error_values();
-        let jamming_series = {
-            let shared = self.shared.borrow();
-            self.jamming.plot_series(&shared.loaded_files)
-        };
-        let jamming_query_values = self.jamming.query_values();
-        let geomagnetic_series = {
-            let shared = self.shared.borrow();
-            self.geomagnetic_indices.plot_series(&shared.loaded_files)
-        };
-        let tec_series = {
-            let shared = self.shared.borrow();
-            self.tec_maps.plot_series(&shared.loaded_files)
-        };
+        let query_series = QuerySeries::capture(self);
         let tec_deviations = {
             let shared = self.shared.borrow();
             self.tec_maps.quiet_time_deviations(&shared.loaded_files)
@@ -790,9 +777,9 @@ impl App {
             .map(|span| self.solar_flares.markers(span, &fix_positions))
             .unwrap_or_default();
         self.assess_space_weather(
-            &jamming_series,
-            &geomagnetic_series,
-            &tec_series,
+            query_series.jamming(),
+            query_series.geomagnetic(),
+            query_series.tec(),
             &tec_deviations,
             &fix_positions,
             recording_names,
@@ -854,9 +841,9 @@ impl App {
                     snapped_tracks: &snapped_tracks,
                     log_matches,
                     snap_error: &snap_error,
-                    jamming_series: &jamming_series,
-                    geomagnetic_series: &geomagnetic_series,
-                    tec_series: &tec_series,
+                    jamming_series: query_series.jamming(),
+                    geomagnetic_series: query_series.geomagnetic(),
+                    tec_series: query_series.tec(),
                     context_lines: &context_lines,
                     solar_flares: &solar_flares,
                     space_weather,
@@ -970,33 +957,31 @@ impl App {
             // frame's value) so it stays set only while the sky-trails window
             // below is driving a scrub, and vanishes as soon as it closes.
             highlight.scrub_time = None;
-            self.query_window.show(
-                ui.ctx(),
-                RunInputs {
-                    jamming: &jamming_query_values,
-                    geomagnetic: &geomagnetic_series,
-                    tec: &tec_series,
-                    loaded_files: loaded_files.view(),
-                    visibility: tree.visibility(),
-                    filter,
-                    snap_errors: &snap_error_values,
-                },
-                MapEligibility::new(
-                    loaded_files.files(),
-                    tree.visibility(),
-                    filter,
-                    None,
-                    tree.generated_marker_visibility(),
-                    tree.event_marker_visibility(),
-                )
-                .with_display_mask(*display_mask),
-                highlight,
-                &mut gt_side_panel::widgets::PointClickRequests {
-                    map_center: map_center_request,
-                    popup_pos: popup_pos_request,
-                },
-                reveal_query_matches_request,
-            );
+            if let Some(inputs) =
+                query_series.inputs(loaded_files.view(), tree.visibility(), filter)
+            {
+                self.query_window.show(
+                    ui.ctx(),
+                    inputs,
+                    MapEligibility::new(
+                        loaded_files.files(),
+                        tree.visibility(),
+                        filter,
+                        None,
+                        tree.generated_marker_visibility(),
+                        tree.event_marker_visibility(),
+                    )
+                    .with_display_mask(*display_mask),
+                    highlight,
+                    &mut gt_side_panel::widgets::PointClickRequests {
+                        map_center: map_center_request,
+                        popup_pos: popup_pos_request,
+                    },
+                    reveal_query_matches_request,
+                );
+            } else {
+                ui.ctx().request_repaint();
+            }
             self.sky_trails_window.show(
                 ui.ctx(),
                 loaded_files.files(),

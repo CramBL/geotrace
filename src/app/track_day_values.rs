@@ -1,15 +1,13 @@
 //! The per-track values the environment schedulers resolve from their day
 //! archives.
 //!
-//! A track's values are rebuilt exactly when the set of archived days it
-//! spans changes, and an unchanged archive hands the `Arc` it already
-//! resolved back. Downstream caches key on that identity: the plot's mipmap
-//! cache, the query run's fingerprint.
+//! The cache reuses values for the same recording data and archived days.
 
 use std::sync::Arc;
 
 use chrono::NaiveDate;
-use gt_types::TrackRef;
+use gt_loaded_files::{LoadedFilesView, RecordingData};
+use gt_types::{Generation, TrackRef};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::environment_storage::PrunedDays;
@@ -23,22 +21,31 @@ struct ResolvedTrackValues<T> {
 /// resolved from.
 pub struct TrackValuesByArchivedDays<T> {
     by_track: FxHashMap<TrackRef, ResolvedTrackValues<T>>,
+    data_generation: Option<Generation<RecordingData>>,
 }
 
 impl<T> Default for TrackValuesByArchivedDays<T> {
     fn default() -> Self {
         Self {
             by_track: FxHashMap::default(),
+            data_generation: None,
         }
     }
 }
 
 impl<T> TrackValuesByArchivedDays<T> {
+    pub fn sync_recordings(&mut self, files: LoadedFilesView<'_>) {
+        let generation = Some(files.data_generation());
+        if self.data_generation != generation {
+            self.by_track.clear();
+            self.data_generation = generation;
+        }
+    }
+
     /// The track's values as resolved from `archived_days`, calling `resolve`
     /// only when the cache holds none for that set of days.
     ///
-    /// The returned `Arc` keeps its identity for as long as the track's
-    /// archived days stay the same.
+    /// The returned `Arc` stays the same for the current recording data and archived days.
     pub fn resolve(
         &mut self,
         track: TrackRef,
