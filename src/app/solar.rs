@@ -10,7 +10,7 @@
 //! [`transport::REQUEST_INTERVAL`] apart.
 
 use std::collections::BTreeSet;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -87,7 +87,7 @@ pub struct GeomagneticIndexScheduler {
     /// query. Assumes this process is the archive's only writer.
     archived_days: BTreeSet<NaiveDate>,
     day_index_read: DayIndexReadRetry,
-    plot_points: TrackValuesByArchivedDays<Vec<GeomagneticPoint>>,
+    plot_points: TrackValuesByArchivedDays<Option<Arc<Vec<GeomagneticPoint>>>>,
     /// The Hp30 line drawn across the plot's whole span, one sample per
     /// archived period.
     hp30_context: ContextSampleCache<IndexContextSample>,
@@ -318,17 +318,18 @@ impl GeomagneticIndexScheduler {
 
                 let archived_days = self.archived_days_spanned_by(track);
                 let points = self.plot_points.resolve(track_ref, archived_days, || {
-                    Self::resolve_points(
+                    let points = Self::resolve_points(
                         self.store.as_ref().map(GeomagneticIndexArchive::read),
                         &mut archived,
                         track,
-                    )
+                    );
+                    points
+                        .iter()
+                        .any(|point| point.hp30.is_some() || point.kp.is_some())
+                        .then(|| Arc::new(points))
                 });
-                if points
-                    .iter()
-                    .any(|point| point.hp30.is_some() || point.kp.is_some())
-                {
-                    series.points_by_track.insert(track_ref, points);
+                if let Some(points) = points {
+                    series.points_by_track.insert(track_ref, Arc::clone(points));
                 }
             }
         }
