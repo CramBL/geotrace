@@ -64,7 +64,7 @@ impl<C: Ord + Copy> DecimationScratch<C> {
         self.cells.clear();
         for &((x, y), candidate) in &self.candidates {
             self.cells
-                .entry(cell_key(x, y, cell_merc))
+                .entry(cell_key((x, y), cell_merc))
                 .and_modify(|c| *c = (*c).min(candidate))
                 .or_insert(candidate);
         }
@@ -148,7 +148,7 @@ pub(crate) fn cluster_positions(
     // around it.
     let mut clusters_by_cell: FxHashMap<(i64, i64), Vec<usize>> = FxHashMap::default();
     for (position_index, merc) in positions.into_iter().enumerate() {
-        let cell = cell_key(merc.x, merc.y, spacing_merc);
+        let cell = cell_key((merc.x, merc.y), spacing_merc);
         let nearest = neighbouring_cells(cell)
             .filter_map(|neighbour| clusters_by_cell.get(&neighbour))
             .flatten()
@@ -189,21 +189,20 @@ fn neighbouring_cells((x, y): (i64, i64)) -> impl Iterator<Item = (i64, i64)> {
         .flat_map(move |dx| (-1..=1).map(move |dy| (x.saturating_add(dx), y.saturating_add(dy))))
 }
 
-/// The grid cell containing a Mercator position. Cells are anchored at the
-/// Mercator origin, which is what makes the bucketing pan-independent.
+/// Grid cell coordinates relative to the coordinate system's origin.
 ///
-/// The compiler hoists the reciprocal of `cell_merc` out of the caller's loop,
+/// The compiler hoists the reciprocal of `cell_size` out of the caller's loop,
 /// because the division is algebraic. The quotient is floored to a cell index.
 /// The algebraic and the exact division gave the same index for all 80 000
 /// measured keys, 20 000 of them on a cell boundary. A position within one ULP
 /// of a boundary can take either neighbour, and each caller compares and hashes
 /// a key only against keys of the same call.
-fn cell_key(x: f64, y: f64, cell_merc: f64) -> (i64, i64) {
+pub(crate) fn cell_key((x, y): (f64, f64), cell_size: f64) -> (i64, i64) {
     #[expect(
         clippy::cast_possible_truncation,
-        reason = "Mercator coords are in [0, 1] and cell sizes are bounded below by the max zoom, so the quotient is far inside i64 range"
+        reason = "grid coordinates fit i64 at the supported map scales and viewport sizes"
     )]
-    let key = |v: f64| v.algebraic_div(cell_merc).floor() as i64;
+    let key = |v: f64| v.algebraic_div(cell_size).floor() as i64;
     (key(x), key(y))
 }
 
@@ -499,7 +498,7 @@ mod tests {
                 let boundary = index as f64 * cell;
                 for v in [boundary, boundary + cell * 0.5] {
                     assert_eq!(
-                        super::cell_key(v, -v, cell),
+                        super::cell_key((v, -v), cell),
                         (exact_key(v, cell), exact_key(-v, cell)),
                         "cell {cell}, coordinate {v}"
                     );

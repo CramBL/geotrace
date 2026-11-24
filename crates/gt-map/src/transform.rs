@@ -361,6 +361,49 @@ impl<'a> LodPoints<'a> {
             Self::Full { .. } => None,
         }
     }
+
+    pub(crate) fn with_run_endpoints(
+        &self,
+        run: Range<usize>,
+    ) -> impl Iterator<Item = PlacedPoint<'a>> {
+        let placed = match self {
+            Self::Full { placed, .. } | Self::Level { placed, .. } => *placed,
+        };
+        let last = run.end.saturating_sub(1);
+        let first = (!run.is_empty()).then(|| placed.get(run.start)).flatten();
+        let end = (last > run.start).then(|| placed.get(last)).flatten();
+        let indices = run.start.saturating_add(1)..last;
+        let interior = (!indices.is_empty()).then(|| self.within(indices));
+        first
+            .into_iter()
+            .chain(interior.into_iter().flatten().map(|(_, point)| point))
+            .chain(end)
+    }
+
+    fn within(&self, points: Range<usize>) -> Self {
+        match self {
+            Self::Full { placed, walk } => Self::Full {
+                placed: *placed,
+                walk: walk.within(points),
+            },
+            Self::Level {
+                indices,
+                placed,
+                walk,
+            } => {
+                let slot = |point| {
+                    indices.partition_point(|&index| {
+                        usize::try_from(index).is_ok_and(|index| index < point)
+                    })
+                };
+                Self::Level {
+                    indices,
+                    placed: *placed,
+                    walk: walk.within(slot(points.start)..slot(points.end)),
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for LodPoints<'a> {
@@ -441,6 +484,19 @@ impl<'a> ChunkedWalk<'a> {
         }
     }
 
+    fn within(&self, slots: Range<usize>) -> Self {
+        Self {
+            chunks: self.chunks,
+            slot_count: self.slot_count.min(slots.end),
+            cull: self.cull,
+            next_slot: slots.start,
+            next_chunk: self
+                .chunks
+                .partition_point(|chunk| chunk.slots().end <= slots.start),
+            open: None,
+        }
+    }
+
     /// The next slot to visit, `None` past the end of the sequence.
     fn next_slot(&mut self) -> Option<VisitedSlot> {
         loop {
@@ -455,7 +511,10 @@ impl<'a> ChunkedWalk<'a> {
             {
                 self.open = self.chunk_holding(slot);
             }
-            let Some((end, visit)) = self.open.as_ref().map(|open| (open.slots.end, open.visit))
+            let Some((end, visit)) = self
+                .open
+                .as_ref()
+                .map(|open| (open.slots.end.min(self.slot_count), open.visit))
             else {
                 // No stored chunk covers this slot. The walk visits it and
                 // tests its fix against the window.

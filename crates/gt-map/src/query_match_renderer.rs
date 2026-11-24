@@ -2,12 +2,143 @@
 //! stretches a query matched, rings for single-point matches, and the match
 //! header shown in the hover tooltip.
 
-use egui::RichText;
-use egui::{Color32, Pos2, Stroke, Ui};
+use egui::epaint::{CircleShape, Mesh, PathShape, TessellationOptions, Tessellator, Vertex};
+use egui::{Color32, Pos2, RichText, Shape, Stroke, Ui};
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::StaleRunNote;
 
 use crate::match_reveal::HaloStyle;
+use crate::polyline::PolylineSpans;
+
+pub(crate) struct HaloClip {
+    sample_centers: egui::Rect,
+    pixels_per_point: f32,
+    tessellator: Tessellator,
+    mesh: Mesh,
+}
+
+impl HaloClip {
+    pub(crate) fn new(
+        rect: egui::Rect,
+        pixels_per_point: f32,
+        options: TessellationOptions,
+    ) -> Self {
+        // The font atlas dimensions apply to glyphs.
+        let mut tessellator = Tessellator::new(pixels_per_point, options, [1, 1], Vec::new());
+        tessellator.set_clip_rect(rect);
+        // The WGPU scissor rounds its edges in physical pixels.
+        let scissor = (rect * pixels_per_point).round();
+        Self {
+            sample_centers: egui::Rect::from_min_max(
+                scissor.min.max(Pos2::ZERO) + PIXEL_CENTER_OFFSET,
+                scissor.max - PIXEL_CENTER_OFFSET,
+            ),
+            pixels_per_point,
+            tessellator,
+            mesh: Mesh::default(),
+        }
+    }
+
+    pub(crate) fn band_is_visible(&mut self, spans: &PolylineSpans<()>, halo: HaloStyle) -> bool {
+        spans.iter().any(|span| {
+            self.shape_is_visible(Shape::Path(
+                halo.band_shape(span, gt_ui_theme::QUERY_MATCH_HOVER_HALO),
+            ))
+        })
+    }
+
+    pub(crate) fn ring_is_visible(&mut self, position: Pos2, halo: HaloStyle) -> bool {
+        self.shape_is_visible(Shape::Circle(
+            halo.ring_shape(position, gt_ui_theme::QUERY_MATCH_HOVER_HALO),
+        ))
+    }
+
+    fn shape_is_visible(&mut self, shape: Shape) -> bool {
+        self.mesh.indices.clear();
+        self.mesh.vertices.clear();
+        self.tessellator.tessellate_shape(shape, &mut self.mesh);
+        self.mesh.triangles().any(|triangle| {
+            let vertices =
+                triangle.map(|index| self.mesh.vertices.get(usize::try_from(index).ok()?));
+            let [Some(a), Some(b), Some(c)] = vertices else {
+                return false;
+            };
+            [a, b, c].iter().any(|vertex| vertex.color.a() > 0)
+                && self::triangle_covers_sample(
+                    [a, b, c],
+                    self.pixels_per_point,
+                    self.sample_centers,
+                )
+        })
+    }
+}
+
+fn triangle_covers_sample(
+    mut vertices: [&Vertex; 3],
+    pixels_per_point: f32,
+    sample_centers: egui::Rect,
+) -> bool {
+    let mut points = vertices.map(|vertex| vertex.pos * pixels_per_point);
+    let pixel_indices = egui::Rect::from_points(&points)
+        .intersect(sample_centers)
+        .translate(-PIXEL_CENTER_OFFSET);
+    if pixel_indices.is_negative() || !pixel_indices.is_finite() {
+        return false;
+    }
+    let first = pixel_indices.min.ceil();
+    let last = pixel_indices.max.floor();
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "pixel indices are rounded within the framebuffer bounds"
+    )]
+    let [left, top, right, bottom] = [first.x, first.y, last.x, last.y].map(|edge| edge as i32);
+    let normal = |direction: egui::Vec2| egui::vec2(-direction.y, direction.x);
+    let [a, b, c] = points;
+    let winding = (c - a).dot(normal(b - a));
+    if winding == 0.0 {
+        return false;
+    }
+    if winding < 0.0 {
+        points.swap(1, 2);
+        vertices.swap(1, 2);
+    }
+    let [a, b, c] = points;
+    let edges = [[b, c], [c, a], [a, b]].map(|[from, to]| {
+        let direction = to - from;
+        // A sample on a shared edge belongs to the triangle with the top or left edge.
+        let inclusive = direction.y < 0.0 || (direction.y == 0.0 && direction.x > 0.0);
+        (from, normal(direction), inclusive)
+    });
+    let [alpha_a, alpha_b, alpha_c] = vertices.map(|vertex| f32::from(vertex.color.a()));
+    (top..=bottom).any(|row| {
+        (left..=right).any(|column| {
+            let sample = egui::pos2(column as f32, row as f32) + PIXEL_CENTER_OFFSET;
+            let weights = edges.map(|(from, normal, inclusive)| {
+                let weight = (sample - from).dot(normal);
+                (weight > 0.0 || (weight == 0.0 && inclusive)).then_some(weight)
+            });
+            let [Some(a), Some(b), Some(c)] = weights else {
+                return false;
+            };
+            a * alpha_a + b * alpha_b + c * alpha_c > 0.0
+        })
+    })
+}
+
+impl HaloStyle {
+    fn band_shape<K>(self, span: &[(K, Pos2)], color: Color32) -> PathShape {
+        let points = span.iter().map(|&(_, position)| position).collect();
+        PathShape::line(points, Stroke::new(self.band_width, color))
+    }
+
+    fn ring_shape(self, position: Pos2, color: Color32) -> CircleShape {
+        CircleShape::stroke(
+            position,
+            self.ring_radius,
+            Stroke::new(self.ring_stroke_width, color),
+        )
+    }
+}
 
 /// Paint one draw layer's halos from a track's prepared span geometry, in the
 /// layer's `color`.
@@ -25,14 +156,12 @@ pub(crate) fn paint_match_halo_span<K>(
     halo: HaloStyle,
     color: Color32,
 ) {
-    let stroke = Stroke::new(halo.band_width, color);
     for run in matched_runs(span, &matched) {
         match run {
             [] => {}
             [(_, pos)] => draw_match_ring(ui, *pos, halo, color),
             _ => {
-                let points: Vec<Pos2> = run.iter().map(|&(_, pos)| pos).collect();
-                ui.painter().add(egui::Shape::line(points, stroke));
+                ui.painter().add(Shape::Path(halo.band_shape(run, color)));
             }
         }
     }
@@ -41,11 +170,7 @@ pub(crate) fn paint_match_halo_span<K>(
 /// Ring around an isolated matched point (also used when a whole track
 /// collapses to a sub-pixel dot).
 pub(crate) fn draw_match_ring(ui: &Ui, pos: Pos2, halo: HaloStyle, color: Color32) {
-    ui.painter().circle_stroke(
-        pos,
-        halo.ring_radius,
-        Stroke::new(halo.ring_stroke_width, color),
-    );
+    ui.painter().add(Shape::Circle(halo.ring_shape(pos, color)));
 }
 
 /// Maximal runs of consecutive matched points within one span.
@@ -93,11 +218,44 @@ pub(crate) fn match_header_ui(
     ui.separator();
 }
 
+const PIXEL_CENTER_OFFSET: egui::Vec2 = egui::vec2(0.5, 0.5);
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn shared_sample_uses_one_triangle_and_its_edge_alpha() {
+        let pixels_per_point = 1.25;
+        let clip = HaloClip::new(
+            egui::Rect::from_min_max(egui::pos2(2.25, 0.0), egui::pos2(3.15, 0.8)),
+            pixels_per_point,
+            TessellationOptions::default(),
+        );
+        let [top_left, top_right, bottom_left, bottom_right] =
+            [(3.0, 0.0), (4.0, 0.0), (3.0, 1.0), (4.0, 1.0)].map(|(x, y)| {
+                Vertex::untextured(egui::pos2(x, y) / pixels_per_point, Color32::WHITE)
+            });
+        let sample_is_covered = |vertices| {
+            self::triangle_covers_sample(vertices, pixels_per_point, clip.sample_centers)
+        };
+        assert_eq!(
+            clip.sample_centers,
+            egui::Rect::from_min_max(egui::pos2(3.5, 0.5), egui::pos2(3.5, 0.5)),
+        );
+        assert!(!sample_is_covered([&top_left, &top_right, &bottom_left]));
+        assert!(sample_is_covered([&bottom_right, &bottom_left, &top_right]));
+        assert!(sample_is_covered([&bottom_right, &top_right, &bottom_left]));
+        let transparent_top = Vertex::untextured(top_right.pos, Color32::TRANSPARENT);
+        let transparent_bottom = Vertex::untextured(bottom_left.pos, Color32::TRANSPARENT);
+        assert!(!sample_is_covered([
+            &bottom_right,
+            &transparent_bottom,
+            &transparent_top,
+        ]));
+    }
 
     fn span(flags: &[bool]) -> Vec<(bool, Pos2)> {
         flags

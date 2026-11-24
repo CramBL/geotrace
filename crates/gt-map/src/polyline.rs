@@ -45,6 +45,32 @@ impl<K> PolylineSpans<K> {
         })
     }
 
+    pub(crate) fn bounds_within_size(&self, max_size: f32) -> Option<egui::Rect> {
+        let &(_, first) = self.points.first()?;
+        let mut bounds = egui::Rect::from_min_max(first, first);
+        for &(_, position) in self.points.iter().skip(1) {
+            bounds.extend_with(position);
+            if bounds.width().max(bounds.height()) > max_size {
+                return None;
+            }
+        }
+        Some(bounds)
+    }
+
+    pub(crate) fn centerline_intersects(&self, rect: egui::Rect) -> bool {
+        self.iter().any(|span| {
+            span.windows(2).any(|edge| match edge {
+                [(_, a), (_, b)] if !self::segment_outside(*a, *b, rect) => {
+                    let direction = *b - *a;
+                    let normal = egui::vec2(-direction.y, direction.x);
+                    // The remaining separating axis is perpendicular to the segment.
+                    (rect.center() - *a).dot(normal).abs() <= (rect.size() * 0.5).dot(normal.abs())
+                }
+                _ => false,
+            })
+        })
+    }
+
     /// Build from per-span point lists. Test-only convenience for asserting
     /// expected span structure.
     #[cfg(test)]
@@ -162,6 +188,7 @@ pub(crate) const MAX_LOD_ERROR_PX: f32 = 0.75;
 #[cfg(test)]
 mod tests {
     use egui::{Pos2, Rect};
+    use rstest::rstest;
 
     use super::{PolylineSpans, VisiblePath};
 
@@ -175,6 +202,19 @@ mod tests {
 
     fn ghost(x: f32, y: f32) -> (bool, Pos2) {
         (true, egui::pos2(x, y))
+    }
+
+    #[rstest]
+    #[case::crossing([(-2.0, 5.0), (12.0, 5.0)], true)]
+    #[case::corner_miss([(-2.0, 1.0), (1.0, -2.0)], false)]
+    fn centerline_intersection_with_both_endpoints_outside(
+        #[case] points: [(f32, f32); 2],
+        #[case] intersects: bool,
+    ) {
+        let rect = Rect::from_min_max(Pos2::ZERO, egui::pos2(10.0, 10.0));
+        let run = points.into_iter().map(|(x, y)| real(x, y)).collect();
+        let spans = PolylineSpans::from_nested(vec![run]);
+        assert_eq!(spans.centerline_intersects(rect), intersects);
     }
 
     #[test]
