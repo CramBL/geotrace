@@ -1,3 +1,4 @@
+use gt_loaded_files::LoadedFilesView;
 use gt_query::{ChannelSchema, CheckedQuery, Diagnostic, Span};
 use gt_ui_types::QueryMatches;
 
@@ -262,14 +263,21 @@ impl QuerySession {
         Some(&self.completed.as_ref()?.results)
     }
 
-    /// Matches of the last run, for the map. `None` when there was no run.
+    /// Matches of the last completed run.
     pub fn matches(&self) -> Option<&QueryMatches> {
         Some(self.results()?.matches())
     }
 
-    /// Compare the current inputs against the ones the last run saw and mark
-    /// its results stale when they differ. A stale run's point indices may
-    /// address other data, so the map and the panel gray out.
+    /// The map reads track indices from runs over the current recording generation.
+    pub fn map_matches(&self, files: LoadedFilesView<'_>) -> Option<&QueryMatches> {
+        let completed = self.completed.as_ref()?;
+        completed
+            .fingerprint
+            .matches_loaded_files(files)
+            .then_some(completed.results.matches())
+    }
+
+    /// Mark the last run's results stale when the current input fingerprint differs.
     pub fn refresh_staleness(&mut self, inputs: RunInputs<'_>) {
         let Some(completed) = &mut self.completed else {
             return;

@@ -420,6 +420,12 @@ impl PlotState {
         self.invalidate_level_cache();
     }
 
+    pub fn clear_hover(&mut self) {
+        self.hovered_time = None;
+        self.hovered_metric_fix = None;
+        self.plot_cursor_snapped = false;
+    }
+
     /// Apply new analysis parameters (elevation mask), re-deriving only the
     /// mask-dependent series in place.  A no-op when `analysis` is unchanged, so
     /// it is cheap to call every frame while a settings control is open.
@@ -534,9 +540,7 @@ pub fn show_track_plot(
                     .italics(),
             );
         });
-        state.hovered_time = None;
-        state.hovered_metric_fix = None;
-        state.plot_cursor_snapped = false;
+        state.clear_hover();
         return false;
     }
 

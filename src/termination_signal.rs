@@ -65,6 +65,10 @@ impl TerminationSignalFlag {
             TerminationSignalAction::BeginShutdown
         }
     }
+
+    pub(crate) fn is_raised(&self) -> bool {
+        self.raised.load(Ordering::Relaxed)
+    }
 }
 
 pub(crate) fn set_gui_context_to_wake(ctx: &Context) {

@@ -19,6 +19,7 @@ use crate::settings::{SetSetting, SettingInfo, SettingSelection};
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    ApplyProcessing,
     CancelQuery(QueryJobRequest),
     CheckQuery(QueryText),
     DescribeSetting(SettingSelection),
@@ -213,6 +214,7 @@ pub enum Reply {
     MapPresentationQueued,
     Metrics { page: Metrics },
     PlotPresentationQueued,
+    ProcessingQueued,
     QueryCheck { validation: QueryValidation },
     QueryDraftQueued,
     QueryJob { job: QueryJobStatus },
@@ -244,6 +246,7 @@ pub enum ErrorCode {
     InvalidRequest,
     InvalidSettingType,
     InvalidSettingValue,
+    NoLoadedNavPoints,
     NoVisibleMapGeometry,
     NoVisiblePlotTime,
     QueryColumnsTooLarge,
@@ -254,6 +257,7 @@ pub enum ErrorCode {
     RecordingNotFound,
     ReplyTooLarge,
     RequestTooLarge,
+    ShuttingDown,
     StaleQueryResults,
     StaleSession,
     StaleTrack,

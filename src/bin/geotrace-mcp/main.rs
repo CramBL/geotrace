@@ -41,6 +41,18 @@ struct Companion {
 #[tool_router]
 impl Companion {
     #[tool(
+        description = "Apply the current Processing settings to loaded recordings with navigation points. GeoTrace acknowledges the request with processing_queued.",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn apply_processing(&self) -> CallToolResult {
+        self.inspect(Request::ApplyProcessing).await
+    }
+
+    #[tool(
         description = "Cancel the running analysis for a query job. Poll with get_query_status until the job is terminal.",
         annotations(
             destructive_hint = false,
@@ -233,6 +245,7 @@ impl Companion {
             Ok(
                 reply @ (Reply::MapPresentationQueued
                 | Reply::PlotPresentationQueued
+                | Reply::ProcessingQueued
                 | Reply::QueryDraftQueued
                 | Reply::SettingOpenQueued
                 | Reply::Settings { .. }),
@@ -285,6 +298,9 @@ impl Companion {
             ErrorCode::InvalidSettingValue => {
                 "Use a finite value that meets the limits and precision from describe_setting."
             }
+            ErrorCode::NoLoadedNavPoints => {
+                "Load a recording with navigation points before applying processing."
+            }
             ErrorCode::NoVisibleMapGeometry => {
                 "The selected points have no visible geometry under the current map settings."
             }
@@ -309,6 +325,7 @@ impl Companion {
             ErrorCode::RequestTooLarge => {
                 "The request is too large. Shorten the request and try again."
             }
+            ErrorCode::ShuttingDown => "GeoTrace is closing.",
             ErrorCode::StaleQueryResults => "The query results are stale. Run the query again.",
             ErrorCode::StaleSession => {
                 "The desktop session has changed. Use references from the current session."

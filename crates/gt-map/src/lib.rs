@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use egui::{Area, Button, Context, Frame, Grid, Label, PointerButton, RichText, Window};
+use egui::{Area, Button, Context, Frame, Grid, Label, PointerButton, Popup, RichText, Window};
 use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
 use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
 use gt_filter::GlobalFilter;
@@ -676,6 +676,9 @@ impl NavMap {
     /// panics in the renderers.
     pub fn rebuild_spatial_index(&mut self, files: &[LoadedFile]) {
         self.primary_click = PrimaryClickState::default();
+        self.right_click_ref = None;
+        self.hover_candidates = HoverCandidates::default();
+        self.disambiguation_candidates = HoverCandidates::default();
         self.spatial_index = SpatialIndex::build(files);
         self.last_file_count = files.len();
     }
@@ -1452,14 +1455,15 @@ impl NavMap {
         if map_response.secondary_clicked() {
             self.right_click_ref = hover_point_ref;
         }
-        let right_click_ref = self.right_click_ref;
+        let popup = Popup::context_menu(map_response);
+        let Some(point_ref) = self.right_click_ref else {
+            if popup.is_open() {
+                Popup::close_id(&map_response.ctx, popup.get_id());
+            }
+            return None;
+        };
         let mut action: Option<MapAction> = None;
-        map_response.context_menu(|ui| {
-            let Some(point_ref) = right_click_ref else {
-                // Right-clicked on empty map space - nothing to show.
-                ui.close();
-                return;
-            };
+        popup.show(|ui| {
             let track = point_ref.track();
             let Some(file) = track.fi.get(ctx.files.files()) else {
                 ui.close();

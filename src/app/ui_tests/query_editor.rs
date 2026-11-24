@@ -19,7 +19,7 @@ fn reset_filters_clears_the_query_filter() {
     let mut harness = ui_tests::app_with_query_window_open();
     ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
     assert!(
-        harness.state().query_window.filter_active(),
+        harness.state().query_filter_active(),
         "the run produced an active query filter"
     );
 
@@ -33,7 +33,7 @@ fn reset_filters_clears_the_query_filter() {
         harness.state().query_window.matches().is_none(),
         "Reset filters drops the query results"
     );
-    assert!(!harness.state().query_window.filter_active());
+    assert!(!harness.state().query_filter_active());
 }
 
 /// Toggling pin flips the entry's pin and deleting removes it - the two
@@ -468,7 +468,7 @@ fn toolbar_context_menu_clears_query_filter() {
     // Close the window so the toolbar shows the active-filter alert.
     harness.state_mut().query_window.open = false;
     harness.run_steps(3);
-    assert!(harness.state().query_window.filter_active());
+    assert!(harness.state().query_filter_active());
 
     harness
         .get_by_label_contains(ICON_TERMINAL_WINDOW)
@@ -478,7 +478,7 @@ fn toolbar_context_menu_clears_query_filter() {
     harness.run_steps(3);
 
     assert!(
-        !harness.state().query_window.filter_active(),
+        !harness.state().query_filter_active(),
         "the context menu cleared the query filter"
     );
 }

@@ -130,6 +130,7 @@ struct Job {
 
 #[derive(Default)]
 struct StagedSessionChanges {
+    apply_processing: bool,
     job: Option<Job>,
     map: Option<MapPresentation>,
     plot: Option<PlotPresentation>,
@@ -269,9 +270,7 @@ impl App {
             let mut staged = StagedSessionChanges::default();
             let handed_off =
                 bridge.dispatch(|request| self.execute_session_request(request, &mut staged));
-            if handed_off {
-                self.adopt_session_changes(staged);
-            }
+            self.adopt_session_changes(staged, handed_off);
             self.session_bridge = Some(bridge);
         }
         // Send the job ID before copying the selected tracks.
@@ -291,14 +290,24 @@ impl App {
     }
 
     #[cfg(test)]
-    pub(super) fn execute_session_request_in_test(&mut self, request: SessionRequest) -> Reply {
+    pub(super) fn execute_session_request_in_test(
+        &mut self,
+        request: SessionRequest,
+        handed_off: bool,
+    ) -> Reply {
         let mut staged = StagedSessionChanges::default();
         let reply = self.execute_session_request(request, &mut staged);
-        self.adopt_session_changes(staged);
+        self.adopt_session_changes(staged, handed_off);
         reply
     }
 
-    fn adopt_session_changes(&mut self, staged: StagedSessionChanges) {
+    fn adopt_session_changes(&mut self, staged: StagedSessionChanges, handed_off: bool) {
+        if !handed_off {
+            return;
+        }
+        if staged.apply_processing {
+            self.apply_resegmentation();
+        }
         if let Some(job) = staged.job {
             self.session_query.job = Some(job);
         }
@@ -327,6 +336,14 @@ impl App {
     ) -> Reply {
         let mut queries = std::mem::take(&mut self.session_query);
         let result = match request.request {
+            Request::ApplyProcessing if self.shutdown_requested() => Err(ErrorCode::ShuttingDown),
+            Request::ApplyProcessing if !self.has_loaded_nav_points() => {
+                Err(ErrorCode::NoLoadedNavPoints)
+            }
+            Request::ApplyProcessing => {
+                staged.apply_processing = true;
+                Ok(Reply::ProcessingQueued)
+            }
             Request::CancelQuery(args) => queries.job_mut(request.session, args.job).map(|job| {
                 job.cancel();
                 job.refresh(self);

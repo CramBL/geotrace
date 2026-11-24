@@ -145,7 +145,7 @@ impl App {
             return Err(ErrorCode::InvalidPoint);
         }
         let fix = FixRef::new(track, PointIdx::new(point));
-        let query_matches = self.query_window.matches();
+        let query_matches = self.query_window.map_matches(files);
         if !shared
             .map_presence(query_matches)
             .draws(MapElementRef::Fix(fix))
@@ -194,13 +194,9 @@ impl App {
                 (matched.track, points, Some(job))
             }
         };
-        MapPresentation::track_range(
-            &self.shared.borrow(),
-            self.query_window.matches(),
-            track,
-            points,
-            query_job,
-        )
+        let shared = self.shared.borrow();
+        let query_matches = self.query_window.map_matches(shared.loaded_files.view());
+        MapPresentation::track_range(&shared, query_matches, track, points, query_job)
     }
 }
 

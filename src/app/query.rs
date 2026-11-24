@@ -15,6 +15,7 @@ use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING_OCTAGON as ICON_WARNING_OCTAGON;
 use egui_phosphor::regular::X as ICON_X;
+use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
 use gt_query_run::{CheckRefresh, MIXED_CHANNEL_MESSAGE, RunInputs, RunKind};
@@ -22,6 +23,7 @@ use gt_side_panel::widgets::PointClickRequests;
 use gt_ui_types::{MapHighlight, MapPresence, MatchRevealTarget, QueryMatches, StaleRunNote};
 use strum::{EnumIter, IntoEnumIterator as _};
 
+use crate::app::App;
 use crate::app::query_run::{BackgroundQuery, CapturedQueryInputs};
 use crate::settings::QueryHistoryEntry;
 
@@ -33,6 +35,14 @@ mod match_row;
 pub(crate) mod results;
 pub(crate) mod results_split;
 mod value_bar;
+
+impl App {
+    pub(super) fn query_filter_active(&self) -> bool {
+        self.query_window
+            .map_matches(self.shared.borrow().loaded_files.view())
+            .is_some_and(|matches| !matches.is_empty())
+    }
+}
 
 /// A built-in query offered in the examples list.
 struct QueryExample {
@@ -239,15 +249,13 @@ impl QueryWindow {
         }
     }
 
-    /// Matches of the last run, for the map. `None` when there was no run.
+    #[cfg(test)]
     pub fn matches(&self) -> Option<&QueryMatches> {
         self.query.session().matches()
     }
 
-    /// Whether the queries are currently affecting the map (any hidden points
-    /// or halos). Drives the toolbar indicator shown while the window is closed.
-    pub fn filter_active(&self) -> bool {
-        self.matches().is_some_and(|matches| !matches.is_empty())
+    pub(super) fn map_matches(&self, files: LoadedFilesView<'_>) -> Option<&QueryMatches> {
+        self.query.session().map_matches(files)
     }
 
     /// The byte offset of the editor caret, from the text edit's stored state.
@@ -1079,7 +1087,7 @@ impl QueryWindow {
         let files = inputs.loaded_files.files();
         // What the map draws right now: a point row can only pin a point that
         // is on it.
-        let scope = map_scope.with_query_matches(query.session().matches());
+        let scope = map_scope.with_query_matches(query.session().map_matches(inputs.loaded_files));
         let Some(results) = query.session().results() else {
             ui.label(RichText::new("No runs yet").weak());
             return;

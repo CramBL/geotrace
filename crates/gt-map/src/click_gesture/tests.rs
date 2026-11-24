@@ -1,5 +1,5 @@
 use egui::accesskit::Role;
-use egui::{Event, Modifiers, PointerButton};
+use egui::{Event, Modifiers, PointerButton, Popup};
 use egui_kittest::kittest::Queryable as _;
 use gt_test_utils::By;
 use gt_types::DataCategory;
@@ -303,6 +303,39 @@ fn rebuilding_the_spatial_index_cancels_a_pending_navigation_restore() {
     scene.release(PointerButton::Primary);
     assert_eq!(scene.sticky(), None);
     assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
+}
+
+#[rstest]
+#[case::context_menu(Target::Fix, PointerButton::Secondary)]
+#[case::disambiguation(Target::Ambiguous, PointerButton::Primary)]
+fn rebuilding_the_spatial_index_dismisses_menus_for_old_targets(
+    #[case] target: Target,
+    #[case] button: PointerButton,
+) {
+    let mut scene = GestureScene::new(target);
+    scene.release(button);
+    scene.layout_popup();
+    assert!(
+        Popup::is_any_open(&scene.map.harness.inner.ctx)
+            || scene.map.disambiguation_popup_is_open()
+    );
+
+    scene
+        .map
+        .map_mut()
+        .expect("the rendered map")
+        .rebuild_spatial_index(&test_util::a_walking_recording());
+    scene.layout_popup();
+    assert!(
+        scene
+            .map
+            .harness
+            .inner
+            .query_by_label("Only show elements from this track")
+            .is_none()
+    );
+    assert!(!scene.map.disambiguation_popup_is_open());
+    assert!(!Popup::is_any_open(&scene.map.harness.inner.ctx));
 }
 
 #[rstest]

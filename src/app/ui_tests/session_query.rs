@@ -24,6 +24,7 @@ use crate::app::test_util::harness::TestDroppedFile;
 
 mod map;
 mod plot;
+mod processing;
 mod settings;
 
 #[test]
@@ -646,12 +647,13 @@ fn complete(harness: &mut Harness<'_, App>, job: QueryJobId) -> QueryJobState {
 }
 
 fn execute(harness: &mut Harness<'_, App>, request: Request) -> Reply {
-    harness
-        .state_mut()
-        .execute_session_request_in_test(SessionRequest {
+    harness.state_mut().execute_session_request_in_test(
+        SessionRequest {
             request,
             session: Uuid::from_u128(1),
-        })
+        },
+        true,
+    )
 }
 
 fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {
