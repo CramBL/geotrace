@@ -9,6 +9,7 @@ use gt_types::{AssociationConfig, AssociationWindow};
 use strum::IntoEnumIterator;
 
 use crate::app::{App, loader};
+use crate::settings::AnalysisSettings;
 
 impl App {
     /// Apply loaded settings on startup.
@@ -70,10 +71,8 @@ impl App {
             .set_theme(super::theme_pref_from_setting(s.ui.theme));
 
         let analysis = gt_plot::AnalysisConfig {
-            elevation_mask_deg: s.analysis.elevation_mask_deg,
-            snr_drop_db: s.analysis.snr_drop_db,
-            slip_window_min: s.analysis.slip_window_min,
             clock_excursion_threshold_s: excursion_threshold,
+            ..s.analysis.plot_config()
         };
         self.loader.analysis_config = analysis;
         self.sky_trails_window
@@ -233,14 +232,7 @@ impl App {
                     .detect_clock_offset_excursions,
                 detect_slips: self.processing_config.generated_markers.detect_slips,
             },
-            analysis: crate::settings::AnalysisSettings {
-                elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg,
-                mark_masked_fix: s.plot_state.mark_masked_fix,
-                mark_backward_time_steps: s.plot_state.mark_backward_time_steps,
-                snr_drop_db: s.plot_state.analysis.snr_drop_db,
-                slip_window_min: s.plot_state.analysis.slip_window_min,
-                clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s,
-            },
+            analysis: AnalysisSettings::from(&s.plot_state),
             storage: self.storage_settings,
             environment_storage: self.environment_storage_settings,
             update: crate::settings::UpdateSettings {

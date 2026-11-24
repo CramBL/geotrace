@@ -25,10 +25,13 @@ impl<'a> Inspection<'a> {
     pub(crate) fn execute(&self, request: Request) -> Reply {
         match request {
             Request::CancelQuery(_)
+            | Request::DescribeSetting(_)
             | Request::GetQueryResults(_)
             | Request::GetQueryStatus(_)
+            | Request::GetSettings
             | Request::OpenPoint(_)
             | Request::OpenQuery(_)
+            | Request::OpenSetting(_)
             | Request::RunQuery(_)
             | Request::ShowOnMap(_)
             | Request::ShowOnPlot(_) => Err(ErrorCode::InvalidRequest),

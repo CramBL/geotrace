@@ -32,6 +32,9 @@ pub use crate::query_results::{
     QueryResultTime, QueryResultValue, QueryResults,
 };
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
+pub use crate::settings::{
+    SettingApply, SettingInfo, SettingKey, SettingSelection, SettingUnit, SettingValue,
+};
 
 mod endpoint;
 mod framing;
@@ -41,6 +44,7 @@ mod protocol;
 mod query_job;
 mod query_results;
 mod query_validation;
+mod settings;
 
 #[derive(Debug)]
 pub struct Server {

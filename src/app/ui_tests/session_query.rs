@@ -24,6 +24,7 @@ use crate::app::test_util::harness::TestDroppedFile;
 
 mod map;
 mod plot;
+mod settings;
 
 #[test]
 fn pending_run_input_leaves_a_session_draft_unrun() {

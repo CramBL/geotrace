@@ -1,6 +1,7 @@
 use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
 
 use gt_map::MapControls;
+use gt_plot::{AnalysisConfig, PlotState};
 
 mod legacy_position_source_policy;
 
@@ -304,6 +305,30 @@ pub struct AnalysisSettings {
     /// Deviation from a track's baseline GPS/system clock offset, in seconds,
     /// above which a sample counts as a clock offset excursion.
     pub clock_excursion_threshold_s: f32,
+}
+
+impl AnalysisSettings {
+    pub(crate) fn plot_config(self) -> AnalysisConfig {
+        AnalysisConfig {
+            elevation_mask_deg: self.elevation_mask_deg,
+            snr_drop_db: self.snr_drop_db,
+            slip_window_min: self.slip_window_min,
+            clock_excursion_threshold_s: self.clock_excursion_threshold_s,
+        }
+    }
+}
+
+impl From<&PlotState> for AnalysisSettings {
+    fn from(plot: &PlotState) -> Self {
+        Self {
+            elevation_mask_deg: plot.analysis.elevation_mask_deg,
+            mark_masked_fix: plot.mark_masked_fix,
+            mark_backward_time_steps: plot.mark_backward_time_steps,
+            snr_drop_db: plot.analysis.snr_drop_db,
+            slip_window_min: plot.analysis.slip_window_min,
+            clock_excursion_threshold_s: plot.analysis.clock_excursion_threshold_s,
+        }
+    }
 }
 
 impl Default for AnalysisSettings {

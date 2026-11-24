@@ -17,7 +17,7 @@ use gt_map::NavMap;
 use gt_map::mapbox_tiles;
 use gt_pending_writes::PendingWrites;
 use gt_plot::PlotState;
-use gt_session_bridge::Server as SessionBridge;
+use gt_session_bridge::{Server as SessionBridge, SettingKey};
 use gt_side_panel::{FilterPanelState, TreeState};
 use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
@@ -349,6 +349,7 @@ pub struct App {
     /// Category the settings window shows. Session state: the window opens on
     /// [`SettingsPage::Processing`] every run.
     settings_page: SettingsPage,
+    setting_to_reveal: Option<SettingKey>,
     settings_search: SettingsSearch,
     about_open: bool,
     /// The running crate version. Fixed to a placeholder in tests so
@@ -396,6 +397,7 @@ pub struct App {
     session_bridge: Option<SessionBridge>,
     session_query: session_query::SessionQuery,
     pending_session_query_draft: Option<String>,
+    pending_session_setting: Option<SettingKey>,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
     pending_writes: PendingWrites,
@@ -647,6 +649,7 @@ impl App {
             session_bridge: None,
             session_query: session_query::SessionQuery::default(),
             pending_session_query_draft: None,
+            pending_session_setting: None,
             pending_writes: options.pending_writes,
             shutdown: shutdown::ShutdownState::default(),
             interference_backfill_ui: backfill_ui::BackfillUi::default(),
@@ -714,6 +717,7 @@ impl App {
             config_path,
             settings_open: false,
             settings_page: SettingsPage::default(),
+            setting_to_reveal: None,
             settings_search: SettingsSearch::default(),
             about_open: false,
             app_version,

@@ -9,7 +9,8 @@ use gt_session_bridge::{
     PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
     QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
     QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation, RangeDetails,
-    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap, ShowOnPlot,
+    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, SettingApply,
+    SettingInfo, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot,
     TrackReference,
 };
 use gt_types::PointIdx;
@@ -82,15 +83,18 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         [
             "cancel_query",
             "check_query",
+            "describe_setting",
             "get_query_results",
             "get_query_status",
             "get_range_details",
             "get_recording",
+            "get_settings",
             "get_track",
             "list_metrics",
             "list_recordings",
             "open_point",
             "open_query",
+            "open_setting",
             "run_query",
             "show_on_map",
             "show_on_plot",
@@ -260,6 +264,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         }))
     );
     self::assert_ui_tools_queue_requests(&mut client).await;
+    self::assert_setting_tools_report_typed_values(&mut client).await;
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -298,6 +303,11 @@ async fn assert_ui_tools_queue_requests(client: &mut Client) {
             json!({"text": INVALID_QUERY_DRAFT}),
             "query_draft_queued",
         ),
+        (
+            "open_setting",
+            json!({"key": "analysis.slip_window_min"}),
+            "setting_open_queued",
+        ),
     ];
     for (index, (name, arguments, status)) in commands.into_iter().enumerate() {
         let presented = client
@@ -313,8 +323,40 @@ async fn assert_ui_tools_queue_requests(client: &mut Client) {
     }
 }
 
+async fn assert_setting_tools_report_typed_values(client: &mut Client) {
+    let listed = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 19, "method": "tools/call",
+            "params": {"name": "get_settings", "arguments": {}}
+        }))
+        .await;
+    let setting = listed
+        .pointer("/result/structuredContent/settings/0")
+        .unwrap();
+    assert_eq!(setting.get("kind"), Some(&json!("number")));
+    assert_eq!(setting.get("value"), Some(&json!(10.0)));
+    let described = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 20, "method": "tools/call",
+            "params": {"name": "describe_setting", "arguments": {"key": "analysis.slip_window_min"}}
+        }))
+        .await;
+    assert_eq!(
+        described.pointer("/result/structuredContent"),
+        Some(setting)
+    );
+}
+
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
+        Request::GetSettings => Ok(Reply::Settings {
+            settings: vec![self::setting_fixture()],
+        }),
+        Request::DescribeSetting(SettingSelection {
+            key: SettingKey::AnalysisSlipWindow,
+        }) => Ok(Reply::Setting {
+            setting: self::setting_fixture(),
+        }),
         Request::OpenPoint(OpenPoint { track, point: 1 })
         | Request::ShowOnMap(ShowOnMap {
             target:
@@ -327,6 +369,9 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
         Request::OpenQuery(QueryText { text }) if text == INVALID_QUERY_DRAFT => {
             Ok(Reply::QueryDraftQueued)
         }
+        Request::OpenSetting(SettingSelection {
+            key: SettingKey::AnalysisSlipWindow,
+        }) => Ok(Reply::SettingOpenQueued),
         Request::ShowOnPlot(ShowOnPlot {
             target:
                 RangeTarget::Track {
@@ -500,6 +545,22 @@ fn track_reference() -> TrackReference {
         recording: self::recording_id(7),
         index: 0,
         revision: 2,
+    }
+}
+
+fn setting_fixture() -> SettingInfo {
+    SettingInfo {
+        key: SettingKey::AnalysisSlipWindow,
+        page: "Analysis".to_owned(),
+        label: "Slip window".to_owned(),
+        help: "Time window for calculating the slip rate.".to_owned(),
+        apply: SettingApply::Live,
+        value: SettingValue::Number {
+            value: Some(10.0),
+            minimum: 1.0,
+            maximum: 120.0,
+            unit: SettingUnit::Minutes,
+        },
     }
 }
 
