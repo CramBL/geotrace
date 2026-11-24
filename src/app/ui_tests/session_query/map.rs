@@ -2,13 +2,16 @@ use chrono::TimeDelta;
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use gt_session_bridge::{
-    ErrorCode, GetRecording, ListRecordings, MapTarget, OpenPoint, Reply, Request, ShowOnMap,
-    TrackReference,
+    ErrorCode, GetQueryResults, GetRecording, ListRecordings, MapTarget, OpenPoint, QueryJobId,
+    QueryJobState, QueryMatchPosition, QueryPageRequest, Reply, Request, ShowOnMap, TrackReference,
 };
 use gt_test_utils::{HarnessInteraction as _, Queryable as _, SyntheticGtdSpec};
-use gt_types::{FileIdx, FixRef, Latitude, Longitude, PointIdx, TrackIdx, TrackRef, mercator};
+use gt_types::{
+    DataCategory, FileIdx, FixRef, Latitude, Longitude, PointIdx, TrackIdx, TrackRef, mercator,
+};
 use gt_ui_types::{DisplayCategory, MapElementRef, MatchHighlight, MatchRevealTarget};
 use rstest::rstest;
+use uuid::Uuid;
 
 use super::{App, ui_tests};
 
@@ -67,6 +70,175 @@ fn session_map_frames_a_range_when_the_map_draws() {
     assert_eq!(
         harness.state().shared.borrow().highlight.presented_match,
         None
+    );
+}
+
+#[rstest]
+#[case::queued_stale(PresentationStage::Queued, MatchInvalidation::StaleInputs)]
+#[case::active_stale(PresentationStage::Active, MatchInvalidation::StaleInputs)]
+#[case::queued_replaced(PresentationStage::Queued, MatchInvalidation::ReplaceJob)]
+#[case::active_replaced(PresentationStage::Active, MatchInvalidation::ReplaceJob)]
+fn session_map_discards_a_query_match_without_a_status_request(
+    #[case] stage: PresentationStage,
+    #[case] invalidation: MatchInvalidation,
+) {
+    let mut harness = ui_tests::harness_with_three_files_loaded();
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .set_time_bounds(Some(ui_tests::base_time() + TimeDelta::seconds(20)), None);
+    let job = super::start(
+        &mut harness,
+        "points | where velocity > 300 km/h\n\npoints | where velocity > 1 km/h",
+    );
+    let position = QueryMatchPosition {
+        track_ordinal: 1,
+        match_ordinal: 0,
+    };
+    let request = Request::ShowOnMap(ShowOnMap {
+        target: MapTarget::QueryMatch {
+            job,
+            query: 1,
+            matched: position,
+        },
+    });
+    assert_eq!(
+        super::execute(&mut harness, request.clone()),
+        ErrorCode::QueryNotComplete.into()
+    );
+    assert!(matches!(
+        super::complete(&mut harness, job),
+        QueryJobState::Completed { .. }
+    ));
+    let (matches, _) = super::match_page(
+        super::results(
+            &mut harness,
+            GetQueryResults {
+                query: 1,
+                page: QueryPageRequest::Matches {
+                    start: Some(position),
+                },
+                ..super::first_page(job)
+            },
+        )
+        .page,
+    );
+    let matched = &matches[0];
+    assert_eq!(matched.position, position);
+    let track = TrackRef::new(FileIdx::new(1), TrackIdx::new(0));
+    assert_eq!(matched.range.start, 20);
+    let expected = MatchHighlight::new(track, &matched.range);
+    let map_visible = matches!(stage, PresentationStage::Active);
+    let app = harness.state_mut();
+    app.tiles_tree.set_visible(app.map_tile_id, map_visible);
+
+    assert_eq!(
+        super::execute(&mut harness, request.clone()),
+        Reply::MapPresentationQueued
+    );
+    harness.step();
+    {
+        let shared = harness.state().shared.borrow();
+        assert_eq!(
+            shared.highlight.presented_match,
+            map_visible.then_some(expected)
+        );
+        assert_eq!(shared.pending_session_map.is_some(), !map_visible);
+    }
+
+    let expected_error = match invalidation {
+        MatchInvalidation::ReplaceJob => {
+            assert_ne!(super::start(&mut harness, "points"), job);
+            ErrorCode::QueryJobNotFound
+        }
+        MatchInvalidation::StaleInputs => {
+            harness
+                .state_mut()
+                .shared
+                .borrow_mut()
+                .tree
+                .toggle_file_check(FileIdx::new(0));
+            ErrorCode::StaleQueryResults
+        }
+    };
+    harness.step();
+    {
+        let shared = harness.state().shared.borrow();
+        assert_eq!(shared.highlight.presented_match, None);
+        assert!(shared.pending_session_map.is_none());
+    }
+    assert_eq!(super::execute(&mut harness, request), expected_error.into());
+}
+
+enum PresentationStage {
+    Active,
+    Queued,
+}
+
+enum MatchInvalidation {
+    ReplaceJob,
+    StaleInputs,
+}
+
+#[test]
+fn session_map_validates_query_match_indices_and_geometry() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let job = super::start(&mut harness, "points | where velocity > 1 km/h");
+    assert_eq!(super::complete(&mut harness, job), super::completed(1));
+    let position = QueryMatchPosition::default();
+    let other_session = QueryJobId {
+        session: Uuid::from_u128(2),
+        ..job
+    };
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .tree
+        .set_category_visible(track, DataCategory::Track, false);
+
+    for (job, query, matched, error) in [
+        (other_session, 0, position, ErrorCode::StaleSession),
+        (job, 1, position, ErrorCode::InvalidQueryCursor),
+        (
+            job,
+            0,
+            QueryMatchPosition {
+                track_ordinal: 1,
+                ..position
+            },
+            ErrorCode::InvalidQueryCursor,
+        ),
+        (
+            job,
+            0,
+            QueryMatchPosition {
+                match_ordinal: 1,
+                ..position
+            },
+            ErrorCode::InvalidQueryCursor,
+        ),
+        (job, 0, position, ErrorCode::NoVisibleMapGeometry),
+    ] {
+        let request = Request::ShowOnMap(ShowOnMap {
+            target: MapTarget::QueryMatch {
+                job,
+                query,
+                matched,
+            },
+        });
+        assert_eq!(super::execute(&mut harness, request), error.into());
+    }
+    assert!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .pending_session_map
+            .is_none()
     );
 }
 

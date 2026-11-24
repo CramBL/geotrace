@@ -148,7 +148,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Frame and highlight a visible track or half-open range of original point indices on the map.",
+        description = "Frame and highlight a track, a half-open range of original point indices, or a retained point-query match on the map.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -205,9 +205,12 @@ impl Companion {
             ErrorCode::QueryJobNotFound => {
                 "GeoTrace no longer has that query job. Start the query again."
             }
+            ErrorCode::QueryMatchIsChannel => {
+                "Choose a match from a point query to frame it on the map."
+            }
             ErrorCode::QueryNotComplete => "The query is still in progress. Poll its status.",
             ErrorCode::QueryResultsUnavailable => {
-                "This query job has no results. Check its status."
+                "This query job has no readable results. Check its status or run the query again."
             }
             ErrorCode::RecordingNotFound => {
                 "The recording is no longer loaded. List the loaded recordings again."

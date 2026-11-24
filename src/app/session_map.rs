@@ -3,7 +3,7 @@ use std::ops::Range;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::RecordingData;
 use gt_map::{NavMap, PresentationCamera};
-use gt_session_bridge::{ErrorCode, MapTarget, OpenPoint, ShowOnMap};
+use gt_session_bridge::{ErrorCode, MapTarget, OpenPoint, PointQueryMatch, QueryJobId, ShowOnMap};
 use gt_types::{DataCategory, FixRef, Generation, Latitude, Longitude, PointIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, MapElementRef, MapEligibility, MapPresence, MapPresenceResult, MatchHighlight,
@@ -11,6 +11,7 @@ use gt_ui_types::{
 };
 use uuid::Uuid;
 
+use super::session_query::SessionQuery;
 use super::{App, SharedAppState};
 
 #[derive(Clone, Copy)]
@@ -47,33 +48,50 @@ impl MapPresentation {
         query_matches: Option<&QueryMatches>,
         track: TrackRef,
         points: Range<usize>,
+        job: Option<QueryJobId>,
     ) -> Result<Self, ErrorCode> {
         if !gt_map::query_match_has_geometry(shared.map_presence(query_matches), track, &points) {
             return Err(ErrorCode::NoVisibleMapGeometry);
         }
         Ok(Self::new(
-            PresentationTarget::Range(MatchHighlight::new(track, &points)),
+            PresentationTarget::Range {
+                highlight: MatchHighlight::new(track, &points),
+                job,
+            },
             shared,
             query_matches,
         ))
     }
 
-    fn is_current(self, shared: &SharedAppState, query_matches: Option<&QueryMatches>) -> bool {
+    fn is_current(
+        self,
+        shared: &SharedAppState,
+        query_matches: Option<&QueryMatches>,
+        queries: &SessionQuery,
+    ) -> bool {
         if self.inputs != MapPresentationInputs::of(shared, query_matches) {
             return false;
         }
         let scope = shared.map_presence(query_matches);
         match self.target {
             PresentationTarget::Point { fix, .. } => scope.draws(MapElementRef::Fix(fix)),
-            PresentationTarget::Range(range) => scope
-                .eligibility()
-                .prepare_track(range.track)
-                .category_visible(DataCategory::Track),
+            PresentationTarget::Range { highlight, job } => {
+                job.is_none_or(|id| queries.has_current_results(id))
+                    && scope
+                        .eligibility()
+                        .prepare_track(highlight.track)
+                        .category_visible(DataCategory::Track)
+            }
         }
     }
 
-    fn can_apply(self, shared: &SharedAppState, query_matches: Option<&QueryMatches>) -> bool {
-        self.is_current(shared, query_matches)
+    fn can_apply(
+        self,
+        shared: &SharedAppState,
+        query_matches: Option<&QueryMatches>,
+        queries: &SessionQuery,
+    ) -> bool {
+        self.is_current(shared, query_matches, queries)
             && (matches!(self.target, PresentationTarget::Point { .. })
                 || shared
                     .display_mask
@@ -88,7 +106,10 @@ enum PresentationTarget {
         latitude: Latitude,
         longitude: Longitude,
     },
-    Range(MatchHighlight),
+    Range {
+        highlight: MatchHighlight,
+        job: Option<QueryJobId>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -144,21 +165,42 @@ impl App {
     }
 
     pub(super) fn session_show_on_map(
-        &self,
+        &mut self,
+        queries: &mut SessionQuery,
         session: Uuid,
-        ShowOnMap {
-            target: MapTarget::Track { track, start, end },
-        }: ShowOnMap,
+        ShowOnMap { target }: ShowOnMap,
     ) -> Result<MapPresentation, ErrorCode> {
-        let shared = self.shared.borrow();
-        let files = shared.loaded_files.view();
-        let track = track.resolve(files, session)?;
-        let loaded = track.resolve(files.files()).ok_or(ErrorCode::StaleTrack)?;
-        let points = start.unwrap_or_default()..end.unwrap_or(loaded.points.len());
-        if points.is_empty() || points.end > loaded.points.len() {
-            return Err(ErrorCode::InvalidRange);
-        }
-        MapPresentation::track_range(&shared, self.query_window.matches(), track, points)
+        let (track, points, query_job) = match target {
+            MapTarget::Track { track, start, end } => {
+                let shared = self.shared.borrow();
+                let files = shared.loaded_files.view();
+                let track = track.resolve(files, session)?;
+                let loaded = track.resolve(files.files()).ok_or(ErrorCode::StaleTrack)?;
+                let points = start.unwrap_or_default()..end.unwrap_or(loaded.points.len());
+                if points.is_empty() || points.end > loaded.points.len() {
+                    return Err(ErrorCode::InvalidRange);
+                }
+                (track, points, None)
+            }
+            MapTarget::QueryMatch {
+                job,
+                query,
+                matched,
+            } => {
+                let results = queries.results(self, session, job)?;
+                let files = self.shared.borrow();
+                let matched =
+                    PointQueryMatch::resolve(results, files.loaded_files.view(), query, matched)?;
+                (matched.track, matched.points, Some(job))
+            }
+        };
+        MapPresentation::track_range(
+            &self.shared.borrow(),
+            self.query_window.matches(),
+            track,
+            points,
+            query_job,
+        )
     }
 }
 
@@ -179,6 +221,7 @@ impl SharedAppState {
         &mut self,
         map: &mut NavMap,
         query_matches: Option<&QueryMatches>,
+        queries: &SessionQuery,
     ) {
         // Queuing a session request clears the earlier GUI camera requests.
         let later_gui_camera = self.map_center_request.is_some()
@@ -189,10 +232,10 @@ impl SharedAppState {
                 && pending
                     .pin_revision
                     .is_none_or(|revision| revision == self.highlight.pin_revision())
-                && pending.presentation.can_apply(self, query_matches)
+                && pending.presentation.can_apply(self, query_matches, queries)
         });
         if let Some(active) = self.presented_session_map
-            && (!active.presentation.is_current(self, query_matches)
+            && (!active.presentation.is_current(self, query_matches, queries)
                 || active.owned_pin_revision.is_some_and(|revision| {
                     revision != self.highlight.pin_revision()
                         && map.pin_rollback_revision(&self.highlight) != Some(revision)
@@ -239,9 +282,9 @@ impl SharedAppState {
                 self.popup_pos_request = None;
                 (camera, Some(self.highlight.pin_revision()))
             }
-            PresentationTarget::Range(range) => {
-                self.highlight.presented_match = Some(range);
-                (PresentationCamera::TrackRange(range), None)
+            PresentationTarget::Range { highlight, .. } => {
+                self.highlight.presented_match = Some(highlight);
+                (PresentationCamera::TrackRange(highlight), None)
             }
         };
         self.presented_session_map = Some(AppliedMapPresentation {
@@ -263,7 +306,7 @@ impl SharedAppState {
                         self.highlight.clear_sticky();
                     }
                 }
-                PresentationTarget::Range(_) => self.highlight.presented_match = None,
+                PresentationTarget::Range { .. } => self.highlight.presented_match = None,
             }
         }
     }

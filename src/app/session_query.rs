@@ -1,7 +1,8 @@
 use gt_loaded_files::{LoadedFilesView, RecordingData};
+use gt_query_run::RunResults;
 use gt_session_bridge::{
-    ErrorCode, GetQueryResults, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation,
-    QueryResults, Reply, Request, SessionRequest,
+    ErrorCode, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation, QueryResults, Reply,
+    Request, SessionRequest,
 };
 use gt_types::Generation;
 use uuid::Uuid;
@@ -32,6 +33,23 @@ impl SessionQuery {
         {
             job.query.update(inputs);
         }
+    }
+
+    pub(super) fn results(
+        &mut self,
+        app: &mut App,
+        session: Uuid,
+        id: QueryJobId,
+    ) -> Result<&RunResults, ErrorCode> {
+        let job = self.job_mut(session, id)?;
+        job.refresh(app);
+        job.results()
+    }
+
+    pub(super) fn has_current_results(&self, id: QueryJobId) -> bool {
+        self.job
+            .as_ref()
+            .is_some_and(|job| job.id == id && job.results().is_ok())
     }
 
     fn poll(&mut self) {
@@ -207,26 +225,19 @@ impl Job {
         }
     }
 
-    fn results_page(
-        &self,
-        files: LoadedFilesView<'_>,
-        args: GetQueryResults,
-    ) -> Result<Reply, ErrorCode> {
+    fn results(&self) -> Result<&RunResults, ErrorCode> {
         let session = self.query.session();
         let results = match self.phase {
-            JobPhase::Cancelled | JobPhase::Failed => {
-                return Err(ErrorCode::QueryResultsUnavailable);
-            }
-            JobPhase::Cancelling | JobPhase::Preparing => return Err(ErrorCode::QueryNotComplete),
-            JobPhase::Stale => return Err(ErrorCode::StaleQueryResults),
-            JobPhase::Started if session.run_in_flight() => {
-                return Err(ErrorCode::QueryNotComplete);
-            }
-            JobPhase::Started => session
-                .results()
-                .ok_or(ErrorCode::QueryResultsUnavailable)?,
-        };
-        QueryResults::project(results, files, args).map(|results| Reply::QueryResults { results })
+            JobPhase::Cancelled | JobPhase::Failed => Err(ErrorCode::QueryResultsUnavailable),
+            JobPhase::Cancelling | JobPhase::Preparing => Err(ErrorCode::QueryNotComplete),
+            JobPhase::Stale => Err(ErrorCode::StaleQueryResults),
+            JobPhase::Started if session.run_in_flight() => Err(ErrorCode::QueryNotComplete),
+            JobPhase::Started => session.results().ok_or(ErrorCode::QueryResultsUnavailable),
+        }?;
+        if results.stale() {
+            return Err(ErrorCode::StaleQueryResults);
+        }
+        Ok(results)
     }
 }
 
@@ -287,12 +298,12 @@ impl App {
                 job.refresh(self);
                 job.reply()
             }),
-            Request::GetQueryResults(args) => {
-                queries.job_mut(request.session, args.job).and_then(|job| {
-                    job.refresh(self);
-                    job.results_page(self.shared.borrow().loaded_files.view(), args)
-                })
-            }
+            Request::GetQueryResults(args) => queries
+                .results(self, request.session, args.job)
+                .and_then(|results| {
+                    QueryResults::project(results, self.shared.borrow().loaded_files.view(), args)
+                        .map(|results| Reply::QueryResults { results })
+                }),
             Request::GetQueryStatus(args) => {
                 queries.job_mut(request.session, args.job).map(|job| {
                     job.refresh(self);
@@ -309,7 +320,7 @@ impl App {
                 &mut staged.job,
             ),
             Request::ShowOnMap(args) => self
-                .session_show_on_map(request.session, args)
+                .session_show_on_map(&mut queries, request.session, args)
                 .map(|presentation| staged.queue_map(presentation)),
             _ => {
                 let shared = self.shared.borrow();

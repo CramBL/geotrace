@@ -788,7 +788,11 @@ impl App {
             if let Some(inputs) = query_series.inputs(s.loaded_files.view(), &s.tree, &s.filter) {
                 self.session_query.refresh(inputs);
             }
-            s.discard_stale_session_map(&mut self.map, self.query_window.matches());
+            s.discard_stale_session_map(
+                &mut self.map,
+                self.query_window.matches(),
+                &self.session_query,
+            );
             let plot_hover_scope = match s.highlight.hover {
                 Some(HighlightScope::File { .. })
                 | Some(HighlightScope::Track(_))
