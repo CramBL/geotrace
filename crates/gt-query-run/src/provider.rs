@@ -95,6 +95,39 @@ impl TrackQueryData {
     }
 }
 
+pub struct PointResultValues<'a> {
+    provider: TrackProvider<'a>,
+    slice: SliceProvider<'a>,
+    slice_start: usize,
+}
+
+impl<'a> PointResultValues<'a> {
+    pub fn new(points: &'a [NavPoint], data: Option<&'a TrackQueryData>) -> Self {
+        let provider = TrackProvider::new(points, &[], data);
+        let filtered = data.map_or_else(
+            || TimeFilteredPoints::whole_track(points.len()),
+            |data| data.filtered_points().clone(),
+        );
+        Self {
+            slice_start: filtered.start(),
+            slice: SliceProvider::new(provider.clone(), filtered),
+            provider,
+        }
+    }
+
+    pub fn provider(&self) -> &TrackProvider<'a> {
+        &self.provider
+    }
+
+    pub fn value(&self, metric: QueryMetric, point_index: usize) -> Option<f64> {
+        if metric == QueryMetric::Accel {
+            let relative = point_index.checked_sub(self.slice_start)?;
+            return gt_query::derived_accel(&self.slice, relative);
+        }
+        self.provider.value(metric, point_index)
+    }
+}
+
 /// Provider over one track's points plus the run's derived series, in the
 /// evaluator's base units (m/s, degrees, seconds, 0-1 ratios, per second).
 #[derive(Clone)]

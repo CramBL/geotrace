@@ -187,6 +187,14 @@ impl ChannelResults {
             matches,
         }
     }
+
+    pub fn component_labels(&self) -> &[String] {
+        if self.components.is_empty() {
+            std::slice::from_ref(&self.channel)
+        } else {
+            &self.components
+        }
+    }
 }
 
 /// One track's channel-source matches and the timeline they index into.

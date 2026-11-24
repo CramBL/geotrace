@@ -179,6 +179,22 @@ Completion reports the match, track, and skipped counts for each query block in 
 The status reports `stale` when the current recording data, filter, enabled tracks, or derived inputs differ from the run's inputs.
 GeoTrace retains one job until another query starts or the desktop session ends.
 
+For a completed job, pass its `job`, the zero-based `query` block index, and a `page` of `{"kind":"matches"}` to `get_query_results`.
+The match page lists each match's track reference, half-open range, first and last timestamps, and aggregate values.
+The match position uses zero-based ordinals for the matching track group and the match within that group.
+Pass its `next_start` as `page.start` to continue with the same job and query.
+To read the table rows of one match, set `page.kind` to `rows` and pass the match's `position` as `page.matched`.
+Omit `page.start` for the first row, then pass the row page's `next_start` as `page.start` to continue.
+A null `next_start` marks the final page.
+Point indices refer to the original track, and point times use RFC 3339 UTC.
+Channel indices refer to the filtered sample timeline, and sample times use Unix seconds.
+Column ordinals give the table order across match aggregates and row values.
+Point metrics and aggregates use evaluator units, with ratios expressed as fractions and the `time` metric in Unix seconds.
+Channel components use the track's declared unit.
+Cells have status `finite` with a numeric value, `missing`, or `non_finite`.
+Both page kinds return at most 100 entries and 2,048 values.
+Column metadata that exceeds 64 KiB causes a size error.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.
