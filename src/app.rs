@@ -92,6 +92,7 @@ mod recording_name_template;
 mod recording_names_cache;
 mod recording_ui_state;
 mod reference_window;
+mod session_history;
 mod session_map;
 mod session_plot;
 mod session_query;
@@ -994,6 +995,14 @@ impl App {
     }
 
     fn handle_completed_load(&mut self, completed: CompletedLoad, now: f64) {
+        if let LoadCompletion::Recording {
+            result: Ok(recording),
+            ..
+        } = &completed.completion
+            && recording.history_write_attempted
+        {
+            self.history_window.invalidate();
+        }
         let Some(completed) = self.complete_load_retry(completed) else {
             return;
         };
@@ -1007,6 +1016,7 @@ impl App {
                         history,
                         applied_current_marker_settings,
                         placement,
+                        ..
                     }),
             } => {
                 let was_stored = history.is_stored();
@@ -1085,7 +1095,6 @@ impl App {
                     completed_at: now,
                 });
                 if was_stored {
-                    self.history_window.invalidate();
                     self.check_auto_prune();
                 }
                 self.snap_auto_sweep = true;

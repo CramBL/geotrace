@@ -4,8 +4,8 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
+    ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListHistoryRecordings,
+    ListMetrics, ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
     SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::wrapper::Parameters;
@@ -141,6 +141,17 @@ impl Companion {
     }
 
     #[tool(
+        description = "List stored History recordings. Filter by overlapping UTC dates and use next_cursor with the same dates for the next page.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_history_recordings(
+        &self,
+        Parameters(args): Parameters<ListHistoryRecordings>,
+    ) -> CallToolResult {
+        self.inspect(Request::ListHistoryRecordings(args)).await
+    }
+
+    #[tool(
         description = "List built-in query metric definitions and a page of loaded recording channels.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -250,6 +261,7 @@ impl Companion {
                 | Reply::SettingOpenQueued
                 | Reply::Settings { .. }),
             ) => serde_json::to_value(reply),
+            Ok(Reply::HistoryRecordings { page }) => serde_json::to_value(page),
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
             Ok(Reply::QueryJob { job }) => serde_json::to_value(job),
@@ -280,8 +292,19 @@ impl Companion {
     fn reply_error_message(code: ErrorCode) -> &'static str {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
+            ErrorCode::HistoryListingFailed => {
+                "GeoTrace could not list recording History. Check the History window for details."
+            }
+            ErrorCode::HistoryNotReady => "GeoTrace is preparing recording History. Try again.",
+            ErrorCode::HistoryUnavailable => "GeoTrace has no open recording History database.",
             ErrorCode::InactiveSetting => {
                 "This setting is disabled. Use describe_setting for the prerequisite."
+            }
+            ErrorCode::InvalidHistoryCursor => {
+                "Start from the first page of History after changing dates or when the list refreshes."
+            }
+            ErrorCode::InvalidHistoryDateRange => {
+                "Choose a History date range in order from earliest to latest."
             }
             ErrorCode::InvalidPlotMetric => {
                 "Use metric identifiers from list_metrics that have plot series, such as velocity or eph."

@@ -21,15 +21,17 @@ use gt_log_view::{
     LogSaveReceipt, LogSaveRequest,
 };
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
+use gt_session_bridge::HistoryEntries;
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
     LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach,
     PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings,
-    RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, StoredLogSettings,
-    StoredRecording, TrackRange, TrackState, UiStateVersionReporter,
+    RecordingUiState, Recordings, RecordingsHandle, StoredLogSettings, StoredRecording, TrackRange,
+    TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
+use uuid::Uuid;
 
 use super::association_batches::RecordingOperationOrigin;
 use super::load_failures::LoadRetryAttempt;
@@ -109,7 +111,7 @@ enum ReadRequest {
         log: LoadedLogId,
         text: Arc<str>,
     },
-    List,
+    List(ListRequestId),
     /// Read back the one log `attachment` names, which the log viewer requests
     /// when the user loads it from the list.
     LoadAttachedLog {
@@ -244,6 +246,9 @@ pub struct OpenedRecording {
     pub ui_state: Result<RecordingUiState, DbError>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct ListRequestId(Uuid);
+
 /// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
 pub enum Response {
     /// The one log the viewer requested out of a recording.
@@ -266,7 +271,10 @@ pub enum Response {
         recording: DatabaseRef,
         existing: Result<Option<ExistingLogAttachment>, DbError>,
     },
-    Listed(Result<Vec<RecordingEntry>, DbError>),
+    Listed {
+        request: ListRequestId,
+        entries: Result<HistoryEntries, DbError>,
+    },
     /// Outcome of removing an attachment.
     LogDetached {
         attachment: LogAttachmentRef,
@@ -318,6 +326,15 @@ pub enum Response {
         label: &'static str,
         rejection: WriteRejection,
     },
+}
+
+impl Response {
+    pub(super) fn invalidates_recording_list(&self) -> bool {
+        matches!(
+            self,
+            Self::AutoPruned(Ok(AutoPruneOutcome::DeleteAttempt(_))) | Self::Mutated { .. }
+        )
+    }
 }
 
 /// Owns the history-database worker thread and the request and response
@@ -444,8 +461,13 @@ impl HistoryWorker {
         self.send(Request::Write(req));
     }
 
-    pub fn list(&self) {
-        self.send_read(ReadRequest::List);
+    pub fn list(&self) -> Option<ListRequestId> {
+        let request = ListRequestId(Uuid::new_v4());
+        self.req_tx
+            .as_ref()?
+            .send(Request::Read(ReadRequest::List(request)))
+            .ok()?;
+        Some(request)
     }
 
     pub fn open(&self, db_ref: DatabaseRef) {
@@ -713,7 +735,10 @@ fn handle_read_request(
     ui_state_versions: &UiStateVersionReporter,
 ) -> Response {
     match req {
-        ReadRequest::List => Response::Listed(db.list_recordings()),
+        ReadRequest::List(request) => Response::Listed {
+            request,
+            entries: db.list_recordings().map(HistoryEntries::new),
+        },
         ReadRequest::Open {
             db_ref,
             placement,
@@ -1105,10 +1130,7 @@ mod tests {
         assert_eq!(worker.path(), Some(path.as_path()));
 
         // List
-        worker.list();
-        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
-            panic!("expected a Listed response");
-        };
+        let entries = recordings::listed_recordings(&worker);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].total_tracks, 2);
         let db_ref = entries[0].db_ref.clone();
@@ -1161,10 +1183,7 @@ mod tests {
         assert_eq!(count, 1);
         result.expect("delete ok");
 
-        worker.list();
-        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
-            panic!("expected a Listed response");
-        };
+        let entries = recordings::listed_recordings(&worker);
         assert!(entries.is_empty(), "recording should be gone after delete");
     }
 
@@ -1194,10 +1213,7 @@ mod tests {
         result.expect("delete ok");
 
         // The recording now has a single ten-point track, every one of them live.
-        worker.list();
-        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
-            panic!("expected Listed");
-        };
+        let entries = recordings::listed_recordings(&worker);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].total_tracks, 1);
         assert_eq!(entries[0].shelved_tracks, 0);
@@ -1669,7 +1685,7 @@ mod tests {
         let worker = HistoryWorker::disabled();
         assert!(!worker.available());
         assert!(worker.path().is_none());
-        worker.list();
+        assert!(worker.list().is_none());
         assert!(worker.poll().is_empty());
         worker.shutdown();
     }
@@ -1735,10 +1751,7 @@ mod tests {
         assert!(pending_writes.is_idle());
 
         // Reads still return, and report a database the rejected write left alone.
-        worker.list();
-        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
-            panic!("expected a Listed response");
-        };
+        let entries = recordings::listed_recordings(&worker);
         assert_eq!(entries.first().map(|entry| entry.shelved_tracks), Some(0));
         worker.shutdown();
     }
@@ -1774,10 +1787,7 @@ mod tests {
         );
 
         // Reads still return, and report a database the rejected write left alone.
-        worker.list();
-        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
-            panic!("expected a Listed response");
-        };
+        let entries = recordings::listed_recordings(&worker);
         assert_eq!(entries.first().map(|entry| entry.shelved_tracks), Some(0));
         worker.shutdown();
     }

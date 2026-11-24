@@ -63,7 +63,7 @@ fn log_outcome(name: &str) -> LooseLogResult {
     }
 }
 
-fn recording_outcome(name: &str) -> LoadedRecordingResult {
+pub(super) fn recording_outcome(name: &str) -> LoadedRecordingResult {
     let file = gt_loader::load_bytes(&ui_tests::minimal_gtd_bytes(), name.to_owned())
         .expect("parse recording");
     let series = gt_plot::prepare_file_series(&file, AnalysisConfig::default());
@@ -71,6 +71,7 @@ fn recording_outcome(name: &str) -> LoadedRecordingResult {
         file,
         series,
         history: FileHistory::None,
+        history_write_attempted: false,
         applied_current_marker_settings: false,
         placement: LoadedRecordingPlacement::AddAnEntry,
     }

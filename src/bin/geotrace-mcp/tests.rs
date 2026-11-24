@@ -2,15 +2,16 @@ use std::io::{self, ErrorKind};
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta};
+use chrono::{DateTime, NaiveDate, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    AnalysisSettingKey, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics,
-    OpenPoint, PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
-    QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow,
-    QueryResultSource, QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation,
-    RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request,
-    SetSetting, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
+    AnalysisSettingKey, GetQueryResults, GetRangeDetails, HistoryDates, HistoryRecordings,
+    ListHistoryRecordings, ListMetrics, ListRecordings, Metrics, OpenPoint, PointDetails,
+    QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
+    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
+    QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation, RangeDetails,
+    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, SetSetting,
+    SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
     SettingValue, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_types::PointIdx;
@@ -91,6 +92,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "get_recording",
             "get_settings",
             "get_track",
+            "list_history_recordings",
             "list_metrics",
             "list_recordings",
             "open_point",
@@ -291,11 +293,24 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     );
     self::assert_ui_tools_queue_requests(&mut client).await;
     self::assert_setting_tools_report_typed_values(&mut client).await;
+    self::assert_history_listing_uses_the_date_filter(&mut client).await;
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
         .unwrap()
         .unwrap();
+}
+
+async fn assert_history_listing_uses_the_date_filter(client: &mut Client) {
+    let result = client.exchange(json!({
+        "jsonrpc": "2.0", "id": 30, "method": "tools/call",
+        "params": {"name": "list_history_recordings", "arguments": {"dates": {"from": "2025-02-02"}, "limit": 1}}
+    })).await;
+    assert_eq!(result.pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(
+        result.pointer("/result/structuredContent"),
+        Some(&json!({"recordings": [], "next_cursor": null}))
+    );
 }
 
 async fn assert_ui_tools_queue_requests(client: &mut Client) {
@@ -543,6 +558,20 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                 definitions: Vec::new(),
                 channels: Vec::new(),
                 next_channel_start: Some(4),
+            },
+        }),
+        Request::ListHistoryRecordings(ListHistoryRecordings {
+            cursor: None,
+            dates:
+                Some(HistoryDates {
+                    from: Some(from),
+                    through: None,
+                }),
+            limit: Some(NonZeroUsize::MIN),
+        }) if Some(from) == NaiveDate::from_ymd_opt(2025, 2, 2) => Ok(Reply::HistoryRecordings {
+            page: HistoryRecordings {
+                recordings: Vec::new(),
+                next_cursor: None,
             },
         }),
         Request::GetRangeDetails(GetRangeDetails {

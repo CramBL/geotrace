@@ -334,6 +334,11 @@ impl App {
         request: SessionRequest,
         staged: &mut StagedSessionChanges,
     ) -> Reply {
+        if let Request::ListHistoryRecordings(args) = request.request {
+            return self
+                .list_history_recordings(request.session, args)
+                .unwrap_or_else(Reply::from);
+        }
         let mut queries = std::mem::take(&mut self.session_query);
         let result = match request.request {
             Request::ApplyProcessing if self.shutdown_requested() => Err(ErrorCode::ShuttingDown),

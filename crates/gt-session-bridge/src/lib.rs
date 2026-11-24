@@ -10,6 +10,10 @@ use uuid::Uuid;
 
 use crate::endpoint::{BoundListener, Endpoint};
 use crate::framing::{Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
+pub use crate::history::{
+    HistoryCursor, HistoryDates, HistoryEntries, HistoryListing, HistoryRecording,
+    HistoryRecordingId, HistoryRecordings, ListHistoryRecordings,
+};
 use crate::inspection::Inspection;
 pub use crate::inspection::{
     MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, MapBounds, PointDetails, Position, RangeDetails,
@@ -39,6 +43,7 @@ pub use crate::settings::{
 
 mod endpoint;
 mod framing;
+mod history;
 mod inspection;
 mod metrics;
 mod protocol;
