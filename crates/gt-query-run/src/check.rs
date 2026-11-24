@@ -3,6 +3,9 @@ use std::ops::Range;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CheckedQuery, Diagnostic, Span};
 
+use crate::run::RunKind;
+use crate::session::MIXED_CHANNEL_MESSAGE;
+
 /// One query in the editor text: its byte range and its check outcome.
 pub struct QueryChunk {
     pub range: Range<usize>,
@@ -65,6 +68,42 @@ pub fn check_chunks<'a>(
     })
 }
 
+pub(crate) fn runnable_chunks<E>(
+    text: &str,
+    chunks: impl Iterator<Item = QueryChunk>,
+    mut diagnose: impl FnMut(Diagnostic) -> Result<(), E>,
+) -> Result<Option<Vec<QueryChunk>>, E> {
+    let mut checked = Vec::new();
+    let mut valid = true;
+    for chunk in chunks {
+        match chunk.result {
+            Ok(_) => checked.push(chunk),
+            Err(mut diagnostic) => {
+                valid = false;
+                diagnostic.span = diagnostic.span.offset_by(chunk.range.start);
+                diagnose(diagnostic)?;
+            }
+        }
+    }
+    if !valid {
+        return Ok(None);
+    }
+    if RunKind::of_checked_chunks(&checked) == RunKind::MixedChannel {
+        for span in checked
+            .iter()
+            .filter_map(|chunk| chunk.channel_source_span(text))
+        {
+            diagnose(Diagnostic {
+                span,
+                message: MIXED_CHANNEL_MESSAGE.to_owned(),
+                help: None,
+            })?;
+        }
+        return Ok(None);
+    }
+    Ok(Some(checked))
+}
+
 /// The byte range of the text the caret's completions analyze.
 ///
 /// The query chunk containing the caret. When the caret sits on the line
@@ -123,9 +162,26 @@ pub fn split_queries(text: &str) -> Vec<Range<usize>> {
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn runnable_chunks_stops_after_the_diagnostic_callback_returns_an_error() {
+        let rejected = || QueryChunk {
+            range: 0..1,
+            result: super::check_text("Points", &ChannelSchema::new()),
+        };
+        let chunks = iter::once_with(rejected).chain(iter::from_fn(|| {
+            panic!("checked a chunk after the callback returned an error");
+        }));
+        assert!(matches!(
+            super::runnable_chunks("Points", chunks, |_| Err(())),
+            Err(())
+        ));
+    }
 
     #[rstest]
     // A blank line separates two queries.

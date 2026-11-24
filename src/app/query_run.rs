@@ -18,9 +18,16 @@ pub(super) struct BackgroundQuery {
 }
 
 impl BackgroundQuery {
-    pub(super) fn start(&mut self, ctx: &egui::Context, inputs: RunInputs<'_>) {
+    pub(super) fn with_session(session: QuerySession) -> Self {
+        Self {
+            session,
+            worker: None,
+        }
+    }
+
+    pub(super) fn start(&mut self, ctx: &egui::Context, inputs: RunInputs<'_>) -> bool {
         let Some(prepared) = self.session.start_run(inputs) else {
-            return;
+            return false;
         };
         let (sender, receiver) = mpsc::channel();
         let ctx = ctx.clone();
@@ -29,6 +36,7 @@ impl BackgroundQuery {
             ctx.request_repaint();
         });
         self.worker = Some(receiver);
+        true
     }
 
     pub(super) fn update(&mut self, inputs: RunInputs<'_>) -> bool {
@@ -55,11 +63,7 @@ impl BackgroundQuery {
         self.session.sync_checks(schema)
     }
 
-    pub(super) fn session(&self) -> &QuerySession {
-        &self.session
-    }
-
-    fn receive_outcome(&mut self) -> bool {
+    pub(super) fn receive_outcome(&mut self) -> bool {
         let Some(worker) = &self.worker else {
             return false;
         };
@@ -77,6 +81,10 @@ impl BackgroundQuery {
                 false
             }
         }
+    }
+
+    pub(super) fn session(&self) -> &QuerySession {
+        &self.session
     }
 }
 

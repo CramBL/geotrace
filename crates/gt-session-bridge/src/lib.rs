@@ -22,13 +22,17 @@ pub use crate::protocol::{
     CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
     Recording, RecordingReference, Recordings, Reply, Request, TimeRange, TrackReference,
 };
-pub use crate::query_validation::QueryValidation;
+pub use crate::query_job::{
+    QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
+};
+pub use crate::query_validation::{QueryPreparation, QueryValidation};
 
 mod endpoint;
 mod framing;
 mod inspection;
 mod metrics;
 mod protocol;
+mod query_job;
 mod query_validation;
 
 #[derive(Debug)]
@@ -89,17 +93,34 @@ impl Server {
         })
     }
 
-    pub fn dispatch(&mut self, files: LoadedFilesView<'_>, name_template: &str) {
+    /// Return true after a successful reply channel send.
+    pub fn dispatch(&mut self, execute: impl FnOnce(SessionRequest) -> Reply) -> bool {
         if let Ok(pending) = self.pending.try_recv()
             && !pending.reply.is_closed()
         {
-            let inspection = Inspection {
-                files,
-                name_template,
+            let request = SessionRequest {
+                request: pending.request,
                 session: self.session,
             };
-            drop(pending.reply.send(inspection.execute(pending.request)));
+            return pending.reply.send(execute(request)).is_ok();
         }
+        false
+    }
+}
+
+pub struct SessionRequest {
+    pub request: Request,
+    pub session: Uuid,
+}
+
+impl SessionRequest {
+    pub fn inspect(self, files: LoadedFilesView<'_>, name_template: &str) -> Reply {
+        Inspection {
+            files,
+            name_template,
+            session: self.session,
+        }
+        .execute(self.request)
     }
 }
 

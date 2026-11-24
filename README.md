@@ -165,6 +165,20 @@ The serialized request must fit in 4 KiB.
 Check fewer query blocks at a time if the request or its diagnostics exceed the bridge limits.
 For a single diagnostic that exceeds the reply limit, check that query in the GeoTrace editor.
 
+Submit the same `text` to `run_query` to start a background query job.
+GeoTrace evaluates the tracks enabled in the track tree and applies the current global filter, including its time window.
+The job has its own query text and results and leaves the Query window, query history, and map effects intact.
+A start request returns status `busy` and the active job identifier while a job is active.
+When GeoTrace can start a job, invalid or empty text returns the same validation result as `check_query`.
+
+Pass the returned `job` to `get_query_status` or `cancel_query`.
+GeoTrace passes the job identifier to the bridge before copying the selected track data.
+If the connection closes before the reply arrives, retry `run_query` to get the active identifier or start a new job.
+Poll until the status is `completed`, `cancelled`, `failed`, or `stale`.
+Completion reports the match, track, and skipped counts for each query block in input order.
+The status reports `stale` when the current recording data, filter, enabled tracks, or derived inputs differ from the run's inputs.
+GeoTrace retains one job until another query starts or the desktop session ends.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

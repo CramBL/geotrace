@@ -1,4 +1,4 @@
-use gt_query::{ChannelSchema, CheckedQuery, Span};
+use gt_query::{ChannelSchema, CheckedQuery, Diagnostic, Span};
 use gt_ui_types::QueryMatches;
 
 use crate::check::{self, QueryChunk};
@@ -19,6 +19,42 @@ pub enum CheckRefresh {
     TextChanged,
     /// Text and schema both unchanged, so the chunks were kept.
     Unchanged,
+}
+
+pub enum QueryTextCheck {
+    Empty,
+    Invalid,
+    Valid(CheckedQueryText),
+}
+
+pub struct CheckedQueryText {
+    text: String,
+    schema: ChannelSchema,
+    chunks: Vec<QueryChunk>,
+}
+
+impl CheckedQueryText {
+    /// Report diagnostics with byte spans in the full text. An error from the
+    /// callback stops validation before the next chunk.
+    pub fn check<E>(
+        text: String,
+        schema: ChannelSchema,
+        diagnose: impl FnMut(Diagnostic) -> Result<(), E>,
+    ) -> Result<QueryTextCheck, E> {
+        let Some(chunks) =
+            check::runnable_chunks(&text, check::check_chunks(&text, &schema), diagnose)?
+        else {
+            return Ok(QueryTextCheck::Invalid);
+        };
+        if chunks.is_empty() {
+            return Ok(QueryTextCheck::Empty);
+        }
+        Ok(QueryTextCheck::Valid(Self {
+            text,
+            schema,
+            chunks,
+        }))
+    }
 }
 
 /// How far a run in flight has come, for the progress line.
@@ -69,12 +105,6 @@ pub struct QuerySession {
     /// Sequence number the next completed run's matches carry. Starts at 1, so
     /// the map can read 0 as "no run".
     next_run: u64,
-}
-
-impl Default for QuerySession {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl QuerySession {
@@ -253,6 +283,30 @@ impl QuerySession {
     pub fn clear_results(&mut self) {
         self.completed = None;
         self.in_flight = None;
+    }
+}
+
+impl Default for QuerySession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<CheckedQueryText> for QuerySession {
+    fn from(
+        CheckedQueryText {
+            text,
+            schema,
+            chunks,
+        }: CheckedQueryText,
+    ) -> Self {
+        Self {
+            checked_text: text.clone(),
+            text,
+            checked_schema: schema,
+            chunks,
+            ..Self::new()
+        }
     }
 }
 
