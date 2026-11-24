@@ -8,7 +8,7 @@ use geotrace_sdk::{
     SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionState,
 };
 use gt_history::{
-    Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
+    Database, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, LogAttachment, LogAttachmentId,
     LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingMeta,
     StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
     TrackState,
@@ -2661,6 +2661,414 @@ fn set_tracks_replaces_the_table_and_settings() {
     assert_eq!(
         entry.shelved_tracks, 0,
         "the replacement clears the old shelved mark"
+    );
+}
+
+#[test_log::test]
+fn a_stored_track_snapshot_expires_after_a_track_table_or_recording_replacement() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open history");
+    let db_ref = insert_two_track(&mut db, "device", 1_000_000_000, 20);
+    let access = HistoryAccess::lock();
+    let initial = access
+        .read_track_snapshot(&db, &db_ref)
+        .expect("read tracks");
+
+    db.set_tracks_shelved(&db_ref, &[0], true).expect("shelve");
+    let shelved = access
+        .read_track_snapshot(&db, &db_ref)
+        .expect("read shelved tracks");
+    access
+        .verify_track_snapshot(&initial, &shelved)
+        .expect("same row ranges");
+
+    let merged = [TrackRange {
+        start: 0,
+        end: 20,
+        state: TrackState::Live,
+    }];
+    let settings = fixtures::default_segmentation();
+    db.set_tracks(&db_ref, &merged, settings)
+        .expect("merge tracks");
+    let updated = access
+        .read_track_snapshot(&db, &db_ref)
+        .expect("read merged track");
+    assert_eq!(updated.rows(), merged);
+    assert!(!initial.is_current());
+    assert!(matches!(
+        access.verify_track_snapshot(&initial, &updated),
+        Err(DbError::StoredTrackLayoutChanged)
+    ));
+    let updated = access
+        .replace_track_layout(&mut db, &initial, merged.to_vec(), settings)
+        .expect("recalculate the same payload again");
+
+    let other_directory = dir.path().join("nested");
+    fs::create_dir(&other_directory).expect("create subdirectory");
+    let alias = other_directory.join("../geotrace.h5");
+    let mut reopened = Database::open_or_create(&alias).expect("open the same history");
+    let bytes = make_gtd_bytes(2_000_000_000, 20);
+    let meta = gt_history::extract_meta(&bytes).expect("read replacement metadata");
+    reopened
+        .replace_recording_in_place(&db_ref, &meta, &merged, settings, &bytes)
+        .expect("replace the recording");
+    let (_, replacement) = access
+        .load_recording_with_snapshot(&db, &db_ref)
+        .expect("load the replaced recording");
+    assert_eq!(replacement.rows(), updated.rows());
+    assert!(!updated.is_current());
+    assert!(matches!(
+        access.verify_track_snapshot(&updated, &replacement),
+        Err(DbError::StoredTrackLayoutChanged)
+    ));
+    assert!(matches!(
+        access.replace_track_layout(&mut db, &initial, merged.to_vec(), settings),
+        Err(DbError::StoredTrackLayoutChanged)
+    ));
+}
+
+#[test_log::test]
+fn reusing_a_legacy_recording_address_leaves_its_old_snapshot_stale() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open history");
+    let first = insert_two_track(&mut db, "first", 1_000_000_000, 20);
+    let second = insert_two_track(&mut db, "second", 2_000_000_000, 20);
+    let legacy_group = "shared-legacy-group";
+    {
+        let file = NativeFile::open_rw(&db_path).expect("open fixture");
+        let identities = file.group("by_identity").expect("open identities");
+        for recording in [&first, &second] {
+            let group_name = gt_history::identity_group_name(&recording.identity);
+            let identity = identities.group(&group_name).expect("open identity");
+            identity
+                .relink(&recording.group_name, legacy_group)
+                .expect("relink recording");
+        }
+    }
+    let reused = DatabaseRef {
+        group_name: legacy_group.to_owned(),
+        ..first
+    };
+    let access = HistoryAccess::lock();
+    let old = access
+        .read_track_snapshot(&db, &reused)
+        .expect("read first recording");
+    db.rename_identity(&reused.identity, "third")
+        .expect("move first identity");
+    db.rename_identity(&second.identity, &reused.identity)
+        .expect("reuse first identity");
+    let new = access
+        .read_track_snapshot(&db, &reused)
+        .expect("read second recording");
+
+    assert_eq!(old.recording(), new.recording());
+    assert_eq!(old.rows(), new.rows());
+    assert!(!old.is_current());
+    assert!(matches!(
+        access.verify_track_snapshot(&old, &new),
+        Err(DbError::StoredTrackLayoutChanged)
+    ));
+}
+
+#[test_log::test]
+fn a_replacement_through_a_hard_link_invalidates_the_database_snapshot() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open history");
+    let recording = insert_two_track(&mut db, "device", 1_000_000_000, 20);
+    let alias = dir.path().join("linked.h5");
+    fs::hard_link(&db_path, &alias).expect("link the database");
+    let mut linked = Database::open_or_create(&alias).expect("open the link");
+    let access = HistoryAccess::lock();
+    let original = access
+        .read_track_snapshot(&db, &recording)
+        .expect("read tracks");
+    let bytes = make_gtd_bytes(2_000_000_000, 20);
+    let meta = gt_history::extract_meta(&bytes).expect("read replacement metadata");
+    linked
+        .replace_recording_in_place(
+            &recording,
+            &meta,
+            original.rows(),
+            fixtures::default_segmentation(),
+            &bytes,
+        )
+        .expect("replace the recording through the link");
+    let new = access
+        .read_track_snapshot(&db, &recording)
+        .expect("read replacement");
+    assert_eq!(original.rows(), new.rows());
+    assert!(!original.is_current());
+    assert!(matches!(
+        access.verify_track_snapshot(&original, &new),
+        Err(DbError::StoredTrackLayoutChanged)
+    ));
+}
+
+#[rstest]
+#[case::encoded_identity(true)]
+#[case::relative_recording_link(false)]
+fn aliases_cannot_replace_a_stored_recording(#[case] encoded_identity: bool) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open history");
+    let recording = insert_two_track(&mut db, "device", 1_000_000_000, 20);
+    let mut alias = recording.clone();
+    if encoded_identity {
+        alias.identity = gt_history::identity_group_name(&recording.identity);
+    } else {
+        alias.group_name = format!("./{}", recording.group_name);
+    }
+    let access = HistoryAccess::lock();
+    let original = access
+        .read_track_snapshot(&db, &recording)
+        .expect("read tracks");
+    access
+        .read_track_snapshot(&db, &alias)
+        .expect_err("reject the alias snapshot");
+    let bytes = make_gtd_bytes(2_000_000_000, 20);
+    let meta = gt_history::extract_meta(&bytes).expect("read replacement metadata");
+    assert!(
+        db.replace_recording_in_place(
+            &alias,
+            &meta,
+            original.rows(),
+            fixtures::default_segmentation(),
+            &bytes
+        )
+        .is_err()
+    );
+    let stored = access
+        .read_track_snapshot(&db, &recording)
+        .expect("read original");
+    access
+        .verify_track_snapshot(&original, &stored)
+        .expect("original recording stays current");
+    let entries = db.list_recordings().expect("list recordings");
+    let [entry] = entries.as_slice() else {
+        panic!("expected one recording");
+    };
+    assert_ne!(entry.meta.time_range, meta.time_range);
+}
+
+#[test_log::test]
+fn a_legacy_identity_with_an_encoded_spelling_resolves_by_its_declared_identity() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&path).expect("open history");
+    let identity = gt_history::identity_group_name("literal");
+    let recording = insert_two_track(&mut db, &identity, 1_000_000_000, 20);
+    {
+        let file = NativeFile::open_rw(&path).expect("open fixture");
+        let identities = file.group("by_identity").expect("open identities");
+        identities
+            .relink(&gt_history::identity_group_name(&identity), &identity)
+            .expect("store the legacy identity under its raw name");
+    }
+    let access = HistoryAccess::lock();
+    let original = access
+        .read_track_snapshot(&db, &recording)
+        .expect("read legacy tracks");
+    let decoded_alias = DatabaseRef {
+        identity: "literal".to_owned(),
+        ..recording.clone()
+    };
+    access
+        .read_track_snapshot(&db, &decoded_alias)
+        .expect_err("the decoded name identifies a different recording");
+    db.set_tracks(
+        &decoded_alias,
+        original.rows(),
+        fixtures::default_segmentation(),
+    )
+    .expect_err("the decoded name cannot update the legacy tracks");
+    let update = access
+        .replace_track_layout(
+            &mut db,
+            &original,
+            original.rows().to_vec(),
+            fixtures::default_segmentation(),
+        )
+        .expect("update legacy tracks");
+    assert!(!original.is_current());
+    assert_eq!(update.rows(), original.rows());
+
+    let second = insert_two_track(&mut db, &identity, 2_000_000_000, 20);
+    let file = NativeFile::open(&path).expect("read database");
+    let identities = file.group("by_identity").expect("open identities");
+    let raw = identities.group(&identity).expect("open raw identity");
+    assert!(raw.link_exists(&recording.group_name));
+    assert!(raw.link_exists(&second.group_name));
+    assert!(!identities.link_exists(&gt_history::identity_group_name(&identity)));
+}
+
+#[test_log::test]
+fn stored_recording_references_select_the_complete_address_in_mixed_layouts() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&path).expect("open history");
+    let identity = "device";
+    let encoded_name = gt_history::identity_group_name(identity);
+    let encoded = insert_two_track(&mut db, identity, 1_000_000_000, 20);
+    let raw = insert_two_track(&mut db, identity, 2_000_000_000, 20);
+    let old_path = format!("{encoded_name}/{}", raw.group_name);
+    let raw_path = format!("{identity}/{}", raw.group_name);
+    let encoded_path = format!("{encoded_name}/{}", encoded.group_name);
+    let duplicate_path = format!("{identity}/{}", encoded.group_name);
+    {
+        let file = NativeFile::open_rw(&path).expect("open fixture");
+        let identities = file.group("by_identity").expect("open identities");
+        identities
+            .create_group(identity)
+            .expect("create raw identity");
+        identities
+            .relink(&old_path, &raw_path)
+            .expect("move one recording");
+    }
+    let access = HistoryAccess::lock();
+    let entries = db.list_recordings().expect("list both recordings");
+    assert_eq!(entries.len(), 2);
+    for recording in [&encoded, &raw] {
+        assert!(entries.iter().any(|entry| &entry.db_ref == recording));
+        let initial = access
+            .read_track_snapshot(&db, recording)
+            .expect("read tracks");
+        db.set_tracks_shelved(recording, &[0], true)
+            .expect("shelve first track");
+        let modified = access
+            .read_track_snapshot(&db, recording)
+            .expect("read shelved track");
+        assert_eq!(modified.rows()[0].state, TrackState::Shelved);
+        access
+            .verify_track_snapshot(&initial, &modified)
+            .expect("same layout");
+    }
+    {
+        let file = NativeFile::open_rw(&path).expect("open fixture");
+        let identities = file.group("by_identity").expect("open identities");
+        identities
+            .link_hard(&encoded_path, &duplicate_path)
+            .expect("duplicate recording address");
+    }
+    for error in [
+        access
+            .read_track_snapshot(&db, &encoded)
+            .expect_err("ambiguous read"),
+        db.set_tracks_shelved(&encoded, &[0], false)
+            .expect_err("ambiguous shelf"),
+        db.delete_batch(&[raw.clone(), encoded])
+            .expect_err("ambiguous delete"),
+    ] {
+        assert!(
+            matches!(error, DbError::Backend(message) if message.contains("ambiguous stored recording"))
+        );
+    }
+    let file = NativeFile::open(&path).expect("read database");
+    let identities = file.group("by_identity").expect("open identities");
+    for recording_path in [&encoded_path, &duplicate_path, &raw_path] {
+        assert!(identities.link_exists(recording_path));
+    }
+}
+
+#[test_log::test]
+fn renaming_an_identity_checks_recording_addresses_in_both_destination_groups() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&path).expect("open history");
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let target = insert_two_track(&mut db, "target", 2_000_000_000, 20);
+    let legacy = insert_two_track(&mut db, &target.identity, 3_000_000_000, 20);
+    let encoded_name = gt_history::identity_group_name(&target.identity);
+    let old_path = format!("{encoded_name}/{}", legacy.group_name);
+    let legacy_address = DatabaseRef {
+        identity: target.identity.clone(),
+        group_name: source.group_name.clone(),
+    };
+    {
+        let file = NativeFile::open_rw(&path).expect("open fixture");
+        let identities = file.group("by_identity").expect("open identities");
+        identities
+            .create_group(&target.identity)
+            .expect("create raw identity");
+        identities
+            .relink(&old_path, &legacy_address.to_string())
+            .expect("move legacy recording");
+    }
+    let references = [&source, &target, &legacy_address];
+    let stored_time_range = |db: &Database, recording: &DatabaseRef| {
+        let bytes = db.load_bytes(recording).expect("read recording");
+        gt_history::extract_meta(&bytes)
+            .expect("read metadata")
+            .time_range
+    };
+    let before = references.map(|recording| stored_time_range(&db, recording));
+    let result = db.rename_identity(&source.identity, &target.identity);
+    assert!(matches!(result, Err(DbError::Backend(message)) if message.contains("exists in both")));
+    let after = references.map(|recording| stored_time_range(&db, recording));
+    assert_eq!(before, after);
+}
+
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn repairing_an_indexed_recording_invalidates_a_snapshot_at_the_same_address() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&path).expect("open history");
+    let replacement = insert_two_track(&mut db, "device", 2_000_000_000, 20);
+    let original = insert_two_track(&mut db, "other", 1_000_000_000, 20);
+    let source_path = |recording: &DatabaseRef| {
+        format!(
+            "by_identity/{}/{}",
+            gt_history::identity_group_name(&recording.identity),
+            recording.group_name,
+        )
+    };
+    let address = DatabaseRef {
+        group_name: "shared".to_owned(),
+        ..replacement.clone()
+    };
+    {
+        let file = NativeFile::open_rw(&path).expect("open fixture");
+        file.create_group("zz-unindexed")
+            .expect("create holding group");
+        file.relink(&source_path(&replacement), "zz-unindexed/shared")
+            .expect("move replacement outside the index");
+        file.relink(&source_path(&original), &source_path(&address))
+            .expect("move original under a different indexed identity");
+    }
+    let read_only = ReadOnlyDatabase::open_existing_read_only(&path).expect("open read only");
+    let access = HistoryAccess::lock();
+    let (before, snapshot) = access
+        .load_recording_with_snapshot(&read_only, &address)
+        .expect("read original");
+    db = Database::open_or_create(&path).expect("repair the index");
+    let (after, repaired) = access
+        .load_recording_with_snapshot(&db, &address)
+        .expect("read replacement");
+
+    assert_ne!(before.bytes, after.bytes);
+    assert_eq!(repaired.recording(), snapshot.recording());
+    assert_eq!(repaired.rows(), snapshot.rows());
+    assert!(!snapshot.is_current());
+    assert!(matches!(
+        access.verify_track_snapshot(&snapshot, &repaired),
+        Err(DbError::StoredTrackLayoutChanged),
+    ));
+}
+
+#[test_log::test]
+fn set_tracks_with_a_missing_recording_reports_an_error() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open history");
+    let recording = insert_two_track(&mut db, "device", 1_000_000_000, 20);
+    let missing = DatabaseRef {
+        group_name: "missing".to_owned(),
+        ..recording
+    };
+    assert!(
+        db.set_tracks(&missing, &[], fixtures::default_segmentation())
+            .is_err()
     );
 }
 

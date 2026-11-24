@@ -1,3 +1,4 @@
+use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -9,11 +10,11 @@ use gt_history_types::{
     GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR,
     GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
-    HIDDEN_TRACKS_DATASET, LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError,
-    NavPointTimeRange, RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState,
-    SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation,
-    StoredTrackSplitRule, StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET,
-    TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP,
+    HIDDEN_TRACKS_DATASET, HistoryAccess, LogAttachmentId, LogAttachmentListingEntry,
+    LogAttachmentReadError, NavPointTimeRange, RecordingDebugTag, RecordingEntry, RecordingMeta,
+    RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule, StoredRecording,
+    StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion, TRACK_END_DATASET,
+    TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP,
     UI_STATE_VERSION_ATTR, UiStateVersionReporter,
 };
 use hdf5::Group;
@@ -139,37 +140,76 @@ fn recording_identity(group: &Group) -> Option<String> {
 }
 
 fn identity_for_group(group: &Group, storage_name: &str) -> String {
-    read_group_string_attr(group, ATTR_IDENTITY)
-        .ok()
-        .or_else(|| gt_history_types::identity_from_group_name(storage_name))
-        .unwrap_or_else(|| storage_name.to_owned())
+    gt_history_types::stored_identity_for_group(
+        storage_name,
+        read_group_string_attr(group, ATTR_IDENTITY).ok(),
+    )
 }
 
 fn ensure_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
+    if let Some((_, group)) = find_identity_group(by_id, identity, None)? {
+        return Ok(group);
+    }
     let storage_name = gt_history_types::identity_group_name(identity);
     let id_grp = by_id
         .create_group(&storage_name)
         .or_else(|_| by_id.group(&storage_name))?;
+    if identity_for_group(&id_grp, &storage_name) != identity {
+        return Err(InternalError::Conflict(format!(
+            "the storage group for identity {identity:?} belongs to another identity"
+        )));
+    }
     if id_grp.attr(ATTR_IDENTITY).is_err() {
         write_string_attr(&id_grp, ATTR_IDENTITY, identity)?;
     }
     Ok(id_grp)
 }
 
-/// The name `by_identity` holds `identity` under: the encoded one, or the raw
-/// one a legacy database was written with.
-fn identity_storage_name(by_id: &Group, identity: &str) -> Option<String> {
-    let encoded = gt_history_types::identity_group_name(identity);
-    if by_id.link_exists(&encoded) {
-        return Some(encoded);
+pub(crate) fn find_identity_group(
+    by_id: &Group,
+    identity: &str,
+    recording_group: Option<&str>,
+) -> Result<Option<(String, Group)>, InternalError> {
+    let mut matching = gt_history_types::identity_group_candidates(identity).filter_map(|name| {
+        if !by_id.link_exists(&name) {
+            return None;
+        }
+        let group = by_id.group(&name).ok()?;
+        (identity_for_group(&group, &name) == identity
+            && recording_group.is_none_or(|recording| {
+                gt_history_types::is_history_link_name(recording)
+                    && group.link_exists(recording)
+                    && group.group(recording).is_ok()
+            }))
+        .then(|| (name.into_owned(), group))
+    });
+    let selected = matching.next();
+    if let Some(recording) = recording_group
+        && matching.next().is_some()
+    {
+        return Err(InternalError::Conflict(format!(
+            "ambiguous stored recording {identity:?}/{recording:?}"
+        )));
     }
-    (!identity.contains('/') && by_id.link_exists(identity)).then(|| identity.to_owned())
+    Ok(selected)
 }
 
-fn open_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
-    let storage_name = identity_storage_name(by_id, identity)
-        .unwrap_or_else(|| gt_history_types::identity_group_name(identity));
-    by_id.group(&storage_name).map_err(Into::into)
+fn open_identity_group(
+    by_id: &Group,
+    identity: &str,
+    recording_group: Option<&str>,
+) -> Result<Group, InternalError> {
+    find_identity_group(by_id, identity, recording_group)?
+        .map(|(_, group)| group)
+        .ok_or_else(|| {
+            let message = match recording_group {
+                Some(group) => {
+                    format!("no recording {identity:?}/{group:?} in the history database")
+                }
+                None => format!("no history identity {identity:?}"),
+            };
+            hdf5::Error::from(message).into()
+        })
 }
 
 /// Overwrite (or add) the `identity` string attribute on a group. The plain
@@ -209,27 +249,27 @@ pub(crate) fn rename_identity(
     let Ok(by_id) = file.group("by_identity") else {
         return Ok(());
     };
-    let Ok(src) = open_identity_group(&by_id, old) else {
+    let Some((source_name, src)) = find_identity_group(&by_id, old, None)? else {
         log::warn!("rename_identity: identity {old:?} not found");
         return Ok(());
     };
-    // Merge into an existing target, including a legacy raw-named group. A new
-    // group is created only when none exists.
-    let dst = match open_identity_group(&by_id, new) {
-        Ok(existing) => existing,
-        Err(_) => ensure_identity_group(&by_id, new)?,
-    };
-
+    let destination = find_identity_group(&by_id, new, None)?;
     let rec_names = src.member_names()?;
-    // Reject before touching anything if any recording would overwrite one under
-    // the destination (group names are UUID-suffixed, so unreachable in practice
-    // - but never silently drop data). The copy-then-unlink below is not atomic,
-    // so this must be checked up front.
-    if let Some(dup) = rec_names.iter().find(|name| dst.link_exists(name)) {
-        return Err(InternalError::Conflict(format!(
-            "cannot merge identity {old:?} into {new:?}: recording {dup:?} exists in both"
-        )));
+    for name in &rec_names {
+        if destination
+            .as_ref()
+            .is_some_and(|(_, group)| group.link_exists(name))
+            || find_identity_group(&by_id, new, Some(name))?.is_some()
+        {
+            return Err(InternalError::Conflict(format!(
+                "cannot merge identity {old:?} into {new:?}: recording {name:?} exists in both"
+            )));
+        }
     }
+    let dst = match destination {
+        Some((_, group)) => group,
+        None => ensure_identity_group(&by_id, new)?,
+    };
 
     for rec_name in &rec_names {
         let rec = src.group(rec_name)?;
@@ -239,12 +279,7 @@ pub(crate) fn rename_identity(
     }
 
     // Drop the now-vacated old identity group (under whichever name it existed).
-    let old_storage = gt_history_types::identity_group_name(old);
-    if by_id.link_exists(&old_storage) {
-        by_id.unlink(&old_storage)?;
-    } else if !old.contains('/') && by_id.link_exists(old) {
-        by_id.unlink(old)?;
-    }
+    by_id.unlink(&source_name)?;
 
     file.flush()?;
     log::info!("Renamed history identity {old:?} to {new:?}");
@@ -317,6 +352,14 @@ fn find_indexed_recording(
 
 pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
+    let mut invalidated = false;
+    let mut before_link_change = || {
+        if !invalidated {
+            HistoryAccess::lock().invalidate_database_snapshots(db_path)?;
+            invalidated = true;
+        }
+        Ok(())
+    };
 
     // Must run before the scan below: that scan would otherwise take a stage
     // for a recording stored outside `by_identity` and file it under the
@@ -325,7 +368,7 @@ pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), Internal
     if let Ok(meta_grp) = file.group("meta") {
         for name in meta_grp.member_names()? {
             if name.starts_with(REPLACEMENT_STAGE_PREFIX) {
-                resolve_replacement_stage(&file, &name)?;
+                resolve_replacement_stage(&file, &name, &mut before_link_change)?;
                 resolved_stages += 1;
             }
         }
@@ -366,6 +409,7 @@ pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), Internal
         };
 
         if let Some(existing) = find_indexed_recording(&file, &meta)? {
+            before_link_change()?;
             file.unlink(&path)?;
             removed_duplicates += 1;
             log::warn!(
@@ -376,8 +420,8 @@ pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), Internal
             continue;
         }
 
-        let id_grp = ensure_identity_group(&by_id, &identity)?;
-        if id_grp.link_exists(rec_name) {
+        if find_identity_group(&by_id, &identity, Some(rec_name))?.is_some() {
+            before_link_change()?;
             file.unlink(&path)?;
             removed_duplicates += 1;
             log::warn!(
@@ -386,6 +430,8 @@ pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), Internal
             continue;
         }
 
+        let id_grp = ensure_identity_group(&by_id, &identity)?;
+        before_link_change()?;
         rec_grp.copy_to(&id_grp, rec_name)?;
         file.unlink(&path)?;
         repaired += 1;
@@ -752,7 +798,11 @@ pub(crate) fn insert_recording(
 /// interrupted between the unlink and the relink: the stage is linked in under
 /// the recording's own name, and the recording is stored as the re-encode left
 /// it.
-fn resolve_replacement_stage(file: &hdf5::File, stage_name: &str) -> Result<(), InternalError> {
+fn resolve_replacement_stage(
+    file: &hdf5::File,
+    stage_name: &str,
+    before_link_change: impl FnOnce() -> io::Result<()>,
+) -> Result<(), InternalError> {
     let Some(group_name) = stage_name.strip_prefix(REPLACEMENT_STAGE_PREFIX) else {
         return Ok(());
     };
@@ -765,16 +815,16 @@ fn resolve_replacement_stage(file: &hdf5::File, stage_name: &str) -> Result<(), 
         return meta_grp.unlink(stage_name).map_err(Into::into);
     };
 
-    let identity_name = identity_storage_name(&by_id, &identity)
-        .unwrap_or_else(|| gt_history_types::identity_group_name(&identity));
-    let id_grp = match by_id.group(&identity_name) {
-        Ok(id_grp) => id_grp,
-        Err(_) => ensure_identity_group(&by_id, &identity)?,
-    };
-    if id_grp.link_exists(group_name) {
+    if find_identity_group(&by_id, &identity, Some(group_name))?.is_some() {
         return meta_grp.unlink(stage_name).map_err(Into::into);
     }
-
+    let identity_name = if let Some((name, _)) = find_identity_group(&by_id, &identity, None)? {
+        name
+    } else {
+        ensure_identity_group(&by_id, &identity)?;
+        gt_history_types::identity_group_name(&identity)
+    };
+    before_link_change()?;
     file.relink(
         &format!("meta/{stage_name}"),
         &format!("by_identity/{identity_name}/{group_name}"),
@@ -809,19 +859,19 @@ pub(crate) fn replace_recording(
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
-    let identity_name = identity_storage_name(&by_id, &db_ref.identity)
-        .unwrap_or_else(|| gt_history_types::identity_group_name(&db_ref.identity));
-    let id_grp = by_id.group(&identity_name)?;
     let meta_grp = file.group("meta").or_else(|_| file.create_group("meta"))?;
-
     let stage_name = format!("{REPLACEMENT_STAGE_PREFIX}{}", db_ref.group_name);
-    let stage_path = format!("meta/{stage_name}");
-    let recording_path = format!("by_identity/{identity_name}/{}", db_ref.group_name);
-
     if meta_grp.link_exists(&stage_name) {
-        resolve_replacement_stage(&file, &stage_name)?;
+        resolve_replacement_stage(&file, &stage_name, || {
+            HistoryAccess::lock().invalidate_database_snapshots(db_path)
+        })?;
     }
 
+    let (identity_name, id_grp) =
+        find_identity_group(&by_id, &db_ref.identity, Some(&db_ref.group_name))?
+            .ok_or_else(|| hdf5::Error::from(format!("no history recording {db_ref}")))?;
+    let stage_path = format!("meta/{stage_name}");
+    let recording_path = format!("by_identity/{identity_name}/{}", db_ref.group_name);
     let rec_grp = id_grp.group(&db_ref.group_name)?;
 
     let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or_else(|| Path::new(".")))?;
@@ -1248,7 +1298,7 @@ pub(crate) fn load_recording(
     let (tracks, segmentation, debug_tag) = {
         let db = hdf5::File::open(db_path)?;
         let by_id = db.group("by_identity")?;
-        let id_grp = open_identity_group(&by_id, identity)?;
+        let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
         let rec_grp = id_grp.group(group_name)?;
 
         let tracks = stored_track_table(&rec_grp).unwrap_or_default();
@@ -1304,7 +1354,7 @@ pub(crate) fn set_tracks(
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, identity)?;
+    let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
     write_track_table(&rec_grp, tracks)?;
     write_segmentation_attrs(&rec_grp, settings)?;
@@ -1325,7 +1375,7 @@ pub(crate) fn set_snap_blob(
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, identity)?;
+    let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
     if rec_grp.link_exists(SNAP_GROUP) {
         rec_grp.unlink(SNAP_GROUP)?;
@@ -1346,7 +1396,7 @@ pub(crate) fn snap_blob(
 ) -> Result<Option<Vec<u8>>, InternalError> {
     let file = hdf5::File::open(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, identity)?;
+    let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
     let Ok(grp) = rec_grp.group(SNAP_GROUP) else {
         return Ok(None);
@@ -1366,7 +1416,7 @@ pub(crate) fn recording_ui_state(
 ) -> Result<RecordingUiState, InternalError> {
     let file = hdf5::File::open(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, &db_ref.identity)?;
+    let id_grp = open_identity_group(&by_id, &db_ref.identity, Some(&db_ref.group_name))?;
     let rec_grp = id_grp.group(&db_ref.group_name)?;
     let Ok(grp) = rec_grp.group(UI_STATE_GROUP) else {
         return Ok(RecordingUiState::default());
@@ -1398,7 +1448,9 @@ pub(crate) fn set_recording_ui_state(
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
-    let Ok(id_grp) = open_identity_group(&by_id, &db_ref.identity) else {
+    let Some((_, id_grp)) =
+        find_identity_group(&by_id, &db_ref.identity, Some(&db_ref.group_name))?
+    else {
         return Ok(());
     };
     let Ok(rec_grp) = id_grp.group(&db_ref.group_name) else {
@@ -1458,7 +1510,7 @@ pub(crate) fn stored_track_table_of_recording(
 ) -> Result<Vec<TrackRange>, InternalError> {
     let file = hdf5::File::open(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, identity)?;
+    let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
     Ok(stored_track_table(&rec_grp).unwrap_or_default())
 }
@@ -1472,7 +1524,7 @@ pub(crate) fn log_attachments(
 ) -> Result<Vec<LogAttachmentListingEntry>, InternalError> {
     let file = hdf5::File::open(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, identity)?;
+    let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
     let attr_names = rec_grp.attr_names()?;
     Ok(log_attachments_in_attrs(&rec_grp, attr_names))
@@ -1515,7 +1567,7 @@ pub(crate) fn set_log_attachment_attribute(
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, identity)?;
+    let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
 
     let key = id.attr_key();
@@ -1535,9 +1587,8 @@ pub(crate) fn delete_log_attachment_attribute(
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
-    let recording = open_identity_group(&by_id, identity)
-        .ok()
-        .and_then(|id_grp| id_grp.group(group_name).ok());
+    let recording = find_identity_group(&by_id, identity, Some(group_name))?
+        .and_then(|(_, id_grp)| id_grp.group(group_name).ok());
     let Some(rec_grp) = recording else {
         log::warn!(
             "Removing log attachment {id} from {identity}/{group_name}, which is not in the database"
@@ -1580,7 +1631,7 @@ pub(crate) fn set_tracks_shelved(
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
-    let id_grp = open_identity_group(&by_id, identity)?;
+    let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
     let Some(mut tracks) = stored_track_table(&rec_grp) else {
         log::warn!("Shelving tracks of {identity}/{group_name}, which has no track table");
@@ -1610,10 +1661,7 @@ pub(crate) fn contains_recording(
     let Ok(by_id) = file.group("by_identity") else {
         return Ok(false);
     };
-    let Ok(id_grp) = open_identity_group(&by_id, identity) else {
-        return Ok(false);
-    };
-    Ok(id_grp.link_exists(group_name))
+    Ok(find_identity_group(&by_id, identity, Some(group_name))?.is_some())
 }
 
 pub(crate) fn list_recordings(
