@@ -206,12 +206,18 @@ impl SettingsAutosaver {
     ///
     /// The caller is responsible for performing the actual flush.
     pub fn take_flush(&mut self) -> bool {
-        const DEBOUNCE: Duration = Duration::from_millis(500);
-        if self.dirty && self.last_changed.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
+        if self.time_until_flush() == Some(Duration::ZERO) {
             self.dirty = false;
             true
         } else {
             false
         }
+    }
+
+    pub fn time_until_flush(&self) -> Option<Duration> {
+        const DEBOUNCE: Duration = Duration::from_millis(500);
+        self.last_changed
+            .filter(|_| self.dirty)
+            .map(|changed| DEBOUNCE.saturating_sub(changed.elapsed()))
     }
 }

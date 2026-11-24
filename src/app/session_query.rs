@@ -11,6 +11,7 @@ use super::App;
 use super::query_run::{BackgroundQuery, CapturedQueryInputs, QuerySeries};
 use super::session_map::MapPresentation;
 use super::session_plot::PlotPresentation;
+use super::settings_ui::SettingChange;
 
 #[derive(Default)]
 pub(super) struct SessionQuery {
@@ -134,6 +135,7 @@ struct StagedSessionChanges {
     plot: Option<PlotPresentation>,
     query_draft: Option<String>,
     open_setting: Option<SettingKey>,
+    setting_change: Option<SettingChange>,
 }
 
 impl StagedSessionChanges {
@@ -313,6 +315,9 @@ impl App {
         if let Some(key) = staged.open_setting {
             self.pending_session_setting = Some(key);
         }
+        if let Some(change) = staged.setting_change {
+            self.apply_setting_change(change);
+        }
     }
 
     fn execute_session_request(
@@ -356,6 +361,12 @@ impl App {
                 args.text,
                 &mut staged.job,
             ),
+            Request::SetSetting(args) => {
+                self.prepare_setting_change(args).map(|(setting, change)| {
+                    staged.setting_change = change;
+                    Reply::Setting { setting }
+                })
+            }
             Request::ShowOnMap(args) => self
                 .session_show_on_map(&mut queries, request.session, args)
                 .map(|presentation| staged.queue_map(presentation)),

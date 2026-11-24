@@ -45,6 +45,23 @@ pub enum ProcessingSettingKey {
     TrackSplitGap,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SetSetting {
+    pub key: SettingKey,
+    pub value: SettingInput,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[expect(variant_size_differences, reason = "Both variants fit in 16 bytes")]
+#[serde(untagged)]
+pub enum SettingInput {
+    Boolean(bool),
+    Number(f64),
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]

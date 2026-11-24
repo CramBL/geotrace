@@ -14,9 +14,9 @@ use crate::metrics::Metrics;
 use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
-use crate::settings::{SettingInfo, SettingSelection};
+use crate::settings::{SetSetting, SettingInfo, SettingSelection};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     CancelQuery(QueryJobRequest),
@@ -34,6 +34,7 @@ pub enum Request {
     OpenQuery(QueryText),
     OpenSetting(SettingSelection),
     RunQuery(QueryText),
+    SetSetting(SetSetting),
     ShowOnMap(ShowOnMap),
     ShowOnPlot(ShowOnPlot),
 }
@@ -235,11 +236,14 @@ impl From<ErrorCode> for Reply {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Busy,
+    InactiveSetting,
     InvalidPlotMetric,
     InvalidPoint,
     InvalidQueryCursor,
     InvalidRange,
     InvalidRequest,
+    InvalidSettingType,
+    InvalidSettingValue,
     NoVisibleMapGeometry,
     NoVisiblePlotTime,
     QueryColumnsTooLarge,

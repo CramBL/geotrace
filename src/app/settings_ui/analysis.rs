@@ -7,7 +7,8 @@ use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use gt_session_bridge::{
-    AnalysisSettingKey, SettingApply, SettingInfo, SettingKey, SettingUnit, SettingValue,
+    AnalysisSettingKey, ErrorCode, SettingApply, SettingInfo, SettingInput, SettingKey,
+    SettingUnit, SettingValue,
 };
 
 use crate::app::App;
@@ -43,7 +44,7 @@ impl App {
         }
     }
 
-    fn apply_analysis_controls(&mut self, values: AnalysisSettings) {
+    pub(super) fn apply_analysis_controls(&mut self, values: AnalysisSettings) {
         let analysis = values.plot_config();
         self.loader.analysis_config = analysis;
         let markers = &mut self.processing_config.generated_markers;
@@ -79,12 +80,12 @@ impl AnalysisControl {
                        edge of the view and excludes them from the clock offset line. The line \
                        includes sustained shifts in the baseline.",
                 apply: SettingApply::LiveWithDeferredMarkers,
-                input: AnalysisInput::Number {
+                input: AnalysisInput::Number(AnalysisNumber {
                     field: |values| &mut values.clock_excursion_threshold_s,
                     range: gt_plot::CLOCK_EXCURSION_THRESHOLD_RANGE_S,
                     unit: SettingUnit::Seconds,
                     speed: 1.0,
-                },
+                }),
             },
             AnalysisSettingKey::ElevationMask => Self {
                 key,
@@ -94,12 +95,12 @@ impl AnalysisControl {
                        A higher mask excludes more satellites near the horizon, where atmospheric \
                        delay and multipath are more common.",
                 apply: SettingApply::LiveWithDeferredMarkers,
-                input: AnalysisInput::Number {
+                input: AnalysisInput::Number(AnalysisNumber {
                     field: |values| &mut values.elevation_mask_deg,
                     range: 0.0..=90.0,
                     unit: SettingUnit::Degrees,
                     speed: 1.0,
-                },
+                }),
             },
             AnalysisSettingKey::MarkBackwardTimeSteps => Self {
                 key,
@@ -128,12 +129,12 @@ impl AnalysisControl {
                 help: "The plot divides the number of slips in this trailing window by its \
                        duration, in slips per minute.",
                 apply: SettingApply::Live,
-                input: AnalysisInput::Number {
+                input: AnalysisInput::Number(AnalysisNumber {
                     field: |values| &mut values.slip_window_min,
                     range: 1.0..=120.0,
                     unit: SettingUnit::Minutes,
                     speed: 1.0,
-                },
+                }),
             },
             AnalysisSettingKey::SnrDropThreshold => Self {
                 key,
@@ -143,27 +144,45 @@ impl AnalysisControl {
                        a slip when the receiver still tracks the satellite at or above the \
                        elevation mask.",
                 apply: SettingApply::LiveWithDeferredMarkers,
-                input: AnalysisInput::Number {
+                input: AnalysisInput::Number(AnalysisNumber {
                     field: |values| &mut values.snr_drop_db,
                     range: 1.0..=60.0,
                     unit: SettingUnit::DecibelHertz,
                     speed: 0.5,
-                },
+                }),
             },
+        }
+    }
+
+    pub(super) fn set(
+        &self,
+        values: &mut AnalysisSettings,
+        input: SettingInput,
+    ) -> Result<bool, ErrorCode> {
+        match (&self.input, input) {
+            (AnalysisInput::Number(number), SettingInput::Number(value)) => {
+                if !number.range().contains(&value) {
+                    return Err(ErrorCode::InvalidSettingValue);
+                }
+                Ok(number.write(values, value))
+            }
+            (AnalysisInput::Toggle(field), SettingInput::Boolean(value)) => {
+                Ok(std::mem::replace(field(values), value) != value)
+            }
+            _ => Err(ErrorCode::InvalidSettingType),
         }
     }
 
     pub(super) fn describe(&self, mut values: AnalysisSettings) -> SettingInfo {
         let value = match &self.input {
-            AnalysisInput::Number {
-                field, range, unit, ..
-            } => {
-                let number = *field(&mut values);
+            AnalysisInput::Number(number) => {
+                let value = f64::from(*(number.field)(&mut values));
+                let range = number.range();
                 SettingValue::Number {
-                    value: number.is_finite().then_some(f64::from(number)),
-                    minimum: f64::from(*range.start()),
-                    maximum: f64::from(*range.end()),
-                    unit: *unit,
+                    value: value.is_finite().then_some(value),
+                    minimum: *range.start(),
+                    maximum: *range.end(),
+                    unit: number.unit,
                 }
             }
             AnalysisInput::Toggle(field) => SettingValue::Boolean {
@@ -182,54 +201,68 @@ impl AnalysisControl {
 }
 
 enum AnalysisInput {
-    Number {
-        field: fn(&mut AnalysisSettings) -> &mut f32,
-        range: RangeInclusive<f32>,
-        unit: SettingUnit,
-        speed: f64,
-    },
+    Number(AnalysisNumber),
     Toggle(fn(&mut AnalysisSettings) -> &mut bool),
 }
 
 impl AnalysisInput {
     fn show(&self, ui: &mut egui::Ui, values: &mut AnalysisSettings) -> (egui::Response, bool) {
         match self {
-            Self::Number {
-                field,
-                range,
-                unit,
-                speed,
-            } => {
-                let value = field(values);
-                let initial = value.to_bits();
-                let suffix = match unit {
-                    SettingUnit::DecibelHertz => " dB-Hz",
-                    SettingUnit::Degrees => "°",
-                    SettingUnit::Minutes => "min",
-                    SettingUnit::Seconds => "s",
-                    SettingUnit::RobustStandardDeviations => "σ",
-                };
-                let response = ui.add(
-                    DragValue::from_get_set(|new| {
-                        if let Some(new) = new.filter(|new| new.is_finite()) {
-                            *value = (new as f32).clamp(*range.start(), *range.end());
-                        }
-                        f64::from(*value)
-                    })
-                    .range(range.clone())
-                    .clamp_existing_to_range(false)
-                    .speed(*speed)
-                    .fixed_decimals(0)
-                    .suffix(suffix),
-                );
-                (response, value.to_bits() != initial)
-            }
+            Self::Number(number) => number.show(ui, values),
             Self::Toggle(field) => {
                 let response = ui.checkbox(field(values), "");
                 let changed = response.changed();
                 (response, changed)
             }
         }
+    }
+}
+
+struct AnalysisNumber {
+    field: fn(&mut AnalysisSettings) -> &mut f32,
+    range: RangeInclusive<f32>,
+    unit: SettingUnit,
+    speed: f64,
+}
+
+impl AnalysisNumber {
+    fn show(&self, ui: &mut egui::Ui, values: &mut AnalysisSettings) -> (egui::Response, bool) {
+        let initial = (self.field)(values).to_bits();
+        let suffix = match self.unit {
+            SettingUnit::DecibelHertz => " dB-Hz",
+            SettingUnit::Degrees => "°",
+            SettingUnit::Minutes => "min",
+            SettingUnit::RobustStandardDeviations => "σ",
+            SettingUnit::Seconds => "s",
+        };
+        let range = self.range();
+        let response = ui.add(
+            DragValue::from_get_set(|new| {
+                if let Some(new) = new.filter(|new| new.is_finite()) {
+                    self.write(values, new.clamp(*range.start(), *range.end()));
+                }
+                f64::from(*(self.field)(values))
+            })
+            .range(range.clone())
+            .clamp_existing_to_range(false)
+            .speed(self.speed)
+            .fixed_decimals(0)
+            .suffix(suffix),
+        );
+        (response, (self.field)(values).to_bits() != initial)
+    }
+
+    fn range(&self) -> RangeInclusive<f64> {
+        f64::from(*self.range.start())..=f64::from(*self.range.end())
+    }
+
+    fn write(&self, values: &mut AnalysisSettings, value: f64) -> bool {
+        let value = value as f32;
+        let current = (self.field)(values);
+        if *current == 0.0 && value == 0.0 {
+            return false;
+        }
+        std::mem::replace(current, value).to_bits() != value.to_bits()
     }
 }
 

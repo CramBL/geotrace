@@ -9,8 +9,9 @@ use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
 use egui_phosphor::regular::SUN as ICON_SUN;
 use egui_phosphor::regular::WAVES as ICON_WAVES;
 use gt_map::MapLayer;
-use gt_session_bridge::{SettingInfo, SettingKey};
+use gt_session_bridge::{ErrorCode, SetSetting, SettingInfo, SettingKey};
 use gt_store::EnvironmentArchive;
+use gt_track_builder::SegmentationConfig;
 use strum::{EnumIter, IntoEnumIterator};
 
 use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
@@ -33,6 +34,12 @@ mod snap;
 mod solar_flares;
 mod source_page;
 mod tec;
+
+#[derive(Clone, Copy)]
+pub(super) enum SettingChange {
+    Analysis(AnalysisSettings),
+    Processing(SegmentationConfig),
+}
 
 /// One category of the settings window, in the order the rail lists them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, EnumIter)]
@@ -137,6 +144,15 @@ impl App {
         self.setting_to_reveal = Some(key);
     }
 
+    pub(super) fn apply_setting_change(&mut self, change: SettingChange) {
+        match change {
+            SettingChange::Analysis(values) => self.apply_analysis_controls(values),
+            SettingChange::Processing(config) => self.processing_config = config,
+        }
+        self.sync_settings_autosave();
+        self.ctx.request_repaint();
+    }
+
     /// What a download control may do right now. An archive still opening or
     /// one that could not be opened outranks offline mode: there is nowhere
     /// to download to either way.
@@ -228,6 +244,32 @@ impl App {
                 .describe(AnalysisSettings::from(&self.shared.borrow().plot_state)),
             SettingKey::Processing(key) => {
                 ProcessingControl::for_key(key).describe(self.processing_config)
+            }
+        }
+    }
+
+    pub(super) fn prepare_setting_change(
+        &self,
+        SetSetting { key, value }: SetSetting,
+    ) -> Result<(SettingInfo, Option<SettingChange>), ErrorCode> {
+        match key {
+            SettingKey::Analysis(key) => {
+                let control = analysis::AnalysisControl::for_key(key);
+                let mut values = AnalysisSettings::from(&self.shared.borrow().plot_state);
+                let changed = control.set(&mut values, value)?;
+                Ok((
+                    control.describe(values),
+                    changed.then_some(SettingChange::Analysis(values)),
+                ))
+            }
+            SettingKey::Processing(key) => {
+                let control = ProcessingControl::for_key(key);
+                let mut config = self.processing_config;
+                let changed = control.set(&mut config, value)?;
+                Ok((
+                    control.describe(config),
+                    changed.then_some(SettingChange::Processing(config)),
+                ))
             }
         }
     }

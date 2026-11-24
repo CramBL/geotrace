@@ -61,6 +61,7 @@ impl PendingTrackDataDetach {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.dispatch_session_request(ctx);
+        self.drive_settings_autosave(ctx);
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
@@ -164,12 +165,8 @@ impl eframe::App for App {
 
         self.toasts.show(ui.ctx());
 
-        // Detect settings changes and trigger a debounced write-through.
-        let snapshot = self.collect_snapshot();
-        self.config.sync(snapshot);
-        if self.config.take_flush() {
-            self.flush_settings();
-        }
+        self.sync_settings_autosave();
+        self.drive_settings_autosave(ui.ctx());
 
         // Process the current input before replacing the editor text.
         if let Some(text) = self.pending_session_query_draft.take() {
