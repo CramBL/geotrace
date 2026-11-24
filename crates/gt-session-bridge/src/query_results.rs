@@ -61,9 +61,6 @@ impl QueryResults {
         files: LoadedFilesView<'_>,
         args: GetQueryResults,
     ) -> Result<Self, ErrorCode> {
-        if results.stale() {
-            return Err(ErrorCode::StaleQueryResults);
-        }
         let query = ResultQuery::select(results, args.query)?;
         let (columns, page) = match args.page {
             QueryPageRequest::Matches { start } => query.matches(files, args, start)?,
@@ -82,6 +79,31 @@ impl QueryResults {
             },
             columns,
             page,
+        })
+    }
+}
+
+pub struct PointQueryMatch {
+    pub track: TrackRef,
+    pub points: Range<usize>,
+}
+
+impl PointQueryMatch {
+    pub fn resolve(
+        results: &RunResults,
+        files: LoadedFilesView<'_>,
+        query: usize,
+        position: QueryMatchPosition,
+    ) -> Result<Self, ErrorCode> {
+        let query = ResultQuery::select(results, query)?;
+        let track = query.track(files, position.track_ordinal)?;
+        let matched = track.matched(position)?;
+        if matches!(track.source, MatchSource::Channel { .. }) {
+            return Err(ErrorCode::QueryMatchIsChannel);
+        }
+        Ok(Self {
+            track: track.track,
+            points: matched.rows.clone(),
         })
     }
 }
@@ -189,6 +211,9 @@ enum ResultQuery<'a> {
 
 impl<'a> ResultQuery<'a> {
     fn select(results: &'a RunResults, query: usize) -> Result<Self, ErrorCode> {
+        if results.stale() {
+            return Err(ErrorCode::StaleQueryResults);
+        }
         match results {
             RunResults::Channel(channel) if query == 0 => Ok(Self::Channel(channel)),
             RunResults::Channel(_) => Err(ErrorCode::InvalidQueryCursor),

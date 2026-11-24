@@ -5,10 +5,10 @@ use egui_kittest::Harness;
 use gt_loaded_files::FileHistory;
 use gt_query::Unit;
 use gt_session_bridge::{
-    CheckQuery, ErrorCode, GetQueryResults, QueryCounts, QueryJobId, QueryJobRequest,
+    CheckQuery, ErrorCode, GetQueryResults, MapTarget, QueryCounts, QueryJobId, QueryJobRequest,
     QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest,
     QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResultValue,
-    QueryResults, QueryValidation, Reply, Request, SessionRequest,
+    QueryResults, QueryValidation, Reply, Request, SessionRequest, ShowOnMap,
 };
 use gt_test_utils::HarnessInteraction as _;
 use gt_test_utils::fixtures;
@@ -362,6 +362,19 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         ))
     );
     self::assert_channel_rows(&mut harness, request, &matches[0]);
+    assert_eq!(
+        self::execute(
+            &mut harness,
+            Request::ShowOnMap(ShowOnMap {
+                target: MapTarget::QueryMatch {
+                    job,
+                    query: 0,
+                    matched: matches[0].position,
+                },
+            }),
+        ),
+        ErrorCode::QueryMatchIsChannel.into()
+    );
 
     harness
         .state_mut()

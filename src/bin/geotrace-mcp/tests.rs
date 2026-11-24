@@ -273,6 +273,13 @@ async fn assert_map_tools_queue_presentation(client: &mut Client) {
             "show_on_map",
             json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}}),
         ),
+        (
+            "show_on_map",
+            json!({"target": {
+                "kind": "query_match", "job": self::query_job_id(), "query": 1,
+                "matched": {"track_ordinal": 2, "match_ordinal": 3}
+            }}),
+        ),
     ];
     for (index, (name, arguments)) in commands.into_iter().enumerate() {
         let presented = client
@@ -299,6 +306,18 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                     end: Some(2),
                 },
         }) if track == self::track_reference() => Ok(Reply::MapPresentationQueued),
+        Request::ShowOnMap(ShowOnMap {
+            target:
+                MapTarget::QueryMatch {
+                    job,
+                    query: 1,
+                    matched:
+                        QueryMatchPosition {
+                            track_ordinal: 2,
+                            match_ordinal: 3,
+                        },
+                },
+        }) if job == self::query_job_id() => Ok(Reply::MapPresentationQueued),
         Request::GetQueryResults(GetQueryResults {
             job,
             query: 0,

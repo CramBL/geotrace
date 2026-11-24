@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::inspection::{RangeDetails, RecordingDetails, TrackDetails};
 use crate::metrics::Metrics;
-use crate::query_job::{QueryJobRequest, QueryJobStatus};
-use crate::query_results::{GetQueryResults, QueryResults};
+use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
+use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,6 +50,11 @@ pub struct ShowOnMap {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MapTarget {
+    QueryMatch {
+        job: QueryJobId,
+        query: usize,
+        matched: QueryMatchPosition,
+    },
     Track {
         track: TrackReference,
         start: Option<usize>,
@@ -200,6 +205,7 @@ pub enum ErrorCode {
     NoVisibleMapGeometry,
     QueryColumnsTooLarge,
     QueryJobNotFound,
+    QueryMatchIsChannel,
     QueryNotComplete,
     QueryResultsUnavailable,
     RecordingNotFound,

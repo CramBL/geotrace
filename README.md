@@ -197,6 +197,8 @@ Column metadata that exceeds 64 KiB causes a size error.
 
 Pass a `target` with `kind` set to `track` and a checked `track` reference to `show_on_map` to frame and highlight its visible path.
 Set `target.start` and `target.end` for a half-open range of original point indices, or omit them for the whole track.
+To frame a retained point-query match, pass a `target` with `kind` set to `query_match`, the same `job` and `query` used in `get_query_results`, and the match's `position` as `target.matched`.
+Channel sample ranges produce an error.
 Range highlighting uses the map's Query highlights setting.
 Pass a `track` and a zero-based `point` index to `open_point` to center the map and open point information.
 Both tools use the current filters and visibility and report an error for a target with no visible geometry.
@@ -205,6 +207,7 @@ GeoTrace applies the request when the map next draws if the recording, filter, q
 A later camera request supersedes a queued request.
 A later pin change supersedes a queued point request.
 Use Query highlights to hide or show an active range.
+GeoTrace clears a `show_on_map` match highlight when its job becomes stale or another job replaces it.
 
 ## Network access
 
