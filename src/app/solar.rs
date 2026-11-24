@@ -26,7 +26,7 @@ use gt_store::{
     ArchiveUsage, DayArchiveError as _, EnvironmentArchive, GeomagneticIndexArchive,
     ReadOnlySolarStore, SolarStore, SolarStoreError, WritableArchive,
 };
-use gt_types::{LoadedTrack, TimeRange, TrackRef};
+use gt_types::{Generation, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
     GeomagneticContextLines, GeomagneticPoint, GeomagneticSeries, IndexContextSample,
 };
@@ -40,7 +40,7 @@ use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::space_weather_warning::{self, ArchivedIndexPeriod, GeomagneticActivityBeforePeak};
-use super::track_day_values::TrackValuesByArchivedDays;
+use super::track_day_values::{ArchivedTrackValues, TrackValuesByArchivedDays};
 use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
@@ -53,12 +53,18 @@ enum IndexDayMessage {
         hp30_samples: usize,
     },
     Unarchived(UnarchivedDay),
+    WriteFailed {
+        day: NaiveDate,
+        committed_kp_samples: Option<usize>,
+        index: GeomagneticIndex,
+        error: SolarStoreError,
+    },
 }
 
 impl IndexDayMessage {
     fn day(&self) -> NaiveDate {
         match self {
-            Self::Stored { day, .. } => *day,
+            Self::Stored { day, .. } | Self::WriteFailed { day, .. } => *day,
             Self::Unarchived(unarchived) => unarchived.day(),
         }
     }
@@ -138,6 +144,7 @@ impl GeomagneticIndexScheduler {
     /// Take an opened archive, reading the days it already holds.
     pub fn adopt_store(&mut self, store: Option<GeomagneticIndexArchive>) {
         self.store = store;
+        self.plot_points = TrackValuesByArchivedDays::default();
         self.archived_days = BTreeSet::new();
         self.read_the_day_index();
     }
@@ -264,11 +271,9 @@ impl GeomagneticIndexScheduler {
                     kp_samples,
                     hp30_samples,
                 } => {
+                    self.invalidate_day_values(day);
                     self.archived_days.insert(day);
                     self.days.mark_archived(day);
-                    self.hp30_context.forget(day);
-                    self.kp_context.forget(day);
-                    self.forget_windows_reading(day);
                     if kp_samples + hp30_samples == 0 {
                         log::info!("The service published no geomagnetic indices for {day}");
                     } else {
@@ -277,12 +282,35 @@ impl GeomagneticIndexScheduler {
                         );
                     }
                 }
+                IndexDayMessage::WriteFailed {
+                    day,
+                    committed_kp_samples,
+                    index,
+                    error,
+                } => {
+                    self.invalidate_day_values(day);
+                    if let Some(kp_samples) = committed_kp_samples {
+                        self.archived_days.insert(day);
+                        log::info!("Archived {kp_samples} Kp samples for {day}");
+                    }
+                    log::error!("Archiving {index} for {day}: {error}");
+                    self.days.report_failure(day, format!("{index}: {error}"));
+                }
                 IndexDayMessage::Unarchived(unarchived) => {
                     unarchived.log_and_record_failure("geomagnetic indices", &mut self.days);
                 }
             }
         }
         self.start_next();
+    }
+
+    fn invalidate_day_values(&mut self, day: NaiveDate) {
+        if self.archived_days.contains(&day) {
+            self.plot_points.forget_day(day);
+        }
+        self.hp30_context.forget(day);
+        self.kp_context.forget(day);
+        self.forget_windows_reading(day);
     }
 
     /// Point the scheduler at `base_url`.
@@ -297,6 +325,10 @@ impl GeomagneticIndexScheduler {
         base_url.clone_into(&mut self.base_url);
         self.transport.drop_the_connection();
         self.days.forget_host();
+    }
+
+    pub(super) fn track_values_generation(&self) -> Generation<ArchivedTrackValues> {
+        self.plot_points.generation()
     }
 
     /// Geomagnetic index values for the plot: one point per fix of every
@@ -451,8 +483,6 @@ impl GeomagneticIndexScheduler {
         }
     }
 
-    /// The archived days the track's fixes fall in, as the cache key: a
-    /// track's points change exactly when this set does.
     fn archived_days_spanned_by(&self, track: &LoadedTrack) -> Vec<NaiveDate> {
         let range = track.metadata.time_range;
         gt_types::utc_days::days_in_range(
@@ -647,10 +677,48 @@ struct FetchedDay {
     hp30: Option<Hp30Series>,
 }
 
+impl FetchedDay {
+    fn write(
+        &self,
+        day: NaiveDate,
+        write_kp: impl FnOnce(&KpSeries) -> Result<(), SolarStoreError>,
+        write_hp30: impl FnOnce(&Hp30Series) -> Result<(), SolarStoreError>,
+    ) -> IndexDayMessage {
+        let mut kp_samples = None;
+        if let Some(series) = &self.kp {
+            if let Err(error) = write_kp(series) {
+                return IndexDayMessage::WriteFailed {
+                    day,
+                    committed_kp_samples: None,
+                    index: GeomagneticIndex::Kp,
+                    error,
+                };
+            }
+            kp_samples = Some(series.samples.len());
+        }
+        let mut hp30_samples = 0;
+        if let Some(series) = &self.hp30 {
+            if let Err(error) = write_hp30(series) {
+                return IndexDayMessage::WriteFailed {
+                    day,
+                    committed_kp_samples: kp_samples,
+                    index: GeomagneticIndex::Hp30,
+                    error,
+                };
+            }
+            hp30_samples = series.samples.len();
+        }
+        IndexDayMessage::Stored {
+            day,
+            kp_samples: kp_samples.unwrap_or_default(),
+            hp30_samples,
+        }
+    }
+}
+
 /// Fetch every index covering `day`, parse them, and add them to the archive.
 ///
-/// A day is archived whole. One index failing to arrive or to parse fails the
-/// whole day, and a later session requests it again.
+/// The worker parses all fetched indices before the first write.
 fn ingest(
     transport: &impl Transport,
     archive: &WritableArchive<SolarStore>,
@@ -686,39 +754,16 @@ fn ingest(
     archive
         .write(
             EnvironmentArchive::GeomagneticIndices.day_insert_registration(day),
-            |store| archive_fetched_indices(store, base_url, day, &fetched),
+            |store| {
+                let fetched_at = Utc::now();
+                fetched.write(
+                    day,
+                    |series| store.insert_or_replace_kp_day(day, base_url, fetched_at, series),
+                    |series| store.insert_or_replace_hp30_day(day, base_url, fetched_at, series),
+                )
+            },
         )
         .unwrap_or_else(|rejection| UnarchivedDay::rejected(day, rejection).into())
-}
-
-/// Insert every index `fetched` holds, which [`ingest`] runs as one
-/// registered write.
-fn archive_fetched_indices(
-    store: &SolarStore,
-    base_url: &str,
-    day: NaiveDate,
-    fetched: &FetchedDay,
-) -> IndexDayMessage {
-    let fetched_at = Utc::now();
-    let mut kp_samples = 0;
-    let mut hp30_samples = 0;
-    if let Some(series) = fetched.kp.as_ref() {
-        if let Err(err) = store.insert_or_replace_kp_day(day, base_url, fetched_at, series) {
-            return UnarchivedDay::failed(day, err.to_string()).into();
-        }
-        kp_samples = series.samples.len();
-    }
-    if let Some(series) = fetched.hp30.as_ref() {
-        if let Err(err) = store.insert_or_replace_hp30_day(day, base_url, fetched_at, series) {
-            return UnarchivedDay::failed(day, err.to_string()).into();
-        }
-        hp30_samples = series.samples.len();
-    }
-    IndexDayMessage::Stored {
-        day,
-        kp_samples,
-        hp30_samples,
-    }
 }
 
 #[cfg(test)]
@@ -1756,33 +1801,97 @@ mod tests {
         assert!(scheduler.plot_series(files.view()).is_empty());
     }
 
-    /// A day the fetch worker archives is resolved into the loaded track's
-    /// points on the next frame, without reloading the recording.
-    #[test]
-    fn archiving_a_day_gives_the_loaded_track_its_values() {
+    #[rstest]
+    #[case::both_indices_committed(None)]
+    #[case::kp_write_failed_after_replacement(Some(GeomagneticIndex::Kp))]
+    #[case::hp30_write_failed(Some(GeomagneticIndex::Hp30))]
+    fn the_definitive_kp_day_replaces_the_loaded_tracks_nowcast_values(
+        #[case] failed_index: Option<GeomagneticIndex>,
+    ) {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = fixtures::date(2026, 7, 20);
-        let files = loaded_files_of(track_over(fixtures::utc_instant(2026, 7, 20, 0, 0), 4, 30));
-        assert!(scheduler.plot_series(files.view()).is_empty());
+        let midnight = fixtures::utc_instant(2026, 7, 20, 0, 0);
+        let files = loaded_files_of(track_over(midnight, 4, 30));
+        let kp_values = |scheduler: &mut GeomagneticIndexScheduler| {
+            let series = scheduler.plot_series(files.view());
+            let points = series.points_by_track.values().next().unwrap();
+            points.iter().map(|point| point.kp).collect::<Vec<_>>()
+        };
+        let nowcast = KpSample {
+            status: KpStatus::Nowcast,
+            ..kp_sample(midnight, 2.667)
+        };
+        archive_day(&store, archived, |archive| {
+            archive.insert_or_replace_kp_day(
+                archived,
+                "host",
+                Utc::now(),
+                &KpSeries {
+                    samples: vec![nowcast],
+                },
+            )
+        });
+        scheduler.archived_days.insert(archived);
+        scheduler.days.await_recording_day(archived);
+        assert_eq!(kp_values(&mut scheduler), [Some(2.667); 4]);
+        let generation = scheduler.track_values_generation();
 
-        archive_first_periods_of(&store, archived);
-        scheduler
-            .tx
-            .send(IndexDayMessage::Stored {
-                day: archived,
-                kp_samples: 1,
-                hp30_samples: 2,
-            })
-            .expect("send");
+        let fetched = FetchedDay {
+            kp: Some(KpSeries {
+                samples: vec![kp_sample(midnight, 5.0)],
+            }),
+            hp30: Some(Hp30Series {
+                samples: vec![hp30_sample(midnight, 5.0)],
+            }),
+        };
+        let error_detail = "write error";
+        let message = writable(&store)
+            .write(
+                EnvironmentArchive::GeomagneticIndices.day_insert_registration(archived),
+                |archive| {
+                    let fetched_at = Utc::now();
+                    fetched.write(
+                        archived,
+                        |series| {
+                            archive
+                                .insert_or_replace_kp_day(archived, "host", fetched_at, series)?;
+                            if failed_index == Some(GeomagneticIndex::Kp) {
+                                return Err(SolarStoreError::Backend(error_detail.to_owned()));
+                            }
+                            Ok(())
+                        },
+                        |series| {
+                            assert_ne!(failed_index, Some(GeomagneticIndex::Kp));
+                            if failed_index == Some(GeomagneticIndex::Hp30) {
+                                return Err(SolarStoreError::Backend(error_detail.to_owned()));
+                            }
+                            archive.insert_or_replace_hp30_day(archived, "host", fetched_at, series)
+                        },
+                    )
+                },
+            )
+            .unwrap();
+        scheduler.tx.send(message).unwrap();
         scheduler.poll();
 
-        let series = scheduler.plot_series(files.view());
-        let points = series
-            .points_by_track
-            .values()
-            .next()
-            .expect("the archived day reached the track");
-        assert!(points.iter().all(|point| point.hp30 == Some(4.667)));
+        assert_eq!(kp_values(&mut scheduler), [Some(5.0); 4]);
+        assert_ne!(scheduler.track_values_generation(), generation);
+        let failures: Vec<_> = failed_index
+            .map(|index| DayFailure {
+                day: archived,
+                detail: format!("{index}: archive error: {error_detail}"),
+            })
+            .into_iter()
+            .collect();
+        assert_eq!(scheduler.days.failures(), failures);
+        assert_eq!(
+            scheduler.days.fetch_status().recording_days.archived,
+            usize::from(failed_index.is_none()),
+        );
+        assert_eq!(
+            day_needs_fetch(store.read(), archived, fixtures::date(2026, 7, 21)).unwrap(),
+            failed_index.is_some(),
+        );
     }
 
     /// The lines a context span holds, resolved from the archive.

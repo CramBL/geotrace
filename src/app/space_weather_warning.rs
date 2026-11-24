@@ -22,7 +22,7 @@ use gt_solar::activity::{GeomagneticActivity, GeomagneticStormClass};
 use gt_types::{SunlitSide, TimeRange, TrackRef};
 use gt_ui_types::{
     ArcIdentity, GeomagneticPoint, GeomagneticSeries, JammingPoint, JammingSeries, TecPoint,
-    TecSeries, TrackSpaceWeatherWarning, WarningLevelExplanation,
+    TecSeries, TrackSpaceWeatherWarning, WarningLevelExplanation, WeakArcIdentity,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -509,19 +509,20 @@ impl<'a> TrackSeries<'a> {
         }
     }
 
-    /// The allocations the values were read from. A fetch worker archiving a
-    /// day replaces the ones its day reaches, which is what re-assesses the
-    /// track.
-    fn identities(&self) -> Vec<ArcIdentity> {
-        let interference = self.interference.map(ArcIdentity::of);
-        let geomagnetic = self.geomagnetic.map(ArcIdentity::of);
-        let tec = self.tec.map(ArcIdentity::of);
-        interference
-            .into_iter()
-            .chain(geomagnetic)
-            .chain(tec)
-            .collect()
+    fn identities(&self) -> TrackSeriesIdentities {
+        TrackSeriesIdentities {
+            interference: self.interference.map(WeakArcIdentity::of),
+            geomagnetic: self.geomagnetic.map(WeakArcIdentity::of),
+            tec: self.tec.map(WeakArcIdentity::of),
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrackSeriesIdentities {
+    interference: Option<WeakArcIdentity<Vec<JammingPoint>>>,
+    geomagnetic: Option<WeakArcIdentity<Vec<GeomagneticPoint>>>,
+    tec: Option<WeakArcIdentity<Vec<TecPoint>>>,
 }
 
 /// One loaded track as it enters the assessment.
@@ -553,7 +554,7 @@ pub struct RecordingUnderAssessment<'a> {
 /// this changes.
 #[derive(Debug, Clone, PartialEq)]
 struct WarningSource {
-    series: Vec<ArcIdentity>,
+    series: Vec<TrackSeriesIdentities>,
     /// Carried by value: no allocation the track holds changes when a
     /// deviation or the activity before it moves, since both are read from
     /// days outside the track's own.
@@ -571,7 +572,7 @@ impl WarningSource {
             series: recording
                 .tracks
                 .iter()
-                .flat_map(|track| track.series.identities())
+                .map(|track| track.series.identities())
                 .collect(),
             tec_deviations: recording
                 .tracks
@@ -1360,6 +1361,10 @@ mod tests {
             only_track_warning(&warning).lines,
             ["Geomagnetic storm (≥5): Hp30 7.667, G3"]
         );
+        let values = stormy.geomagnetic.as_ref().unwrap();
+        assert_eq!(Arc::strong_count(values), 1);
+        assert_eq!(Arc::weak_count(values), 1);
+        drop(stormy);
 
         let stormier = SeriesFixture {
             geomagnetic: geomagnetic_points(Some(7.667), Some(9.0)),
@@ -1373,6 +1378,10 @@ mod tests {
                 )
                 .is_empty(),
             "a second archived day does not toast the same recording again"
+        );
+        assert_eq!(
+            only_track_warning(&warning).lines,
+            ["Geomagnetic storm (≥5): Kp 9, G5"]
         );
     }
 

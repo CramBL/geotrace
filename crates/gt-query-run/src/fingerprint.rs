@@ -3,7 +3,9 @@ use std::sync::Arc;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingData};
 use gt_types::{FileIdx, Generation, TrackIdx, TrackRef};
-use gt_ui_types::{ArcIdentity, GeomagneticSeries, TecSeries, TrackDataVisibility};
+use gt_ui_types::{
+    GeomagneticPoint, GeomagneticSeries, TecPoint, TecSeries, TrackDataVisibility, WeakArcIdentity,
+};
 use rustc_hash::FxHashMap;
 
 /// Per-track dense snap error values, one entry per track with a completed
@@ -44,17 +46,17 @@ pub struct RunFingerprint {
     /// The snap run each evaluated track's `snap_error` values came from
     /// (by `Arc` identity, absent without a run) - a re-snap changes the
     /// values, so results referencing them gray out like any other input.
-    snap_runs: Vec<Option<ArcIdentity>>,
+    snap_runs: Vec<Option<WeakArcIdentity<Vec<Option<f64>>>>>,
     /// The interference values each evaluated track saw (by `Arc` identity,
     /// absent with no archived day). Archiving a day the track spans
     /// changes them, so results referencing them gray out.
-    jamming_days: Vec<Option<ArcIdentity>>,
+    jamming_days: Vec<Option<WeakArcIdentity<Vec<Option<f64>>>>>,
     /// The geomagnetic index values each evaluated track saw, tracked like
     /// [`Self::jamming_days`].
-    geomagnetic_days: Vec<Option<ArcIdentity>>,
+    geomagnetic_days: Vec<Option<WeakArcIdentity<Vec<GeomagneticPoint>>>>,
     /// The TEC values each evaluated track saw, tracked like
     /// [`Self::jamming_days`].
-    tec_days: Vec<Option<ArcIdentity>>,
+    tec_days: Vec<Option<WeakArcIdentity<Vec<TecPoint>>>>,
 }
 
 impl RunFingerprint {
@@ -83,11 +85,11 @@ impl RunFingerprint {
         }
         let snap_runs = tracks
             .iter()
-            .map(|track_ref| snap_errors.get(track_ref).map(ArcIdentity::of))
+            .map(|track_ref| snap_errors.get(track_ref).map(WeakArcIdentity::of))
             .collect();
         let jamming_days = tracks
             .iter()
-            .map(|track_ref| jamming.get(track_ref).map(ArcIdentity::of))
+            .map(|track_ref| jamming.get(track_ref).map(WeakArcIdentity::of))
             .collect();
         let geomagnetic_days = tracks
             .iter()
@@ -95,12 +97,12 @@ impl RunFingerprint {
                 geomagnetic
                     .points_by_track
                     .get(track_ref)
-                    .map(ArcIdentity::of)
+                    .map(WeakArcIdentity::of)
             })
             .collect();
         let tec_days = tracks
             .iter()
-            .map(|track_ref| tec.points_by_track.get(track_ref).map(ArcIdentity::of))
+            .map(|track_ref| tec.points_by_track.get(track_ref).map(WeakArcIdentity::of))
             .collect();
         Self {
             data_generation: loaded_files.data_generation(),
@@ -174,11 +176,16 @@ mod tests {
 
         let no_run = fingerprint(&SnapErrorValues::default());
         let run = SnapErrorValues::from_iter([(track, Arc::new(vec![Some(1.0)]))]);
-        assert_ne!(no_run, fingerprint(&run), "a first run changes the input");
-        assert_eq!(fingerprint(&run), fingerprint(&run), "same run, stable");
+        let initial = fingerprint(&run);
+        assert_ne!(no_run, initial, "a first run changes the input");
+        assert_eq!(initial, fingerprint(&run), "same run, stable");
+        let values = &run[&track];
+        assert_eq!(Arc::strong_count(values), 1);
+        assert_eq!(Arc::weak_count(values), 1);
+        drop(run);
         let re_run = SnapErrorValues::from_iter([(track, Arc::new(vec![Some(2.0)]))]);
         assert_ne!(
-            fingerprint(&run),
+            initial,
             fingerprint(&re_run),
             "a re-snap must gray results out"
         );

@@ -13,7 +13,7 @@ use gt_egui_mipmap::MipMap;
 use gt_solar::GeomagneticIndex;
 use gt_types::MetricKind;
 use gt_ui_types::{
-    ArcIdentity, ContextLines, IndexContextSample, JammingContextSample, TecContextSample,
+    ContextLines, IndexContextSample, JammingContextSample, TecContextSample, WeakArcIdentity,
 };
 
 use super::chips::{MetricAvailability, MetricKindUi, MetricVisibility};
@@ -77,7 +77,7 @@ struct HoverSegment<S> {
 /// hands over new samples.
 #[derive(Debug, Clone)]
 struct ContextLineCache<S> {
-    source: ArcIdentity,
+    source: Option<WeakArcIdentity<Vec<S>>>,
     /// Mipmapped points, one entry per unbroken stretch of the line.
     runs: Vec<MipMap>,
     /// Every stretch the line has a value over, ascending by x.
@@ -87,7 +87,7 @@ struct ContextLineCache<S> {
 impl<S> Default for ContextLineCache<S> {
     fn default() -> Self {
         Self {
-            source: ArcIdentity::default(),
+            source: None,
             runs: Vec::new(),
             segments: Vec::new(),
         }
@@ -97,8 +97,11 @@ impl<S> Default for ContextLineCache<S> {
 impl<S: ContextSample> ContextLineCache<S> {
     /// Rebuild from `samples` when the app replaced them.
     fn sync(&mut self, samples: &Arc<Vec<S>>, shape: LineShape) {
-        let source = ArcIdentity::of(samples);
-        if self.source == source {
+        if self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.matches(samples))
+        {
             return;
         }
         let (runs, segments) = match shape {
@@ -106,7 +109,7 @@ impl<S: ContextSample> ContextLineCache<S> {
             LineShape::Interpolated => interpolated_line(samples),
         };
         *self = Self {
-            source,
+            source: Some(WeakArcIdentity::of(samples)),
             runs,
             segments,
         };
@@ -472,11 +475,14 @@ mod tests {
         };
 
         cache.sync(&samples, shape);
-        let first = cache.source;
+        assert_eq!(Arc::strong_count(&samples), 1);
+        assert_eq!(Arc::weak_count(&samples), 1);
+        let first = cache.source.clone();
         assert_eq!(cache.segments.len(), 2);
 
         cache.sync(&samples, shape);
         assert_eq!(cache.source, first);
+        drop(samples);
 
         cache.sync(&Arc::new(vec![index_sample(0.0, Some(3.0))]), shape);
         assert_ne!(cache.source, first);

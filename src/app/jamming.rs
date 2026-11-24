@@ -32,8 +32,7 @@ use gt_store::{
     ArchiveUsage, EnvironmentArchive, InterferenceArchive, JamStore, JamStoreError,
     ReadOnlyJamStore, WritableArchive,
 };
-use gt_types::TimeRange;
-use gt_types::TrackRef;
+use gt_types::{Generation, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -44,7 +43,7 @@ use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
-use super::track_day_values::TrackValuesByArchivedDays;
+use super::track_day_values::{ArchivedTrackValues, TrackValuesByArchivedDays};
 use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
@@ -230,6 +229,7 @@ impl JammingScheduler {
     /// Take an opened archive, reading how many cells it holds for each day.
     pub fn adopt_store(&mut self, store: Option<InterferenceArchive>) {
         self.store = store;
+        self.interference_by_track = TrackValuesByArchivedDays::default();
         self.archived_cells = BTreeMap::new();
         self.read_the_day_index();
     }
@@ -403,6 +403,10 @@ impl JammingScheduler {
         self.archived_cells
             .get(&day)
             .map_or(0, |&cells| cells as usize)
+    }
+
+    pub(super) fn track_values_generation(&self) -> Generation<ArchivedTrackValues> {
+        self.interference_by_track.generation()
     }
 
     /// Interference values for the plot: one point per fix of every loaded
@@ -1360,9 +1364,6 @@ mod tests {
         assert_eq!(valued.len(), points.len());
     }
 
-    /// An unchanged archive hands out the same `Arc` for a track's values,
-    /// and archiving a day the track spans produces a new one. The query
-    /// fingerprint compares those identities every frame.
     #[test]
     fn query_values_keep_their_identity_until_an_archived_day_changes_them() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
@@ -1397,8 +1398,10 @@ mod tests {
 
         scheduler.plot_series(files.view());
         let first_frame = values_of(&scheduler.query_values());
+        let first_generation = scheduler.track_values_generation();
         scheduler.plot_series(files.view());
         let second_frame = values_of(&scheduler.query_values());
+        assert_eq!(scheduler.track_values_generation(), first_generation);
 
         assert!(
             Arc::ptr_eq(&first_frame, &second_frame),
@@ -1409,6 +1412,7 @@ mod tests {
         scheduler.archived_cells.insert(next, 1);
         scheduler.plot_series(files.view());
         let after_archiving = values_of(&scheduler.query_values());
+        assert_ne!(scheduler.track_values_generation(), first_generation);
 
         assert!(
             !Arc::ptr_eq(&second_frame, &after_archiving),

@@ -1,4 +1,4 @@
-pub use arc_identity::ArcIdentity;
+pub use arc_identity::{ArcIdentity, WeakArcIdentity};
 pub use context_series::{
     ContextLines, GeomagneticContextLines, IndexContextSample, JammingContextSample,
     TecContextSample,

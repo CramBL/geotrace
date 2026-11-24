@@ -7,7 +7,7 @@ use std::collections::hash_map::Entry;
 
 use chrono::NaiveDate;
 use gt_loaded_files::{LoadedFilesView, RecordingData};
-use gt_types::{Generation, TrackRef};
+use gt_types::{Generation, TrackRef, Versionable, Versioned};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::environment_storage::PrunedDays;
@@ -17,11 +17,16 @@ struct ResolvedTrackValues<T> {
     values: T,
 }
 
+pub(super) struct ArchivedTrackValues;
+
+impl Versionable for ArchivedTrackValues {}
+
 /// One scheduler's per-track values, each keyed by the archived days it was
 /// resolved from.
 pub struct TrackValuesByArchivedDays<T> {
     by_track: FxHashMap<TrackRef, ResolvedTrackValues<T>>,
     data_generation: Option<Generation<RecordingData>>,
+    revision: Versioned<ArchivedTrackValues>,
 }
 
 impl<T> Default for TrackValuesByArchivedDays<T> {
@@ -29,6 +34,7 @@ impl<T> Default for TrackValuesByArchivedDays<T> {
         Self {
             by_track: FxHashMap::default(),
             data_generation: None,
+            revision: Versioned::new(ArchivedTrackValues),
         }
     }
 }
@@ -39,6 +45,7 @@ impl<T> TrackValuesByArchivedDays<T> {
         if self.data_generation != generation {
             self.by_track.clear();
             self.data_generation = generation;
+            self.revision.get_mut();
         }
     }
 
@@ -50,23 +57,42 @@ impl<T> TrackValuesByArchivedDays<T> {
     ) -> &T {
         let resolved = match self.by_track.entry(track) {
             Entry::Occupied(entry) if entry.get().archived_days == archived_days => entry,
-            entry => entry.insert_entry(ResolvedTrackValues {
-                archived_days,
-                values: resolve(),
-            }),
+            entry => {
+                self.revision.get_mut();
+                entry.insert_entry(ResolvedTrackValues {
+                    archived_days,
+                    values: resolve(),
+                })
+            }
         };
         &resolved.into_mut().values
     }
 
     pub fn retain_loaded_tracks(&mut self, loaded: &FxHashSet<TrackRef>) {
-        self.by_track.retain(|track, _| loaded.contains(track));
+        self.retain(|track, _| loaded.contains(track));
+    }
+
+    pub fn forget_day(&mut self, day: NaiveDate) {
+        self.retain(|_, resolved| !resolved.archived_days.contains(&day));
     }
 
     /// Drop every track that read a day a delete removed from the archive:
     /// the next resolve reads what the archive still holds.
     pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        self.retain(|_, resolved| !resolved.archived_days.iter().any(|day| pruned.covers(*day)));
+    }
+
+    fn retain(&mut self, mut keep: impl FnMut(&TrackRef, &ResolvedTrackValues<T>) -> bool) {
+        let previous_len = self.by_track.len();
         self.by_track
-            .retain(|_, resolved| !resolved.archived_days.iter().any(|day| pruned.covers(*day)));
+            .retain(|track, resolved| keep(track, resolved));
+        if self.by_track.len() != previous_len {
+            self.revision.get_mut();
+        }
+    }
+
+    pub(super) fn generation(&self) -> Generation<ArchivedTrackValues> {
+        self.revision.generation()
     }
 
     pub fn iter_unsorted(&self) -> impl Iterator<Item = (TrackRef, &T)> {
@@ -121,6 +147,11 @@ mod tests {
             .collect();
         held.sort_by_key(|&(track, _)| track);
         assert_eq!(held, vec![(track(0), 1), (track(1), 2)]);
+
+        let before_replacement = cache.generation();
+        cache.forget_day(day(21));
+        assert_ne!(cache.generation(), before_replacement);
+        assert_eq!(cache.iter_unsorted().collect::<Vec<_>>(), [(track(0), &1)]);
     }
 
     #[test]
@@ -129,7 +160,9 @@ mod tests {
         cache.resolve(track(0), vec![day(20)], || 1);
         cache.resolve(track(1), vec![day(20)], || 2);
 
+        let before_unload = cache.generation();
         cache.retain_loaded_tracks(&FxHashSet::from_iter([track(1)]));
+        assert_ne!(cache.generation(), before_unload);
 
         let held: Vec<TrackRef> = cache.iter_unsorted().map(|(track, _)| track).collect();
         assert_eq!(held, vec![track(1)]);
@@ -143,7 +176,9 @@ mod tests {
         let kept = Arc::clone(cache.resolve(track(0), vec![day(21)], || Arc::new(1)));
         cache.resolve(track(1), vec![day(19), day(21)], || Arc::new(2));
 
+        let before_prune = cache.generation();
         cache.forget_pruned_days(PrunedDays::Before(day(20)));
+        assert_ne!(cache.generation(), before_prune);
 
         let held: Vec<TrackRef> = cache.iter_unsorted().map(|(track, _)| track).collect();
         assert_eq!(held, vec![track(0)]);

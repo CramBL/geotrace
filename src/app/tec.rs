@@ -32,7 +32,7 @@ use gt_store::{
     ArchiveUsage, EnvironmentArchive, IonexStore, IonexStoreError, ReadOnlyIonexStore,
     TecMapArchive, WritableArchive,
 };
-use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
+use gt_types::{Generation, LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -45,27 +45,23 @@ use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 use super::tec_quiet_time::QuietTimeDeviationCache;
-use super::track_day_values::TrackValuesByArchivedDays;
+use super::track_day_values::{ArchivedTrackValues, TrackValuesByArchivedDays};
 use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
 enum MapDayMessage {
-    Stored {
-        day: NaiveDate,
-        mirror: MirrorBaseUrl,
-        product: IonexProduct,
-        map_count: usize,
-        /// The mirrors tried before the one that served, and what each
-        /// returned.
-        skipped: Vec<MirrorAttempt>,
-    },
+    Stored(FetchedMapDay),
     Unarchived(UnarchivedDay),
+    WriteFailed {
+        day: NaiveDate,
+        error: IonexStoreError,
+    },
 }
 
 impl MapDayMessage {
     fn day(&self) -> NaiveDate {
         match self {
-            Self::Stored { day, .. } => *day,
+            Self::Stored(FetchedMapDay { day, .. }) | Self::WriteFailed { day, .. } => *day,
             Self::Unarchived(unarchived) => unarchived.day(),
         }
     }
@@ -74,6 +70,26 @@ impl MapDayMessage {
 impl From<UnarchivedDay> for MapDayMessage {
     fn from(unarchived: UnarchivedDay) -> Self {
         Self::Unarchived(unarchived)
+    }
+}
+
+struct FetchedMapDay {
+    day: NaiveDate,
+    mirror: MirrorBaseUrl,
+    product: IonexProduct,
+    map_count: usize,
+    skipped: Vec<MirrorAttempt>,
+}
+
+impl FetchedMapDay {
+    fn after_write(self, outcome: Result<(), IonexStoreError>) -> MapDayMessage {
+        match outcome {
+            Ok(()) => MapDayMessage::Stored(self),
+            Err(error) => MapDayMessage::WriteFailed {
+                day: self.day,
+                error,
+            },
+        }
     }
 }
 
@@ -154,6 +170,7 @@ impl TecMapScheduler {
     /// Take an opened archive, reading the days it already holds.
     pub fn adopt_store(&mut self, store: Option<TecMapArchive>) {
         self.store = store;
+        self.plot_points = TrackValuesByArchivedDays::default();
         self.archived_days = BTreeSet::new();
         self.read_the_day_index();
     }
@@ -307,13 +324,13 @@ impl TecMapScheduler {
         while let Ok(message) = self.rx.try_recv() {
             self.days.finish_day(message.day());
             match message {
-                MapDayMessage::Stored {
+                MapDayMessage::Stored(FetchedMapDay {
                     day,
                     mirror,
                     product,
                     map_count,
                     skipped,
-                } => {
+                }) => {
                     for attempt in skipped {
                         match attempt.outcome {
                             MirrorOutcome::NoFile => log::debug!(
@@ -334,14 +351,15 @@ impl TecMapScheduler {
                             ),
                         }
                     }
+                    self.invalidate_day_values(day);
                     self.archived_days.insert(day);
                     self.days.mark_archived(day);
-                    self.context.forget(day);
-                    self.quiet_time.forget(day);
-                    if self.shown.as_ref().is_some_and(|(shown, _)| *shown == day) {
-                        self.shown = None;
-                    }
                     log::info!("Archived {map_count} {product} TEC maps for {day} from {mirror}");
+                }
+                MapDayMessage::WriteFailed { day, error } => {
+                    self.invalidate_day_values(day);
+                    log::error!("Archiving TEC maps for {day}: {error}");
+                    self.days.report_failure(day, error.to_string());
                 }
                 MapDayMessage::Unarchived(unarchived) => {
                     unarchived.log_and_record_failure("TEC maps", &mut self.days);
@@ -349,6 +367,17 @@ impl TecMapScheduler {
             }
         }
         self.start_next();
+    }
+
+    fn invalidate_day_values(&mut self, day: NaiveDate) {
+        if self.archived_days.contains(&day) {
+            self.plot_points.forget_day(day);
+        }
+        self.context.forget(day);
+        self.quiet_time.forget(day);
+        if self.shown.as_ref().is_some_and(|(shown, _)| *shown == day) {
+            self.shown = None;
+        }
     }
 
     /// Point the scheduler at `mirrors`.
@@ -462,6 +491,10 @@ impl TecMapScheduler {
         series
     }
 
+    pub(super) fn track_values_generation(&self) -> Generation<ArchivedTrackValues> {
+        self.plot_points.generation()
+    }
+
     /// The peak deviation of each loaded track's TEC from the quiet-time
     /// background of the same grid node and time of day.
     ///
@@ -508,8 +541,6 @@ impl TecMapScheduler {
         )
     }
 
-    /// The archived days the track's fixes fall in, as the cache key: a
-    /// track's points change exactly when this set does.
     fn archived_days_spanned_by(&self, track: &LoadedTrack) -> Vec<NaiveDate> {
         let range = track.metadata.time_range;
         gt_types::utc_days::days_in_range(
@@ -681,21 +712,17 @@ fn ingest(
     archive
         .write(
             EnvironmentArchive::IonosphericTec.day_insert_registration(day),
-            |store| match store.insert_or_replace_day(
-                day,
-                mirror.as_ref(),
-                Utc::now(),
-                product,
-                &maps,
-            ) {
-                Ok(()) => MapDayMessage::Stored {
+            |store| {
+                let outcome =
+                    store.insert_or_replace_day(day, mirror.as_ref(), Utc::now(), product, &maps);
+                FetchedMapDay {
                     day,
                     mirror,
                     product,
                     map_count: maps.maps().len(),
                     skipped,
-                },
-                Err(err) => UnarchivedDay::failed(day, err.to_string()).into(),
+                }
+                .after_write(outcome)
             },
         )
         .unwrap_or_else(|rejection| UnarchivedDay::rejected(day, rejection).into())
@@ -1118,7 +1145,8 @@ mod tests {
                 detail.contains(gt_ionex::text::MIRROR_SKIPPED_WITHOUT_TOKEN),
                 "{detail}"
             ),
-            MapDayMessage::Stored { .. }
+            MapDayMessage::Stored(_)
+            | MapDayMessage::WriteFailed { .. }
             | MapDayMessage::Unarchived(UnarchivedDay::Rejected { .. }) => {
                 panic!("the archive was never requested")
             }
@@ -1187,11 +1215,11 @@ mod tests {
 
         assert!(matches!(
             message,
-            MapDayMessage::Stored {
+            MapDayMessage::Stored(FetchedMapDay {
                 product: IonexProduct::Final,
                 map_count: 1,
                 ..
-            }
+            })
         ));
         assert_eq!(
             transport.requested_urls(),
@@ -1380,13 +1408,14 @@ mod tests {
         );
 
         match message {
-            MapDayMessage::Stored {
+            MapDayMessage::Stored(FetchedMapDay {
                 mirror, skipped, ..
-            } => {
+            }) => {
                 assert_eq!(mirror, MirrorBaseUrl::new("https://second.example"));
                 assert_eq!(skipped.len(), 1, "the first mirror holds no file");
             }
             MapDayMessage::Unarchived(UnarchivedDay::Failed { detail, .. }) => panic!("{detail}"),
+            MapDayMessage::WriteFailed { error, .. } => panic!("{error}"),
             MapDayMessage::Unarchived(UnarchivedDay::Rejected { .. }) => {
                 panic!("the day should have been archived, not rejected")
             }
@@ -1427,7 +1456,8 @@ mod tests {
                      https://second.example: HTTP 500 Internal Server Error"
                 );
             }
-            MapDayMessage::Stored { .. }
+            MapDayMessage::Stored(_)
+            | MapDayMessage::WriteFailed { .. }
             | MapDayMessage::Unarchived(UnarchivedDay::Rejected { .. }) => {
                 panic!("no mirror served a file")
             }
@@ -1477,13 +1507,13 @@ mod tests {
 
     /// Every outcome retires its day, and the last one ends the backfill.
     #[rstest]
-    #[case::stored(MapDayMessage::Stored {
+    #[case::stored(MapDayMessage::Stored(FetchedMapDay {
         day: fixtures::date(2024, 5, 10),
         mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
         product: IonexProduct::Final,
         map_count: 13,
         skipped: Vec::new(),
-    })]
+    }))]
     #[case::failed(
         UnarchivedDay::failed(
             fixtures::date(2024, 5, 10),
@@ -1570,13 +1600,13 @@ mod tests {
 
         scheduler
             .tx
-            .send(MapDayMessage::Stored {
+            .send(MapDayMessage::Stored(FetchedMapDay {
                 day: fixtures::date(2024, 5, 10),
                 mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
                 product: IonexProduct::Final,
                 map_count: 13,
                 skipped: Vec::new(),
-            })
+            }))
             .expect("send");
         scheduler.poll();
 
@@ -1899,13 +1929,13 @@ mod tests {
         });
         scheduler
             .tx
-            .send(MapDayMessage::Stored {
+            .send(MapDayMessage::Stored(FetchedMapDay {
                 day: recorded,
                 mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
                 product: IonexProduct::Final,
                 map_count: 13,
                 skipped: Vec::new(),
-            })
+            }))
             .expect("send");
         scheduler.poll();
 
@@ -2221,13 +2251,13 @@ mod tests {
         });
         scheduler
             .tx
-            .send(MapDayMessage::Stored {
+            .send(MapDayMessage::Stored(FetchedMapDay {
                 day: archived,
                 mirror: MirrorBaseUrl::new("host"),
                 product: IonexProduct::Final,
                 map_count: 2,
                 skipped: Vec::new(),
-            })
+            }))
             .expect("send");
         scheduler.poll();
 
@@ -2387,10 +2417,10 @@ mod tests {
         );
     }
 
-    /// A day the fetch worker archives is resolved into the loaded track's
-    /// points on the next frame, without reloading the recording.
-    #[test]
-    fn archiving_a_day_gives_the_loaded_track_its_values() {
+    #[rstest]
+    #[case::write_succeeded(false)]
+    #[case::write_failed_after_replacement(true)]
+    fn the_final_tec_day_replaces_the_loaded_tracks_rapid_values(#[case] fail_final: bool) {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = fixtures::date(2024, 5, 10);
         let files = loaded_files_of(track_over(
@@ -2399,27 +2429,59 @@ mod tests {
             1800,
         ));
         assert!(scheduler.plot_series(files.view()).is_empty());
+        scheduler.days.await_recording_day(archived);
 
-        archive_last_maps_of(&store, archived);
-        scheduler
-            .tx
-            .send(MapDayMessage::Stored {
+        let error_detail = "write error";
+        for (product, tecu) in [(IonexProduct::Rapid, 10.0), (IonexProduct::Final, 30.0)] {
+            let generation = scheduler.track_values_generation();
+            let mirror = MirrorBaseUrl::new(DEFAULT_BASE_URL);
+            let maps = ionex_fixtures::uniform_maps(archived, &[(22, tecu), (24, tecu)]);
+            let message = writable(&store)
+                .write(
+                    EnvironmentArchive::IonosphericTec.day_insert_registration(archived),
+                    |archive| {
+                        let outcome = archive
+                            .insert_or_replace_day(
+                                archived,
+                                mirror.as_ref(),
+                                Utc::now(),
+                                product,
+                                &maps,
+                            )
+                            .and_then(|()| {
+                                if fail_final && product == IonexProduct::Final {
+                                    Err(IonexStoreError::Backend(error_detail.to_owned()))
+                                } else {
+                                    Ok(())
+                                }
+                            });
+                        FetchedMapDay {
+                            day: archived,
+                            mirror,
+                            product,
+                            map_count: maps.maps().len(),
+                            skipped: Vec::new(),
+                        }
+                        .after_write(outcome)
+                    },
+                )
+                .unwrap();
+            scheduler.tx.send(message).unwrap();
+            scheduler.poll();
+            let series = scheduler.plot_series(files.view());
+            let points = series.points_by_track.values().next().unwrap();
+            assert_eq!(points.first().map(|point| point.tecu), Some(Some(tecu)));
+            assert_ne!(scheduler.track_values_generation(), generation);
+        }
+        assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
+        let failures: Vec<_> = fail_final
+            .then(|| DayFailure {
                 day: archived,
-                mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
-                product: IonexProduct::Final,
-                map_count: 2,
-                skipped: Vec::new(),
+                detail: format!("archive error: {error_detail}"),
             })
-            .expect("send");
-        scheduler.poll();
-
-        let series = scheduler.plot_series(files.view());
-        let points = series
-            .points_by_track
-            .values()
-            .next()
-            .expect("the archived day reached the track");
-        assert_eq!(points.first().map(|point| point.tecu), Some(Some(10.0)));
+            .into_iter()
+            .collect();
+        assert_eq!(scheduler.days.failures(), failures);
     }
 
     /// Column the record label starts at.

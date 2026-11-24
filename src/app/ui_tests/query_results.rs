@@ -152,7 +152,7 @@ fn replacing_a_recording_in_place_marks_its_query_results_stale() {
         let id = original.id();
         assert!(
             previous_series
-                .inputs(files.view(), shared.tree.visibility(), &shared.filter)
+                .inputs(files.view(), &shared.tree, &shared.filter)
                 .is_some()
         );
         let replacement = gt_test_utils::segmented_recording(original.file().tracks.len());
@@ -160,7 +160,7 @@ fn replacing_a_recording_in_place_marks_its_query_results_stale() {
         assert_eq!(files.view().get(0).unwrap().id(), id);
         assert!(
             previous_series
-                .inputs(files.view(), shared.tree.visibility(), &shared.filter)
+                .inputs(files.view(), &shared.tree, &shared.filter)
                 .is_none()
         );
         shared.sync_tree_from_loaded_files();
@@ -256,9 +256,6 @@ fn install_interference_archive(
     dir
 }
 
-/// A run over a recording with archived interference stays live: the
-/// per-track interference values the app hands the query fingerprint every
-/// frame keep their `Arc` identity while the archive holds them.
 #[test]
 fn query_results_over_archived_interference_stay_fresh() {
     let gtd_bytes = ui_tests::minimal_gtd_bytes();
@@ -342,10 +339,8 @@ fn query_capture_resolves_interference_for_a_replacement_on_the_same_day() {
         let mut shared = app.shared.borrow_mut();
         let shared = &mut *shared;
         let view = shared.loaded_files.view();
-        let inputs = before
-            .inputs(view, shared.tree.visibility(), &shared.filter)
-            .unwrap();
-        let original_values = inputs.jamming.get(&track).unwrap();
+        let inputs = before.inputs(view, &shared.tree, &shared.filter).unwrap();
+        let original_values = inputs.run_inputs().jamming.get(&track).unwrap();
         assert_eq!(original_values.first(), Some(&Some(25.0)));
         shared.loaded_files.replace_file(
             0,
@@ -357,13 +352,12 @@ fn query_capture_resolves_interference_for_a_replacement_on_the_same_day() {
     let after = QuerySeries::capture(app);
     let shared = app.shared.borrow();
     let inputs = after
-        .inputs(
-            shared.loaded_files.view(),
-            shared.tree.visibility(),
-            &shared.filter,
-        )
+        .inputs(shared.loaded_files.view(), &shared.tree, &shared.filter)
         .unwrap();
-    assert_eq!(inputs.jamming.get(&track).unwrap().as_slice(), [Some(75.0)]);
+    assert_eq!(
+        inputs.run_inputs().jamming.get(&track).unwrap().as_slice(),
+        [Some(75.0)]
+    );
 }
 
 /// `snap_error` evaluates over a completed run's values without any network

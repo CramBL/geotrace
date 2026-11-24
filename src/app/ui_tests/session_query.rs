@@ -12,6 +12,7 @@ use gt_session_bridge::{
 };
 use gt_test_utils::HarnessInteraction as _;
 use gt_test_utils::fixtures;
+use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use uuid::Uuid;
 
 use super::{self as ui_tests, App};
@@ -19,6 +20,65 @@ use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 
 mod map;
+
+#[test]
+fn editor_and_session_results_refresh_when_enabled_tracks_change() {
+    let mut harness = ui_tests::harness_with_three_files_loaded();
+    harness.state_mut().query_window.open = true;
+    let text = "points | where velocity > 1 km/h | draw";
+    ui_tests::run_query(&mut harness, text);
+    let job = self::start(&mut harness, text);
+    let completed = self::complete(&mut harness, job);
+    assert!(matches!(completed, QueryJobState::Completed { .. }));
+    assert!(!harness.state().query_window.matches().unwrap().stale);
+    let other_file = FileIdx::new(1);
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .tree
+        .set_category_visible(
+            TrackRef::new(other_file, TrackIdx::new(0)),
+            DataCategory::Tpv,
+            false,
+        );
+    harness.step();
+    assert!(!harness.state().query_window.matches().unwrap().stale);
+    assert_eq!(
+        harness.state().session_query.retained_reply(),
+        Some(Reply::QueryJob {
+            job: QueryJobStatus {
+                job,
+                state: completed.clone(),
+            },
+        }),
+    );
+
+    for expected_stale in [true, false] {
+        harness
+            .state_mut()
+            .shared
+            .borrow_mut()
+            .tree
+            .toggle_file_check(other_file);
+        harness.step();
+        assert_eq!(
+            harness.state().query_window.matches().unwrap().stale,
+            expected_stale
+        );
+        let state = if expected_stale {
+            QueryJobState::Stale
+        } else {
+            completed.clone()
+        };
+        assert_eq!(
+            harness.state().session_query.retained_reply(),
+            Some(Reply::QueryJob {
+                job: QueryJobStatus { job, state },
+            }),
+        );
+    }
+}
 
 #[test]
 fn session_query_uses_current_filter_and_visibility_without_changing_the_editor() {

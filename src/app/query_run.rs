@@ -6,15 +6,19 @@ use gt_query::ChannelSchema;
 use gt_query_run::{
     CheckRefresh, JammingValues, QuerySession, RunInputs, RunOutcome, SnapErrorValues,
 };
+use gt_side_panel::TreeState;
 use gt_types::Generation;
 use gt_ui_types::{GeomagneticSeries, JammingSeries, TecSeries, TrackDataVisibility};
 
+use super::snap_state::SnapErrorCache;
+use super::track_day_values::ArchivedTrackValues;
 use super::{App, background_thread};
 
 #[derive(Default)]
 pub(super) struct BackgroundQuery {
     session: QuerySession,
     worker: Option<Receiver<RunOutcome>>,
+    last_freshness_check: Option<QueryInputsRevision>,
 }
 
 impl BackgroundQuery {
@@ -22,6 +26,7 @@ impl BackgroundQuery {
         Self {
             session,
             worker: None,
+            last_freshness_check: None,
         }
     }
 
@@ -39,9 +44,12 @@ impl BackgroundQuery {
         true
     }
 
-    pub(super) fn update(&mut self, inputs: RunInputs<'_>) -> bool {
+    pub(super) fn update(&mut self, inputs: CapturedQueryInputs<'_>) -> bool {
         let received = self.receive_outcome();
-        self.session.refresh_staleness(inputs);
+        if self.session.results().is_some() && self.last_freshness_check != Some(inputs.revision) {
+            self.session.refresh_staleness(inputs.run);
+            self.last_freshness_check = Some(inputs.revision);
+        }
         received
     }
 
@@ -49,6 +57,7 @@ impl BackgroundQuery {
         self.session.cancel_run();
         self.worker = None;
         self.session.clear_results();
+        self.last_freshness_check = None;
     }
 
     pub(super) fn set_text(&mut self, text: String) {
@@ -71,6 +80,7 @@ impl BackgroundQuery {
             Ok(outcome) => {
                 self.worker = None;
                 self.session.finish_run(outcome);
+                self.last_freshness_check = None;
                 true
             }
             Err(TryRecvError::Empty) => false,
@@ -94,13 +104,41 @@ impl Drop for BackgroundQuery {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct CapturedQueryInputs<'a> {
+    run: RunInputs<'a>,
+    revision: QueryInputsRevision,
+}
+
+impl<'a> CapturedQueryInputs<'a> {
+    pub(super) fn run_inputs(self) -> RunInputs<'a> {
+        self.run
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct QueryInputsRevision {
+    series: QuerySeriesRevision,
+    visibility: Generation<TrackDataVisibility>,
+    filter: GlobalFilter,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct QuerySeriesRevision {
+    data: Generation<RecordingData>,
+    snap_errors: Generation<SnapErrorCache>,
+    jamming: Generation<ArchivedTrackValues>,
+    geomagnetic: Generation<ArchivedTrackValues>,
+    tec: Generation<ArchivedTrackValues>,
+}
+
 pub(super) struct QuerySeries {
     jamming: JammingSeries,
     geomagnetic: GeomagneticSeries,
     tec: TecSeries,
     snap_errors: SnapErrorValues,
     jamming_values: JammingValues,
-    data_generation: Generation<RecordingData>,
+    revision: QuerySeriesRevision,
 }
 
 impl QuerySeries {
@@ -109,13 +147,21 @@ impl QuerySeries {
         let shared = app.shared.borrow();
         let files = shared.loaded_files.view();
         let jamming = app.jamming.plot_series(files);
+        let geomagnetic = app.geomagnetic_indices.plot_series(files);
+        let tec = app.tec_maps.plot_series(files);
         Self {
             jamming,
-            geomagnetic: app.geomagnetic_indices.plot_series(files),
-            tec: app.tec_maps.plot_series(files),
+            geomagnetic,
+            tec,
             snap_errors,
             jamming_values: app.jamming.query_values(),
-            data_generation: files.data_generation(),
+            revision: QuerySeriesRevision {
+                data: files.data_generation(),
+                snap_errors: app.snap_error_cache.generation(),
+                jamming: app.jamming.track_values_generation(),
+                geomagnetic: app.geomagnetic_indices.track_values_generation(),
+                tec: app.tec_maps.track_values_generation(),
+            },
         }
     }
 
@@ -134,17 +180,24 @@ impl QuerySeries {
     pub(super) fn inputs<'a>(
         &'a self,
         loaded_files: LoadedFilesView<'a>,
-        visibility: &'a TrackDataVisibility,
+        tree: &'a TreeState,
         filter: &'a GlobalFilter,
-    ) -> Option<RunInputs<'a>> {
-        (self.data_generation == loaded_files.data_generation()).then_some(RunInputs {
-            loaded_files,
-            visibility,
-            filter,
-            snap_errors: &self.snap_errors,
-            jamming: &self.jamming_values,
-            geomagnetic: &self.geomagnetic,
-            tec: &self.tec,
+    ) -> Option<CapturedQueryInputs<'a>> {
+        (self.revision.data == loaded_files.data_generation()).then_some(CapturedQueryInputs {
+            run: RunInputs {
+                loaded_files,
+                visibility: tree.visibility(),
+                filter,
+                snap_errors: &self.snap_errors,
+                jamming: &self.jamming_values,
+                geomagnetic: &self.geomagnetic,
+                tec: &self.tec,
+            },
+            revision: QueryInputsRevision {
+                series: self.revision,
+                visibility: tree.visibility_generation(),
+                filter: *filter,
+            },
         })
     }
 }

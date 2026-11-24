@@ -21,7 +21,7 @@ use gt_session_bridge::Server as SessionBridge;
 use gt_side_panel::{FilterPanelState, TreeState};
 use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
-use gt_types::{AssociationConfig, LoadWarning, TrackRef};
+use gt_types::{AssociationConfig, LoadWarning, TrackRef, Versioned};
 use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
 use load_failures::LoadFailures;
 use loader::{
@@ -37,7 +37,7 @@ use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use settings_ui::SettingsPage;
 use settings_ui::search::SettingsSearch;
-use snap_state::{PendingSnapRequest, SnapErrorDerived, SnapReplacePrompt, SnapScopePrompt};
+use snap_state::{PendingSnapRequest, SnapErrorCache, SnapReplacePrompt, SnapScopePrompt};
 use strum::IntoEnumIterator;
 
 use crate::app::frame::PendingTrackDataDetach;
@@ -311,7 +311,7 @@ pub struct App {
     /// invalidated by the run's `Arc` identity. Downstream caches (the
     /// plot's mipmaps, the query fingerprint) key off the `Arc`s, so they
     /// must stay stable across frames and change exactly when the run does.
-    snap_error_cache: FxHashMap<snap::TrackContentKey, SnapErrorDerived>,
+    snap_error_cache: Versioned<SnapErrorCache>,
     /// Session-only per-track costing overrides ("Snap again as…"). The
     /// override beats the declared travel mode and the configured default.
     /// Content-keyed so it survives index shifts like the run stores. Not
@@ -695,7 +695,7 @@ impl App {
             snap_settings: crate::settings::SnapSettings::default(),
             snap_consent_prompt: false,
             snap_auto_sweep: false,
-            snap_error_cache: FxHashMap::default(),
+            snap_error_cache: Versioned::new(SnapErrorCache::default()),
             snap_costing_overrides: FxHashMap::default(),
             pending_snap: PendingSnapRequest::default(),
             snap_replace_prompt: None,

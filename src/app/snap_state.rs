@@ -3,10 +3,12 @@ use std::sync::Arc;
 use gt_query_run::SnapErrorValues;
 use gt_side_panel::{SnapCostingTarget, SnapRowView};
 use gt_snap::wire::Costing;
-use gt_types::{FileIdx, LoadedTrack, TrackIdx, TrackRef};
+use gt_types::{FileIdx, LoadedTrack, TrackIdx, TrackRef, Versionable};
+use gt_ui_types::WeakArcIdentity;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::modals::{SnapScope, SnapScopeCount, SnapScopeCounts};
+use super::snap::{SnapRun, TrackContentKey};
 use super::{App, snap, snap_persist};
 
 /// A "Snap again as" choice the track already has a run for, waiting on
@@ -39,9 +41,9 @@ pub(super) struct SnapScopePrompt {
 /// Snap error data derived from one run for one track: the plot series and
 /// the dense per-point values the query providers read. Built once per run
 /// (see [`App::with_snap_error_derived`]).
-pub(super) struct SnapErrorDerived {
+struct SnapErrorDerived {
     /// Identity of the source run, for invalidation.
-    run: gt_ui_types::ArcIdentity,
+    run: WeakArcIdentity<SnapRun>,
     /// The plot series, one entry per sent point.
     series: Arc<Vec<gt_ui_types::SnapErrorPoint>>,
     /// One slot per track point. `Some` exactly for sent points that came
@@ -50,8 +52,13 @@ pub(super) struct SnapErrorDerived {
     values: Arc<Vec<Option<f64>>>,
 }
 
+#[derive(Default)]
+pub(super) struct SnapErrorCache(FxHashMap<TrackContentKey, SnapErrorDerived>);
+
+impl Versionable for SnapErrorCache {}
+
 impl SnapErrorDerived {
-    fn build(run: gt_ui_types::ArcIdentity, source: &snap::SnapRun, track: &LoadedTrack) -> Self {
+    fn build(source: &Arc<SnapRun>, track: &LoadedTrack) -> Self {
         let mut values = vec![None; track.points.len()];
         let series = source
             .result
@@ -77,7 +84,7 @@ impl SnapErrorDerived {
             })
             .collect();
         Self {
-            run,
+            run: WeakArcIdentity::of(source),
             series: Arc::new(series),
             values: Arc::new(values),
         }
@@ -356,24 +363,31 @@ impl App {
                 };
                 let content = snap::TrackContentKey::new(track);
                 seen.insert(content);
-                let run_id = gt_ui_types::ArcIdentity::of(&run);
                 if self
                     .snap_error_cache
+                    .get()
+                    .0
                     .get(&content)
-                    .is_none_or(|derived| derived.run != run_id)
+                    .is_none_or(|derived| !derived.run.matches(&run))
                 {
                     self.snap_error_cache
-                        .insert(content, SnapErrorDerived::build(run_id, &run, track));
+                        .get_mut()
+                        .0
+                        .insert(content, SnapErrorDerived::build(&run, track));
                 }
                 // Present by construction: inserted just above when absent.
-                let Some(derived) = self.snap_error_cache.get(&content) else {
+                let Some(derived) = self.snap_error_cache.get().0.get(&content) else {
                     continue;
                 };
                 f(track_ref, derived, out);
             }
         }
-        self.snap_error_cache
-            .retain(|content, _| seen.contains(content));
+        if self.snap_error_cache.get().0.len() > seen.len() {
+            self.snap_error_cache
+                .get_mut()
+                .0
+                .retain(|content, _| seen.contains(content));
+        }
     }
 
     /// Act on a snap trigger from the side panel.
