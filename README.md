@@ -156,6 +156,15 @@ Set `channel_limit` to request fewer than 100 channels per page.
 Pass `next_channel_start` as `channel_start` for the next page.
 Restart channel pagination after changing the loaded recordings.
 
+Pass query editor text as `text` to `check_query`.
+Use blank lines to separate queries, and check a query with a channel source on its own.
+The result has status `valid`, `invalid`, or `empty` for text with only comments or whitespace.
+Invalid results include messages, optional hints, and spans with zero-based UTF-8 byte offsets into the full submitted text.
+Each span includes its start and excludes its end, with equal offsets for an insertion point.
+The serialized request must fit in 4 KiB.
+Check fewer query blocks at a time if the request or its diagnostics exceed the bridge limits.
+For a single diagnostic that exceeds the reply limit, check that query in the GeoTrace editor.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

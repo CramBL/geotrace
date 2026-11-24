@@ -15,6 +15,7 @@ use crate::protocol::{
     ErrorCode, GetRangeDetails, GetRecording, ListRecordings, Recording, RecordingReference,
     Recordings, Reply, Request, TimeRange, TrackReference,
 };
+use crate::query_validation::QueryValidation;
 
 pub(crate) struct Inspection<'a> {
     pub files: LoadedFilesView<'a>,
@@ -25,6 +26,8 @@ pub(crate) struct Inspection<'a> {
 impl<'a> Inspection<'a> {
     pub(crate) fn execute(&self, request: Request) -> Reply {
         match request {
+            Request::CheckQuery(args) => QueryValidation::check(&args.text, self.files.files())
+                .map(|validation| Reply::QueryCheck { validation }),
             Request::GetRangeDetails(args) => {
                 self.range(args).map(|details| Reply::Range { details })
             }

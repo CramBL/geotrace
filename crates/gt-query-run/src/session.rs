@@ -1,4 +1,3 @@
-use gt_query::lexer;
 use gt_query::{ChannelSchema, CheckedQuery, Span};
 use gt_ui_types::QueryMatches;
 
@@ -6,6 +5,9 @@ use crate::check::{self, QueryChunk};
 use crate::fingerprint::{RunFingerprint, RunInputs};
 use crate::results::{ChannelResults, PointsResults, RunResults};
 use crate::run::{PreparedRun, RunHandle, RunKind, RunOutcome, RunProduct};
+
+pub const MIXED_CHANNEL_MESSAGE: &str =
+    "A channel-source query must be the only query in the editor";
 
 /// What [`QuerySession::sync_checks`] found changed since the last check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,21 +142,7 @@ impl QuerySession {
     /// How a run of the current (checked) queries would dispatch, or why it
     /// cannot run. Only meaningful when [`all_ok`](Self::all_ok).
     pub fn run_kind(&self) -> RunKind {
-        let sources = self
-            .chunks
-            .iter()
-            .filter_map(|c| c.result.as_ref().ok())
-            .map(CheckedQuery::is_channel_source);
-        let (channel_count, total) = sources.fold((0, 0), |(ch, n), is_channel| {
-            (ch + usize::from(is_channel), n + 1)
-        });
-        match channel_count {
-            0 => RunKind::Points,
-            // A channel source has its own timeline, so it cannot compose with
-            // other queries in one pipeline: it must stand alone.
-            _ if channel_count == total && total == 1 => RunKind::Channel,
-            _ => RunKind::MixedChannel,
-        }
+        RunKind::of_checked_chunks(&self.chunks)
     }
 
     /// The editor-coordinate span of each channel-source chunk's `@name` source
@@ -162,15 +150,7 @@ impl QuerySession {
     pub fn channel_source_spans(&self) -> Vec<Span> {
         self.chunks
             .iter()
-            .filter(|c| c.result.as_ref().is_ok_and(CheckedQuery::is_channel_source))
-            .filter_map(|c| {
-                let src = self.text.get(c.range.clone())?;
-                let first = lexer::tokenize(src).into_iter().next()?;
-                Some(Span::new(
-                    first.span.start + c.range.start,
-                    first.span.end + c.range.start,
-                ))
-            })
+            .filter_map(|chunk| chunk.channel_source_span(&self.text))
             .collect()
     }
 

@@ -18,7 +18,9 @@ use chrono::{DateTime, Utc};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
-use gt_query_run::{CheckRefresh, QuerySession, RunInputs, RunKind, RunOutcome};
+use gt_query_run::{
+    CheckRefresh, MIXED_CHANNEL_MESSAGE, QuerySession, RunInputs, RunKind, RunOutcome,
+};
 use gt_side_panel::widgets::PointClickRequests;
 use gt_ui_types::{MapHighlight, MapPresence, MatchRevealTarget, QueryMatches, StaleRunNote};
 use strum::{EnumIter, IntoEnumIterator as _};
@@ -634,10 +636,7 @@ impl QueryWindow {
                 continue;
             }
             errors.push(diagnostic.clone());
-            underlines.push(Span::new(
-                diagnostic.span.start + chunk.range.start,
-                diagnostic.span.end + chunk.range.start,
-            ));
+            underlines.push(chunk.document_span(diagnostic.span));
         }
         if suppressed {
             // Repaint when the grace period lapses so the error appears
@@ -680,10 +679,7 @@ impl QueryWindow {
             }
         }
         if mixed {
-            ui.label(error_message_layout(
-                ui,
-                "a channel-source query (`@name | \u{2026}`) must be the only query in the editor",
-            ));
+            ui.label(error_message_layout(ui, MIXED_CHANNEL_MESSAGE));
         }
 
         ui.horizontal(|ui| {
@@ -697,9 +693,7 @@ impl QueryWindow {
                     run.on_disabled_hover_text("Type a query to run")
                 }
                 (false, _, _) => run.on_disabled_hover_text("Fix the error above to run"),
-                (_, _, true) => run.on_disabled_hover_text(
-                    "A channel-source query must be the only query in the editor",
-                ),
+                (_, _, true) => run.on_disabled_hover_text(MIXED_CHANNEL_MESSAGE),
                 (true, true, _) => run.on_disabled_hover_text("A run is in progress"),
                 (true, false, false) => run,
             };
