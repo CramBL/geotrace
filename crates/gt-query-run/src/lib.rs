@@ -39,7 +39,10 @@ pub use results::{
 };
 pub use run::{PreparedRun, RunHandle, RunKind, RunOutcome};
 pub use schema::schema_from_files;
-pub use session::{CheckRefresh, MIXED_CHANNEL_MESSAGE, QueryProgress, QuerySession};
+pub use session::{
+    CheckRefresh, CheckedQueryText, MIXED_CHANNEL_MESSAGE, QueryProgress, QuerySession,
+    QueryTextCheck,
+};
 
 mod check;
 mod fingerprint;

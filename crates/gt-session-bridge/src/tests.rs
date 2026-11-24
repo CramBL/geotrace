@@ -11,7 +11,7 @@ use gt_types::PointIdx;
 use proptest::strategy::Strategy as _;
 use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use super::endpoint::Endpoint;
@@ -19,7 +19,7 @@ use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 use super::inspection::Inspection;
 use super::{
     ChannelEntry, CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, QueryValidation, Recording,
+    ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Pending, QueryValidation, Recording,
     RecordingReference, Recordings, Reply, Request, Server,
 };
 
@@ -68,7 +68,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
                 .unwrap(),
             Some(())
         );
-        server.dispatch(files.view(), "{title} ({filename})");
+        server.dispatch(|request| request.inspect(files.view(), "{title} ({filename})"));
     });
     assert_eq!(
         reply.unwrap(),
@@ -87,6 +87,28 @@ async fn local_request_dispatches_on_the_calling_thread() {
             }
         }
     );
+}
+
+#[test]
+fn dispatcher_reports_a_reply_receiver_closed_during_execution() {
+    let (sender, pending) = mpsc::channel(1);
+    let (reply, receiver) = oneshot::channel();
+    sender
+        .try_send(Pending {
+            request: REQUEST,
+            reply,
+        })
+        .unwrap_or_else(|error| panic!("Could not queue the request ({error})"));
+    let mut server = Server {
+        session: Uuid::nil(),
+        pending,
+        stop: None,
+        worker: None,
+    };
+    assert!(!server.dispatch(|request| {
+        drop(receiver);
+        request.inspect(LoadedFiles::new().view(), "{filename}")
+    }));
 }
 
 #[test]
@@ -437,7 +459,7 @@ async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
             .await
             .unwrap()
             .unwrap();
-        server.dispatch(files.view(), "{filename}");
+        server.dispatch(|request| request.inspect(files.view(), "{filename}"));
     });
     assert_eq!(reply.unwrap(), ErrorCode::ReplyTooLarge.into());
 }

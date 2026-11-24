@@ -90,6 +90,7 @@ mod recording_name_template;
 mod recording_names_cache;
 mod recording_ui_state;
 mod reference_window;
+mod session_query;
 mod settings_autosave;
 mod settings_ui;
 pub(crate) mod shutdown;
@@ -388,6 +389,7 @@ pub struct App {
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
     session_bridge: Option<SessionBridge>,
+    session_query: session_query::SessionQuery,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
     pending_writes: PendingWrites,
@@ -637,6 +639,7 @@ impl App {
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
             session_bridge: None,
+            session_query: session_query::SessionQuery::default(),
             pending_writes: options.pending_writes,
             shutdown: shutdown::ShutdownState::default(),
             interference_backfill_ui: backfill_ui::BackfillUi::default(),

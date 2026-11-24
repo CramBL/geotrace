@@ -365,6 +365,7 @@ strum.workspace = true
 tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
 toml.workspace = true
 uom.workspace = true
+uuid.workspace = true
 
 # Embeds the app icon into the Windows executable (see build.rs). No-op elsewhere.
 [target.'cfg(windows)'.build-dependencies]

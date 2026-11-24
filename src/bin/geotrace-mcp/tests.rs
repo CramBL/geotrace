@@ -5,9 +5,9 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    CheckQuery, GetRangeDetails, ListMetrics, ListRecordings, Metrics, PointDetails,
-    QueryValidation, RangeDetails, Recording, RecordingReference, Recordings, Reply, Request,
-    TrackReference,
+    CheckQuery, GetRangeDetails, ListMetrics, ListRecordings, Metrics, PointDetails, QueryJobId,
+    QueryJobRequest, QueryJobState, QueryJobStatus, QueryValidation, RangeDetails, Recording,
+    RecordingReference, Recordings, Reply, Request, TrackReference,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -15,11 +15,12 @@ use serde_json::{Value, json};
 use tokio::io::{
     AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, DuplexStream, Lines, ReadHalf, WriteHalf,
 };
+use uuid::Uuid;
 
 use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
 
 #[tokio::test]
-async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
+async fn the_companion_lists_tools_and_returns_structured_results() {
     let (server, stream) = tokio::io::duplex(8192);
     let worker = tokio::spawn(async move {
         Companion {
@@ -76,12 +77,15 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
     assert_eq!(
         names,
         [
+            "cancel_query",
             "check_query",
+            "get_query_status",
             "get_range_details",
             "get_recording",
             "get_track",
             "list_metrics",
-            "list_recordings"
+            "list_recordings",
+            "run_query"
         ]
     );
     let tool = tools
@@ -190,6 +194,39 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
             }]
         }))
     );
+    let submitted = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "run_query", "arguments": {"text": "points | draw"}}
+        }))
+        .await;
+    let job = submitted.pointer("/result/structuredContent/job").unwrap();
+    assert_eq!(
+        submitted.pointer("/result/structuredContent"),
+        Some(&json!({"job": self::query_job_id(), "status": "preparing"}))
+    );
+    let status = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": {"name": "get_query_status", "arguments": {"job": job}}
+        }))
+        .await;
+    assert_eq!(
+        status.pointer("/result/structuredContent"),
+        Some(&json!({
+            "job": job, "status": "running", "tracks_prepared": 2, "track_total": 3
+        }))
+    );
+    let cancelled = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": {"name": "cancel_query", "arguments": {"job": job}}
+        }))
+        .await;
+    assert_eq!(
+        cancelled.pointer("/result/structuredContent"),
+        Some(&json!({"job": job, "status": "cancelling"}))
+    );
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -199,6 +236,31 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
 
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
+        Request::RunQuery(CheckQuery { text }) if text == "points | draw" => Ok(Reply::QueryJob {
+            job: QueryJobStatus {
+                job: self::query_job_id(),
+                state: QueryJobState::Preparing,
+            },
+        }),
+        Request::GetQueryStatus(QueryJobRequest { job }) if job == self::query_job_id() => {
+            Ok(Reply::QueryJob {
+                job: QueryJobStatus {
+                    job,
+                    state: QueryJobState::Running {
+                        tracks_prepared: 2,
+                        track_total: 3,
+                    },
+                },
+            })
+        }
+        Request::CancelQuery(QueryJobRequest { job }) if job == self::query_job_id() => {
+            Ok(Reply::QueryJob {
+                job: QueryJobStatus {
+                    job,
+                    state: QueryJobState::Cancelling,
+                },
+            })
+        }
         Request::CheckQuery(CheckQuery { text }) if text == "points | where speed > 30 km/h" => {
             Ok(Reply::QueryCheck {
                 validation: QueryValidation::Invalid {
@@ -248,6 +310,13 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
             },
         }),
         _ => Err(ErrorKind::InvalidInput.into()),
+    }
+}
+
+fn query_job_id() -> QueryJobId {
+    QueryJobId {
+        session: Uuid::from_u128(1),
+        id: Uuid::from_u128(3),
     }
 }
 

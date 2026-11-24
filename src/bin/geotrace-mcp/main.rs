@@ -5,7 +5,7 @@ use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
     CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
-    Reply, Request,
+    QueryJobRequest, Reply, Request,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -40,11 +40,34 @@ struct Companion {
 #[tool_router]
 impl Companion {
     #[tool(
+        description = "Cancel the running analysis for a query job. Poll with get_query_status until the job is terminal.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn cancel_query(&self, Parameters(args): Parameters<QueryJobRequest>) -> CallToolResult {
+        self.inspect(Request::CancelQuery(args)).await
+    }
+
+    #[tool(
         description = "Check query editor text against the loaded recording channels. Returns diagnostics with byte spans into the full text.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn check_query(&self, Parameters(args): Parameters<CheckQuery>) -> CallToolResult {
         self.inspect(Request::CheckQuery(args)).await
+    }
+
+    #[tool(
+        description = "Read the current status or summary of a query job returned by run_query.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_query_status(
+        &self,
+        Parameters(args): Parameters<QueryJobRequest>,
+    ) -> CallToolResult {
+        self.inspect(Request::GetQueryStatus(args)).await
     }
 
     #[tool(
@@ -93,11 +116,20 @@ impl Companion {
         self.inspect(Request::ListRecordings(args)).await
     }
 
+    #[tool(
+        description = "Start a background query using the current filter and enabled tracks. A busy response includes the active job ID. Poll the job with get_query_status.",
+        annotations(destructive_hint = false, open_world_hint = false)
+    )]
+    async fn run_query(&self, Parameters(args): Parameters<CheckQuery>) -> CallToolResult {
+        self.inspect(Request::RunQuery(args)).await
+    }
+
     async fn inspect(&self, request: Request) -> CallToolResult {
-        let checking_query = matches!(&request, Request::CheckQuery(_));
+        let checking_query = matches!(&request, Request::CheckQuery(_) | Request::RunQuery(_));
         let result = match self.bridge.request(request).await {
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
+            Ok(Reply::QueryJob { job }) => serde_json::to_value(job),
             Ok(Reply::Range { details }) => serde_json::to_value(details),
             Ok(Reply::Recording { details }) => serde_json::to_value(details),
             Ok(Reply::Recordings { page }) => serde_json::to_value(page),
@@ -127,6 +159,9 @@ impl Companion {
             ErrorCode::InvalidRequest => {
                 "GeoTrace could not read the request. Use the companion from the same release."
             }
+            ErrorCode::QueryJobNotFound => {
+                "GeoTrace no longer has that query job. Start the query again."
+            }
             ErrorCode::RecordingNotFound => {
                 "The recording is no longer loaded. List the loaded recordings again."
             }
@@ -135,7 +170,7 @@ impl Companion {
                 "The request is too large. Shorten the request and try again."
             }
             ErrorCode::StaleSession => {
-                "The desktop session has changed. List the loaded recordings from the beginning."
+                "The desktop session has changed. Use references from the current session."
             }
             ErrorCode::StaleTrack => {
                 "The track reference is stale. List the recording's tracks from the beginning."
