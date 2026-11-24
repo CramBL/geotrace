@@ -17,7 +17,8 @@ use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 use gt_session_bridge::{
-    ProcessingSettingKey, SettingApply, SettingInfo, SettingKey, SettingUnit, SettingValue,
+    ErrorCode, ProcessingSettingKey, SettingApply, SettingInfo, SettingInput, SettingKey,
+    SettingUnit, SettingValue,
 };
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig};
 use gt_types::{AssociationConfig, AssociationWindow};
@@ -180,6 +181,24 @@ pub(super) struct ProcessingControl {
 }
 
 impl ProcessingControl {
+    fn track_split_gap_range() -> RangeInclusive<f64> {
+        *TRACK_SPLIT_GAP_RANGE.start() as f64..=*TRACK_SPLIT_GAP_RANGE.end() as f64
+    }
+
+    fn write_clock_sensitivity(config: &mut SegmentationConfig, value: f64) -> bool {
+        std::mem::replace(
+            &mut config.generated_markers.clock_discontinuity_sigmas,
+            value,
+        )
+        .to_bits()
+            != value.to_bits()
+    }
+
+    fn write_track_split_gap(config: &mut SegmentationConfig, seconds: u64) -> bool {
+        let gap = Duration::seconds(seconds as i64);
+        std::mem::replace(&mut config.track_layout.track_split_gap, gap) != gap
+    }
+
     pub(super) const fn for_key(key: ProcessingSettingKey) -> Self {
         match key {
             ProcessingSettingKey::ClockDiscontinuitySigmas => Self {
@@ -248,7 +267,8 @@ impl ProcessingControl {
                 label: "Track split gap",
                 help: "Start a new track when the timestamps of consecutive fixes differ by at \
                        least this duration in either direction. With a five-minute gap, fixes \
-                       at 10:00 and 10:06 start separate tracks in either order.",
+                       at 10:00 and 10:06 start separate tracks in either order. The split gap \
+                       has a resolution of one second.",
                 input: ProcessingInput::TrackSplitGap,
             },
         }
@@ -260,6 +280,34 @@ impl ProcessingControl {
                 .iter()
                 .flat_map(|row| std::iter::once(*row).chain(row.sensitivity())),
         )
+    }
+
+    pub(super) fn set(
+        &self,
+        config: &mut SegmentationConfig,
+        input: SettingInput,
+    ) -> Result<bool, ErrorCode> {
+        match (self.input, input) {
+            (ProcessingInput::ClockSensitivity, SettingInput::Number(value)) => {
+                if !self.enabled(config) {
+                    return Err(ErrorCode::InactiveSetting);
+                }
+                if !CLOCK_SENSITIVITY_RANGE.contains(&value) {
+                    return Err(ErrorCode::InvalidSettingValue);
+                }
+                Ok(Self::write_clock_sensitivity(config, value))
+            }
+            (ProcessingInput::MarkerToggle(field), SettingInput::Boolean(value)) => {
+                Ok(std::mem::replace(field(&mut config.generated_markers), value) != value)
+            }
+            (ProcessingInput::TrackSplitGap, SettingInput::Number(value)) => {
+                if !Self::track_split_gap_range().contains(&value) || value.fract() != 0.0 {
+                    return Err(ErrorCode::InvalidSettingValue);
+                }
+                Ok(Self::write_track_split_gap(config, u64::from_f64(value)))
+            }
+            _ => Err(ErrorCode::InvalidSettingType),
+        }
     }
 
     pub(super) fn describe(self, mut config: SegmentationConfig) -> SettingInfo {
@@ -276,12 +324,15 @@ impl ProcessingControl {
             ProcessingInput::MarkerToggle(field) => SettingValue::Boolean {
                 value: *field(&mut config.generated_markers),
             },
-            ProcessingInput::TrackSplitGap => SettingValue::Number {
-                value: Some(config.track_layout.track_split_gap.as_seconds_f64()),
-                minimum: *TRACK_SPLIT_GAP_RANGE.start() as f64,
-                maximum: *TRACK_SPLIT_GAP_RANGE.end() as f64,
-                unit: SettingUnit::Seconds,
-            },
+            ProcessingInput::TrackSplitGap => {
+                let range = Self::track_split_gap_range();
+                SettingValue::Number {
+                    value: Some(config.track_layout.track_split_gap.as_seconds_f64()),
+                    minimum: *range.start(),
+                    maximum: *range.end(),
+                    unit: SettingUnit::Seconds,
+                }
+            }
         };
         SettingInfo {
             key: SettingKey::Processing(self.key),
@@ -320,21 +371,22 @@ impl ProcessingControl {
     fn show_input(&self, ui: &mut egui::Ui, config: &mut SegmentationConfig) -> egui::Response {
         match self.input {
             ProcessingInput::ClockSensitivity => {
-                let markers = &mut config.generated_markers;
-                let enabled = markers.detect_clock_discontinuities;
-                let sigmas = &mut markers.clock_discontinuity_sigmas;
-                let example_sigmas = *sigmas;
+                let enabled = self.enabled(config);
+                let example_sigmas = config.generated_markers.clock_discontinuity_sigmas;
                 let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(example_sigmas);
                 let response = ui.add_enabled(
                     enabled,
                     DragValue::from_get_set(|new| {
                         if enabled && let Some(new) = new.filter(|new| new.is_finite()) {
-                            *sigmas = new.clamp(
-                                *CLOCK_SENSITIVITY_RANGE.start(),
-                                *CLOCK_SENSITIVITY_RANGE.end(),
+                            Self::write_clock_sensitivity(
+                                config,
+                                new.clamp(
+                                    *CLOCK_SENSITIVITY_RANGE.start(),
+                                    *CLOCK_SENSITIVITY_RANGE.end(),
+                                ),
                             );
                         }
-                        *sigmas
+                        config.generated_markers.clock_discontinuity_sigmas
                     })
                     .range(CLOCK_SENSITIVITY_RANGE)
                     .clamp_existing_to_range(false)
@@ -358,7 +410,7 @@ impl ProcessingControl {
                 .checkbox(field(&mut config.generated_markers), "")
                 .on_hover_text(self.help),
             ProcessingInput::TrackSplitGap => {
-                let gap = &mut config.track_layout.track_split_gap;
+                let gap = config.track_layout.track_split_gap;
                 ui.horizontal(|ui| {
                     let mut gap_secs = gap.to_std().map_or_else(
                         |_| ProcessingSettings::default().track_split_gap_seconds,
@@ -372,7 +424,7 @@ impl ProcessingControl {
                         DurationDisplay::Days,
                     );
                     if gap_secs != initial_secs {
-                        *gap = Duration::seconds(gap_secs as i64);
+                        Self::write_track_split_gap(config, gap_secs);
                     }
                 })
                 .response
@@ -384,6 +436,11 @@ impl ProcessingControl {
         (self.key == ProcessingSettingKey::DetectClockDiscontinuities).then_some(Self::for_key(
             ProcessingSettingKey::ClockDiscontinuitySigmas,
         ))
+    }
+
+    fn enabled(&self, config: &SegmentationConfig) -> bool {
+        !matches!(self.input, ProcessingInput::ClockSensitivity)
+            || config.generated_markers.detect_clock_discontinuities
     }
 }
 

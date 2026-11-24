@@ -232,6 +232,14 @@ With `deferred_processing`, GeoTrace uses the setting when it processes a record
 Use Apply to loaded data in Settings to process the current recordings with updated settings.
 `open_setting` returns `setting_open_queued` when the bridge schedules the navigation.
 
+Use `set_setting` with a setting's `key` and a boolean or number in its reported unit.
+Numeric input must be finite and within the reported bounds.
+Enter the track split gap in whole seconds.
+Enable clock discontinuity detection before setting jump sensitivity.
+GeoTrace returns the effective value in the current session.
+GeoTrace saves eligible settings changes automatically and keeps changes in memory in read-only sessions.
+The `apply` field indicates when GeoTrace uses the setting.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

@@ -12,6 +12,8 @@ use strum::IntoEnumIterator as _;
 use super::ui_tests;
 use crate::app::settings_ui::{self, SettingsPage};
 
+mod edit;
+
 #[test]
 fn analysis_settings_report_live_values_and_share_the_control_bounds() {
     let mut harness = ui_tests::app_with_a_recording();

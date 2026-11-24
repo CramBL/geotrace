@@ -150,6 +150,20 @@ impl App {
         self.sync_db_path();
     }
 
+    pub(in crate::app) fn sync_settings_autosave(&mut self) {
+        let snapshot = self.collect_snapshot();
+        self.config.sync(snapshot);
+    }
+
+    pub(in crate::app) fn drive_settings_autosave(&mut self, ctx: &egui::Context) {
+        if self.config.take_flush() {
+            self.flush_settings();
+        }
+        if let Some(delay) = self.config.time_until_flush() {
+            ctx.request_repaint_after(delay);
+        }
+    }
+
     pub(in crate::app) fn collect_settings_for_flush(&self) -> crate::settings::Settings {
         let s = self.shared.borrow();
         let vis = &s.plot_state.metric_vis;

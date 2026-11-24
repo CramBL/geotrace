@@ -5,8 +5,8 @@ use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
     ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SettingSelection,
-    ShowOnMap, ShowOnPlot,
+    ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
+    SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -192,6 +192,18 @@ impl Companion {
     }
 
     #[tool(
+        description = "Set an Analysis or recording Processing control using its boolean or numeric value in the units from describe_setting. Returns the current setting.",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_setting(&self, Parameters(args): Parameters<SetSetting>) -> CallToolResult {
+        self.inspect(Request::SetSetting(args)).await
+    }
+
+    #[tool(
         description = "Frame and highlight a track, a half-open range of original point indices, or a retained point-query match on the map.",
         annotations(
             destructive_hint = false,
@@ -255,6 +267,9 @@ impl Companion {
     fn reply_error_message(code: ErrorCode) -> &'static str {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
+            ErrorCode::InactiveSetting => {
+                "This setting is disabled. Use describe_setting for the prerequisite."
+            }
             ErrorCode::InvalidPlotMetric => {
                 "Use metric identifiers from list_metrics that have plot series, such as velocity or eph."
             }
@@ -263,6 +278,12 @@ impl Companion {
             ErrorCode::InvalidRange => "Choose an ordered point range within the track.",
             ErrorCode::InvalidRequest => {
                 "GeoTrace could not read the request. Use the companion from the same release."
+            }
+            ErrorCode::InvalidSettingType => {
+                "Use the boolean or numeric value type from describe_setting."
+            }
+            ErrorCode::InvalidSettingValue => {
+                "Use a finite value that meets the limits and precision from describe_setting."
             }
             ErrorCode::NoVisibleMapGeometry => {
                 "The selected points have no visible geometry under the current map settings."

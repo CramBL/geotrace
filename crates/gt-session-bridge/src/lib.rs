@@ -33,8 +33,8 @@ pub use crate::query_results::{
 };
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
 pub use crate::settings::{
-    AnalysisSettingKey, ProcessingSettingKey, SettingApply, SettingInfo, SettingKey,
-    SettingSelection, SettingUnit, SettingValue,
+    AnalysisSettingKey, ProcessingSettingKey, SetSetting, SettingApply, SettingInfo, SettingInput,
+    SettingKey, SettingSelection, SettingUnit, SettingValue,
 };
 
 mod endpoint;

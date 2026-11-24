@@ -10,8 +10,8 @@ use gt_session_bridge::{
     QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow,
     QueryResultSource, QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation,
     RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request,
-    SettingApply, SettingInfo, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap,
-    ShowOnPlot, TrackReference,
+    SetSetting, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
+    SettingValue, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -96,6 +96,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "open_query",
             "open_setting",
             "run_query",
+            "set_setting",
             "show_on_map",
             "show_on_plot",
         ]
@@ -121,6 +122,18 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     assert_eq!(
         query_tool.pointer("/inputSchema/required"),
         Some(&json!(["text"]))
+    );
+    let setting_tool = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("set_setting")))
+        .unwrap();
+    assert_eq!(
+        setting_tool.pointer("/annotations/destructiveHint"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        setting_tool.pointer("/annotations/idempotentHint"),
+        Some(&json!(true))
     );
 
     let absent = client
@@ -345,17 +358,32 @@ async fn assert_setting_tools_report_typed_values(client: &mut Client) {
         described.pointer("/result/structuredContent"),
         Some(setting)
     );
+    let changed = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 21, "method": "tools/call",
+            "params": {
+                "name": "set_setting",
+                "arguments": {"key": "analysis.slip_window_min", "value": 12.5}
+            }
+        }))
+        .await;
+    let mut expected = setting.clone();
+    expected["value"] = json!(12.5);
+    assert_eq!(
+        changed.pointer("/result/structuredContent"),
+        Some(&expected)
+    );
 }
 
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
         Request::GetSettings => Ok(Reply::Settings {
-            settings: vec![self::setting_fixture()],
+            settings: vec![self::setting_fixture(10.0)],
         }),
         Request::DescribeSetting(SettingSelection {
             key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
         }) => Ok(Reply::Setting {
-            setting: self::setting_fixture(),
+            setting: self::setting_fixture(10.0),
         }),
         Request::OpenPoint(OpenPoint { track, point: 1 })
         | Request::ShowOnMap(ShowOnMap {
@@ -372,6 +400,12 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
         Request::OpenSetting(SettingSelection {
             key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
         }) => Ok(Reply::SettingOpenQueued),
+        Request::SetSetting(SetSetting {
+            key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
+            value: SettingInput::Number(12.5),
+        }) => Ok(Reply::Setting {
+            setting: self::setting_fixture(12.5),
+        }),
         Request::ShowOnPlot(ShowOnPlot {
             target:
                 RangeTarget::Track {
@@ -548,7 +582,7 @@ fn track_reference() -> TrackReference {
     }
 }
 
-fn setting_fixture() -> SettingInfo {
+fn setting_fixture(value: f64) -> SettingInfo {
     SettingInfo {
         key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
         page: "Analysis".to_owned(),
@@ -556,7 +590,7 @@ fn setting_fixture() -> SettingInfo {
         help: "Time window for calculating the slip rate.".to_owned(),
         apply: SettingApply::Live,
         value: SettingValue::Number {
-            value: Some(10.0),
+            value: Some(value),
             minimum: 1.0,
             maximum: 120.0,
             unit: SettingUnit::Minutes,

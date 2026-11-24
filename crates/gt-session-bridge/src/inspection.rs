@@ -33,6 +33,7 @@ impl<'a> Inspection<'a> {
             | Request::OpenQuery(_)
             | Request::OpenSetting(_)
             | Request::RunQuery(_)
+            | Request::SetSetting(_)
             | Request::ShowOnMap(_)
             | Request::ShowOnPlot(_) => Err(ErrorCode::InvalidRequest),
             Request::CheckQuery(args) => QueryValidation::check(args.text, self.files.files())
