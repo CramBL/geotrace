@@ -7,7 +7,7 @@ use gt_types::Generation;
 use uuid::Uuid;
 
 use super::App;
-use super::query_run::{BackgroundQuery, QuerySeries};
+use super::query_run::{BackgroundQuery, CapturedQueryInputs, QuerySeries};
 use super::session_map::MapPresentation;
 
 #[derive(Default)]
@@ -19,6 +19,19 @@ impl SessionQuery {
     #[cfg(test)]
     pub(super) fn is_active(&self) -> bool {
         self.active_job().is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn retained_reply(&self) -> Option<Reply> {
+        self.job.as_ref().map(Job::reply)
+    }
+
+    pub(super) fn refresh(&mut self, inputs: CapturedQueryInputs<'_>) {
+        if let Some(job) = &mut self.job
+            && job.can_refresh(inputs.run_inputs().loaded_files.data_generation())
+        {
+            job.query.update(inputs);
+        }
     }
 
     fn poll(&mut self) {
@@ -126,12 +139,8 @@ impl Job {
         }
         let series = QuerySeries::capture(app);
         let shared = app.shared.borrow();
-        let inputs = series.inputs(
-            shared.loaded_files.view(),
-            shared.tree.visibility(),
-            &shared.filter,
-        );
-        self.phase = if inputs.is_some_and(|inputs| self.query.start(ctx, inputs)) {
+        let inputs = series.inputs(shared.loaded_files.view(), &shared.tree, &shared.filter);
+        self.phase = if inputs.is_some_and(|inputs| self.query.start(ctx, inputs.run_inputs())) {
             JobPhase::Started
         } else {
             JobPhase::Failed
@@ -149,21 +158,26 @@ impl Job {
         }
     }
 
-    fn refresh(&mut self, app: &mut App) {
+    fn can_refresh(&mut self, data_generation: Generation<RecordingData>) -> bool {
         if self.phase != JobPhase::Started || self.query.session().results().is_none() {
-            return;
+            return false;
         }
-        if self.data_generation != app.shared.borrow().loaded_files.data_generation() {
+        if self.data_generation != data_generation {
             self.phase = JobPhase::Stale;
+            return false;
+        }
+        true
+    }
+
+    fn refresh(&mut self, app: &mut App) {
+        if !self.can_refresh(app.shared.borrow().loaded_files.data_generation()) {
             return;
         }
         let series = QuerySeries::capture(app);
         let shared = app.shared.borrow();
-        if let Some(inputs) = series.inputs(
-            shared.loaded_files.view(),
-            shared.tree.visibility(),
-            &shared.filter,
-        ) {
+        if let Some(inputs) =
+            series.inputs(shared.loaded_files.view(), &shared.tree, &shared.filter)
+        {
             self.query.update(inputs);
         }
     }

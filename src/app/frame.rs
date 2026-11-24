@@ -785,6 +785,9 @@ impl App {
         CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
             let mut s = self.shared.borrow_mut();
+            if let Some(inputs) = query_series.inputs(s.loaded_files.view(), &s.tree, &s.filter) {
+                self.session_query.refresh(inputs);
+            }
             s.discard_stale_session_map(&mut self.map, self.query_window.matches());
             let plot_hover_scope = match s.highlight.hover {
                 Some(HighlightScope::File { .. })
@@ -955,9 +958,7 @@ impl App {
             // frame's value) so it stays set only while the sky-trails window
             // below is driving a scrub, and vanishes as soon as it closes.
             highlight.scrub_time = None;
-            if let Some(inputs) =
-                query_series.inputs(loaded_files.view(), tree.visibility(), filter)
-            {
+            if let Some(inputs) = query_series.inputs(loaded_files.view(), tree, filter) {
                 self.query_window.show(
                     ui.ctx(),
                     inputs,

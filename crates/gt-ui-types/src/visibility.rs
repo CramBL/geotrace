@@ -5,7 +5,7 @@ use gt_filter::{GlobalFilter, TimeWindow};
 use gt_types::satellites::Satellites;
 use gt_types::{
     CustomMarker, DataCategory, DataCategorySet, EventMarker, FileIdx, GeneratedMarker, LoadedFile,
-    LoadedTrack, NavPoint, PointIdx, TrackIdx, TrackRef,
+    LoadedTrack, NavPoint, PointIdx, TrackIdx, TrackRef, Versionable,
 };
 use smallvec::SmallVec;
 use strum::EnumCount;
@@ -20,6 +20,8 @@ use crate::query_matches::QueryMatches;
 pub struct TrackDataVisibility {
     pub files: Vec<FileVisibility>,
 }
+
+impl Versionable for TrackDataVisibility {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileVisibility {

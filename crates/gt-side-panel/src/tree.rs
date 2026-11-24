@@ -4,7 +4,8 @@ use std::mem;
 use gt_history_types::DatabaseRef;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_types::{
-    DataCategory, DataCategorySet, FileIdx, GeneratedMarkerKindTag, LoadedTrack, TrackIdx, TrackRef,
+    DataCategory, DataCategorySet, FileIdx, GeneratedMarkerKindTag, Generation, LoadedTrack,
+    TrackIdx, TrackRef, Versioned,
 };
 use gt_ui_types::{
     EventMarkerVisibility, FileVisibility, GeneratedMarkerVisibility, TrackDataVisibility,
@@ -257,7 +258,7 @@ pub struct TreeState {
     pub reveal_request: Option<NodeKey>,
     visible_section_fraction: f32,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
-    visibility: TrackDataVisibility,
+    visibility: Versioned<TrackDataVisibility>,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
     event_marker_visibility: EventMarkerVisibility,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
@@ -291,7 +292,7 @@ impl TreeState {
             detached: false,
             reveal_request: None,
             visible_section_fraction: crate::VISIBLE_SECTION_DEFAULT_FRACTION,
-            visibility: TrackDataVisibility { files: Vec::new() },
+            visibility: Versioned::new(TrackDataVisibility { files: Vec::new() }),
             event_marker_visibility: EventMarkerVisibility::new(),
             generated_marker_visibility: GeneratedMarkerVisibility::new(),
             hidden_tracks_by_recording: BTreeMap::new(),
@@ -926,7 +927,11 @@ impl TreeState {
 
     /// Returns the derived visibility state for gt-map renderers.
     pub fn visibility(&self) -> &TrackDataVisibility {
-        &self.visibility
+        self.visibility.get()
+    }
+
+    pub fn visibility_generation(&self) -> Generation<TrackDataVisibility> {
+        self.visibility.generation()
     }
 
     /// Returns the derived event-marker visibility for gt-map renderers.
@@ -943,7 +948,7 @@ impl TreeState {
     /// when the first track becomes visible.
     pub fn all_hidden(&self) -> bool {
         !self
-            .visibility
+            .visibility()
             .files
             .iter()
             .any(|f| f.enabled && f.tracks.iter().any(|t| t.enabled))
@@ -955,7 +960,7 @@ impl TreeState {
     fn rebuild_visibility(&mut self) {
         self.record_hidden_tracks_of_the_loaded_recordings();
         let files = &self.files;
-        let vis = &mut self.visibility;
+        let vis = self.visibility.get_mut();
 
         vis.files.resize_with(files.len(), || FileVisibility {
             enabled: true,
@@ -1010,7 +1015,7 @@ impl TreeState {
         let generated_markers_visible = track_node.generated_markers_visible;
         let event_markers_visible = !matches!(track_node.event_paths.aggregate(), CheckState::Off);
 
-        if let Some(file_vis) = track.fi.get_mut(&mut self.visibility.files)
+        if let Some(file_vis) = track.fi.get_mut(&mut self.visibility.get_mut().files)
             && let Some(tv) = track.index.get_mut(&mut file_vis.tracks)
         {
             tv.enabled = enabled;

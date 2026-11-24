@@ -22,7 +22,7 @@ use gt_side_panel::widgets::PointClickRequests;
 use gt_ui_types::{MapHighlight, MapPresence, MatchRevealTarget, QueryMatches, StaleRunNote};
 use strum::{EnumIter, IntoEnumIterator as _};
 
-use crate::app::query_run::BackgroundQuery;
+use crate::app::query_run::{BackgroundQuery, CapturedQueryInputs};
 use crate::settings::QueryHistoryEntry;
 
 use self::results::{ResultsOutputs, ResultsState, ResultsTables};
@@ -352,14 +352,15 @@ impl QueryWindow {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        inputs: RunInputs<'_>,
+        captured_inputs: CapturedQueryInputs<'_>,
         map_scope: MapPresence<'_>,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
         reveal_matches_request: &mut Option<MatchRevealTarget>,
     ) {
+        let inputs = captured_inputs.run_inputs();
         let RunInputs { loaded_files, .. } = inputs;
-        if self.query.update(inputs) {
+        if self.query.update(captured_inputs) {
             self.tab = QueryTab::Results;
         }
 
