@@ -1,3 +1,4 @@
+use egui::style::ScrollAnimation;
 use egui::{ScrollArea, Window};
 use egui_phosphor::regular::AIRPLANE_TILT as ICON_AIRPLANE_TILT;
 use egui_phosphor::regular::GAUGE as ICON_GAUGE;
@@ -14,6 +15,7 @@ use strum::{EnumIter, IntoEnumIterator};
 
 use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
+use self::processing::ProcessingControl;
 use super::App;
 use super::backfill_ui::BackfillReadiness;
 use crate::settings::AnalysisSettings;
@@ -48,6 +50,13 @@ pub(super) enum SettingsPage {
 }
 
 impl SettingsPage {
+    fn for_setting(key: SettingKey) -> Self {
+        match key {
+            SettingKey::Analysis(_) => Self::Analysis,
+            SettingKey::Processing(_) => Self::Processing,
+        }
+    }
+
     pub(super) fn rail_label(self) -> &'static str {
         match self {
             Self::Processing => "Processing",
@@ -91,13 +100,23 @@ impl SettingsPage {
             Self::Interface => interface::SEARCHABLE_LABELS,
             Self::Application => application::SEARCHABLE_LABELS,
         };
-        labels.iter().copied().chain(
-            (self == Self::Analysis)
-                .then_some(analysis::ANALYSIS_CONTROLS)
-                .into_iter()
-                .flatten()
-                .map(|control| control.label),
-        )
+        labels
+            .iter()
+            .copied()
+            .chain(
+                (self == Self::Analysis)
+                    .then_some(analysis::ANALYSIS_CONTROLS)
+                    .into_iter()
+                    .flatten()
+                    .map(|control| control.label),
+            )
+            .chain(
+                (self == Self::Processing)
+                    .then(ProcessingControl::catalog)
+                    .into_iter()
+                    .flatten()
+                    .map(|control| control.label),
+            )
     }
 
     /// The header the page opens with: the same icon and label the rail entry
@@ -114,7 +133,7 @@ impl SettingsPage {
 impl App {
     pub(super) fn open_setting(&mut self, key: SettingKey) {
         self.settings_open = true;
-        self.settings_page = SettingsPage::Analysis;
+        self.settings_page = SettingsPage::for_setting(key);
         self.setting_to_reveal = Some(key);
     }
 
@@ -193,15 +212,24 @@ impl App {
         }
 
         self.settings_open = open;
-        if !open || self.settings_page != SettingsPage::Analysis {
+        if !open
+            || self
+                .setting_to_reveal
+                .is_some_and(|key| self.settings_page != SettingsPage::for_setting(key))
+        {
             self.setting_to_reveal = None;
         }
         apply
     }
 
     pub(super) fn describe_setting(&self, key: SettingKey) -> SettingInfo {
-        let values = AnalysisSettings::from(&self.shared.borrow().plot_state);
-        analysis::AnalysisControl::for_key(key).describe(values)
+        match key {
+            SettingKey::Analysis(key) => analysis::AnalysisControl::for_key(key)
+                .describe(AnalysisSettings::from(&self.shared.borrow().plot_state)),
+            SettingKey::Processing(key) => {
+                ProcessingControl::for_key(key).describe(self.processing_config)
+            }
+        }
     }
 
     pub(super) fn get_settings(&self) -> Vec<SettingInfo> {
@@ -209,7 +237,23 @@ impl App {
         analysis::ANALYSIS_CONTROLS
             .iter()
             .map(|control| control.describe(values))
+            .chain(
+                ProcessingControl::catalog()
+                    .map(|control| control.describe(self.processing_config)),
+            )
             .collect()
+    }
+
+    fn reveal_setting_row(&mut self, ui: &egui::Ui, key: SettingKey, rect: egui::Rect) {
+        if self.setting_to_reveal == Some(key)
+            && !ui.is_sizing_pass()
+            && ui.clip_rect().is_positive()
+        {
+            ui.ctx().move_to_top(ui.layer_id());
+            ui.scroll_to_rect_animation(rect, None, ScrollAnimation::none());
+            self.setting_to_reveal = None;
+            ui.ctx().request_repaint();
+        }
     }
 
     fn show_category_rail(&mut self, ui: &mut egui::Ui) {

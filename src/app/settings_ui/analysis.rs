@@ -1,13 +1,14 @@
 use std::ops::RangeInclusive;
 
-use egui::style::ScrollAnimation;
 use egui::{DragValue, Grid};
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
-use gt_session_bridge::{SettingApply, SettingInfo, SettingKey, SettingUnit, SettingValue};
+use gt_session_bridge::{
+    AnalysisSettingKey, SettingApply, SettingInfo, SettingKey, SettingUnit, SettingValue,
+};
 
 use crate::app::App;
 use crate::app::settings_ui::SettingsPage;
@@ -28,19 +29,11 @@ impl App {
                         .on_hover_text(control.help);
                     let (input, edited) = control.input.show(ui, &mut values);
                     let input = input.on_hover_text(control.help);
-                    if self.setting_to_reveal == Some(control.key)
-                        && !ui.is_sizing_pass()
-                        && ui.clip_rect().is_positive()
-                    {
-                        ui.ctx().move_to_top(ui.layer_id());
-                        ui.scroll_to_rect_animation(
-                            label.rect.union(input.rect),
-                            None,
-                            ScrollAnimation::none(),
-                        );
-                        self.setting_to_reveal = None;
-                        ui.ctx().request_repaint();
-                    }
+                    self.reveal_setting_row(
+                        ui,
+                        SettingKey::Analysis(control.key),
+                        label.rect.union(input.rect),
+                    );
                     changed |= edited;
                     ui.end_row();
                 }
@@ -66,7 +59,7 @@ impl App {
 }
 
 pub(super) struct AnalysisControl {
-    key: SettingKey,
+    key: AnalysisSettingKey,
     icon: &'static str,
     pub(super) label: &'static str,
     help: &'static str,
@@ -75,9 +68,9 @@ pub(super) struct AnalysisControl {
 }
 
 impl AnalysisControl {
-    pub(super) const fn for_key(key: SettingKey) -> Self {
+    pub(super) const fn for_key(key: AnalysisSettingKey) -> Self {
         match key {
-            SettingKey::AnalysisClockExcursionThreshold => Self {
+            AnalysisSettingKey::ClockExcursionThreshold => Self {
                 key,
                 icon: ICON_WARNING,
                 label: CLOCK_OFFSET_EXCURSION_LABEL,
@@ -93,7 +86,7 @@ impl AnalysisControl {
                     speed: 1.0,
                 },
             },
-            SettingKey::AnalysisElevationMask => Self {
+            AnalysisSettingKey::ElevationMask => Self {
                 key,
                 icon: ICON_FUNNEL,
                 label: "Elevation mask",
@@ -108,7 +101,7 @@ impl AnalysisControl {
                     speed: 1.0,
                 },
             },
-            SettingKey::AnalysisMarkBackwardTimeSteps => Self {
+            AnalysisSettingKey::MarkBackwardTimeSteps => Self {
                 key,
                 icon: ICON_CLOCK_COUNTER_CLOCKWISE,
                 label: "Mark backward time steps",
@@ -119,7 +112,7 @@ impl AnalysisControl {
                 apply: SettingApply::Live,
                 input: AnalysisInput::Toggle(|values| &mut values.mark_backward_time_steps),
             },
-            SettingKey::AnalysisMarkMaskedFix => Self {
+            AnalysisSettingKey::MarkMaskedFix => Self {
                 key,
                 icon: ICON_WARNING,
                 label: "Mark masked-out used satellites",
@@ -128,7 +121,7 @@ impl AnalysisControl {
                 apply: SettingApply::Live,
                 input: AnalysisInput::Toggle(|values| &mut values.mark_masked_fix),
             },
-            SettingKey::AnalysisSlipWindow => Self {
+            AnalysisSettingKey::SlipWindow => Self {
                 key,
                 icon: ICON_CLOCK,
                 label: "Slip window",
@@ -142,7 +135,7 @@ impl AnalysisControl {
                     speed: 1.0,
                 },
             },
-            SettingKey::AnalysisSnrDropThreshold => Self {
+            AnalysisSettingKey::SnrDropThreshold => Self {
                 key,
                 icon: ICON_WAVE_SINE,
                 label: "SNR drop threshold",
@@ -167,9 +160,9 @@ impl AnalysisControl {
             } => {
                 let number = *field(&mut values);
                 SettingValue::Number {
-                    value: number.is_finite().then_some(number),
-                    minimum: *range.start(),
-                    maximum: *range.end(),
+                    value: number.is_finite().then_some(f64::from(number)),
+                    minimum: f64::from(*range.start()),
+                    maximum: f64::from(*range.end()),
                     unit: *unit,
                 }
             }
@@ -178,7 +171,7 @@ impl AnalysisControl {
             },
         };
         SettingInfo {
-            key: self.key,
+            key: SettingKey::Analysis(self.key),
             page: SettingsPage::Analysis.rail_label().to_owned(),
             label: self.label.to_owned(),
             help: self.help.to_owned(),
@@ -214,6 +207,7 @@ impl AnalysisInput {
                     SettingUnit::Degrees => "°",
                     SettingUnit::Minutes => "min",
                     SettingUnit::Seconds => "s",
+                    SettingUnit::RobustStandardDeviations => "σ",
                 };
                 let response = ui.add(
                     DragValue::from_get_set(|new| {
@@ -242,10 +236,10 @@ impl AnalysisInput {
 pub(super) const CLOCK_OFFSET_EXCURSION_LABEL: &str = "Clock offset excursion";
 
 pub(super) const ANALYSIS_CONTROLS: &[AnalysisControl] = &[
-    AnalysisControl::for_key(SettingKey::AnalysisElevationMask),
-    AnalysisControl::for_key(SettingKey::AnalysisSnrDropThreshold),
-    AnalysisControl::for_key(SettingKey::AnalysisSlipWindow),
-    AnalysisControl::for_key(SettingKey::AnalysisClockExcursionThreshold),
-    AnalysisControl::for_key(SettingKey::AnalysisMarkMaskedFix),
-    AnalysisControl::for_key(SettingKey::AnalysisMarkBackwardTimeSteps),
+    AnalysisControl::for_key(AnalysisSettingKey::ElevationMask),
+    AnalysisControl::for_key(AnalysisSettingKey::SnrDropThreshold),
+    AnalysisControl::for_key(AnalysisSettingKey::SlipWindow),
+    AnalysisControl::for_key(AnalysisSettingKey::ClockExcursionThreshold),
+    AnalysisControl::for_key(AnalysisSettingKey::MarkMaskedFix),
+    AnalysisControl::for_key(AnalysisSettingKey::MarkBackwardTimeSteps),
 ];

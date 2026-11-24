@@ -1,21 +1,48 @@
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum SettingKey {
+    Analysis(AnalysisSettingKey),
+    Processing(ProcessingSettingKey),
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, EnumIter, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub enum SettingKey {
+pub enum AnalysisSettingKey {
     #[serde(rename = "analysis.clock_excursion_threshold_s")]
-    AnalysisClockExcursionThreshold,
+    ClockExcursionThreshold,
     #[serde(rename = "analysis.elevation_mask_deg")]
-    AnalysisElevationMask,
+    ElevationMask,
     #[serde(rename = "analysis.mark_backward_time_steps")]
-    AnalysisMarkBackwardTimeSteps,
+    MarkBackwardTimeSteps,
     #[serde(rename = "analysis.mark_masked_fix")]
-    AnalysisMarkMaskedFix,
+    MarkMaskedFix,
     #[serde(rename = "analysis.slip_window_min")]
-    AnalysisSlipWindow,
+    SlipWindow,
     #[serde(rename = "analysis.snr_drop_db")]
-    AnalysisSnrDropThreshold,
+    SnrDropThreshold,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, EnumIter, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum ProcessingSettingKey {
+    #[serde(rename = "processing.clock_discontinuity_sigmas")]
+    ClockDiscontinuitySigmas,
+    #[serde(rename = "processing.detect_clock_discontinuities")]
+    DetectClockDiscontinuities,
+    #[serde(rename = "processing.detect_clock_offset_excursions")]
+    DetectClockOffsetExcursions,
+    #[serde(rename = "processing.detect_gnss_fix_lost")]
+    DetectGnssFixLost,
+    #[serde(rename = "processing.detect_gnss_fix_regained")]
+    DetectGnssFixRegained,
+    #[serde(rename = "processing.detect_slips")]
+    DetectSlips,
+    #[serde(rename = "processing.track_split_gap_seconds")]
+    TrackSplitGap,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -39,6 +66,7 @@ pub struct SettingInfo {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingApply {
+    DeferredProcessing,
     Live,
     LiveWithDeferredMarkers,
 }
@@ -49,6 +77,7 @@ pub enum SettingUnit {
     DecibelHertz,
     Degrees,
     Minutes,
+    RobustStandardDeviations,
     Seconds,
 }
 
@@ -59,9 +88,9 @@ pub enum SettingValue {
         value: bool,
     },
     Number {
-        value: Option<f32>,
-        minimum: f32,
-        maximum: f32,
+        value: Option<f64>,
+        minimum: f64,
+        maximum: f64,
         unit: SettingUnit,
     },
 }

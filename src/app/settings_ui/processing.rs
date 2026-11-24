@@ -1,6 +1,9 @@
 //! Settings applied when a recording is loaded or explicitly re-applied.
 
+use std::ops::RangeInclusive;
+
 use chrono::Duration;
+use egui::emath::Numeric as _;
 use egui::{DragValue, Grid};
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_ARROW_COUNTER_CLOCKWISE;
 use egui_phosphor::regular::ARROWS_IN_LINE_HORIZONTAL as ICON_ARROWS_IN_LINE_HORIZONTAL;
@@ -13,6 +16,10 @@ use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
+use gt_session_bridge::{
+    ProcessingSettingKey, SettingApply, SettingInfo, SettingKey, SettingUnit, SettingValue,
+};
+use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig};
 use gt_types::{AssociationConfig, AssociationWindow};
 
 use crate::app::App;
@@ -21,7 +28,7 @@ use crate::app::log_viewer::association_dialog::AUTOMATIC_POSITION_SOURCE_HOVER;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
 use crate::app::settings_ui::label::SettingsLabel;
-use crate::settings::InitialPositionSourcePolicy;
+use crate::settings::{InitialPositionSourcePolicy, ProcessingSettings};
 
 impl App {
     /// Returns `true` in the frame when the user clicks "Apply to loaded data".
@@ -31,26 +38,7 @@ impl App {
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
-                ui.label(format!("{ICON_SCISSORS} {TRACK_SPLIT_GAP_LABEL}"))
-                    .on_hover_text(
-                        "Consecutive GPS points whose timestamps differ by this gap \
-                         start a new track, whether the second is later or earlier \
-                         than the first. For example, with a gap of 5min, two fixes \
-                         at 10:00 and 10:06 would be split into separate tracks, and \
-                         so would two at 10:06 and 10:00.",
-                    );
-                let mut gap_secs = self
-                    .processing_config
-                    .track_layout
-                    .track_split_gap
-                    .to_std()
-                    .map_or(300, |d| d.as_secs());
-                ui.horizontal(|ui| {
-                    compound_duration_input(ui, &mut gap_secs, 30, 7 * 86400, true, true);
-                });
-                self.processing_config.track_layout.track_split_gap =
-                    chrono::Duration::seconds(gap_secs as i64);
-                ui.end_row();
+                TRACK_SPLIT_GAP.show_row(ui, self);
 
                 let debug_time_repair_help =
                     "Open debug… splits a recording when timestamps step backwards by at least \
@@ -63,13 +51,12 @@ impl App {
                 let mut debug_time_repair_threshold_seconds =
                     u64::from(self.debug_time_repair_threshold_seconds);
                 ui.horizontal(|ui| {
-                    compound_duration_input(
+                    self::compound_duration_input(
                         ui,
                         &mut debug_time_repair_threshold_seconds,
-                        u64::from(loader::DEBUG_TIME_REPAIR_MIN_THRESHOLD_SECONDS),
-                        u64::from(loader::DEBUG_TIME_REPAIR_MAX_THRESHOLD_SECONDS),
-                        true,
-                        true,
+                        u64::from(loader::DEBUG_TIME_REPAIR_MIN_THRESHOLD_SECONDS)
+                            ..=u64::from(loader::DEBUG_TIME_REPAIR_MAX_THRESHOLD_SECONDS),
+                        DurationDisplay::Days,
                     );
                 })
                 .response
@@ -91,7 +78,12 @@ impl App {
                 );
                 let mut window_s = Duration::from(self.assoc_config.log_association_window).num_seconds().unsigned_abs();
                 ui.horizontal(|ui| {
-                    compound_duration_input(ui, &mut window_s, 0, Duration::from(AssociationWindow::MAX).num_seconds().unsigned_abs(), false, false);
+                    self::compound_duration_input(
+                        ui,
+                        &mut window_s,
+                        0..=Duration::from(AssociationWindow::MAX).num_seconds().unsigned_abs(),
+                        DurationDisplay::Minutes,
+                    );
                 });
                 match AssociationWindow::try_from_seconds(window_s) {
                     Ok(window) => self.assoc_config.log_association_window = window,
@@ -126,9 +118,9 @@ impl App {
             }
             let reset_label = format!("{ICON_ARROW_COUNTER_CLOCKWISE} {RESTORE_DEFAULTS_LABEL}");
             if ui.button(reset_label).clicked() {
-                let defaults = crate::settings::ProcessingSettings::default();
+                let defaults = ProcessingSettings::default();
                 self.processing_config.track_layout.track_split_gap =
-                    chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
+                    Duration::seconds(defaults.track_split_gap_seconds as i64);
                 self.debug_time_repair_threshold_seconds =
                     defaults.debug_time_repair_backward_jump_threshold_seconds;
                 self.assoc_config.log_association_window =
@@ -171,207 +163,330 @@ impl App {
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
-                let fix_lost_help =
-                    "Mark each epoch where the GNSS fix dropped (the receiver stopped resolving \
-                     a position). For example, entering a tunnel typically drops the fix.";
-                ui.label(format!("{ICON_X_CIRCLE} {GNSS_FIX_LOST_LABEL}"))
-                    .on_hover_text(fix_lost_help);
-                ui.checkbox(
-                    &mut self.processing_config.generated_markers.detect_gnss_fix_lost,
-                    "",
-                )
-                .on_hover_text(fix_lost_help);
-                ui.end_row();
-
-                let fix_regained_help =
-                    "Mark each epoch where the GNSS fix returned after being lost, annotated with \
-                     how long it was gone.";
-                ui.label(format!("{ICON_CHECK_CIRCLE} {GNSS_FIX_REGAINED_LABEL}"))
-                    .on_hover_text(fix_regained_help);
-                ui.checkbox(
-                    &mut self
-                        .processing_config
-                        .generated_markers
-                        .detect_gnss_fix_regained,
-                    "",
-                )
-                .on_hover_text(fix_regained_help);
-                ui.end_row();
-
-                // Clock discontinuity: the toggle and its jump sensitivity share
-                // one row. The sensitivity stays visible and grays out when
-                // detection is off (DESIGN.md: keep the layout stable and the
-                // feature discoverable).
-                let clock_help =
-                    "Flag abrupt jumps in the GPS/system clock offset - e.g. a device resuming \
-                     from suspend, where a stale GPS timestamp meets a fresh system timestamp. \
-                     Surfaced for inspection; the underlying data is never altered.";
-                ui.label(format!("{ICON_WARNING} {CLOCK_DISCONTINUITY_LABEL}"))
-                    .on_hover_text(clock_help);
-                ui.horizontal(|ui| {
-                    ui.checkbox(
-                        &mut self
-                            .processing_config
-                            .generated_markers
-                            .detect_clock_discontinuities,
-                        "",
-                    )
-                    .on_hover_text(clock_help);
-                    let detect_on = self
-                        .processing_config
-                        .generated_markers
-                        .detect_clock_discontinuities;
-                    let sigmas = self
-                        .processing_config
-                        .generated_markers
-                        .clock_discontinuity_sigmas;
-                    let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
-                    let sensitivity = ui.add_enabled(
-                        detect_on,
-                        DragValue::new(
-                            &mut self
-                                .processing_config
-                                .generated_markers
-                                .clock_discontinuity_sigmas,
-                        )
-                        .range(1.0..=20.0)
-                        .speed(0.1)
-                        .fixed_decimals(1)
-                        .suffix("σ"),
-                    );
-                    if detect_on {
-                        sensitivity.on_hover_text(format!(
-                            "Jump sensitivity: how far a jump must stand out from the track's \
-                             normal clock variation to be flagged, in robust standard deviations. \
-                             Lower flags more (smaller) jumps; higher flags only the most extreme.\
-                             \n\nFor example, on a steady recording {sigmas:.1}σ flags jumps \
-                             larger than about {floor_s:.1}s; on a noisier one the bar rises \
-                             with the track's own variation.",
-                        ));
-                    } else {
-                        sensitivity.on_hover_text(
-                            "Enable clock discontinuity to adjust the jump sensitivity",
-                        );
-                    }
-                });
-                ui.end_row();
-
-                let excursion_help =
-                    "Mark each clock offset excursion: a sample or two whose GPS/system clock \
-                     offset left the track's baseline and returned - typically a receiver \
-                     reporting its pre-gap GPS epoch for the first fix after a recording gap. \
-                     The threshold comes from the Analysis page, so the markers and the \
-                     plot's off-scale indicators agree.";
-                ui.label(format!("{ICON_WARNING} {CLOCK_OFFSET_EXCURSION_LABEL}"))
-                    .on_hover_text(excursion_help);
-                ui.checkbox(
-                    &mut self
-                        .processing_config
-                        .generated_markers
-                        .detect_clock_offset_excursions,
-                    "",
-                )
-                .on_hover_text(excursion_help);
-                ui.end_row();
-
-                let slip_help =
-                    "Mark each loss-of-lock (cycle slip): an above-mask satellite that vanished, \
-                     or whose SNR dropped sharply between epochs. Hover a marker for which \
-                     satellite slipped and its before/after elevation, azimuth, and SNR. \
-                     Detection uses the elevation mask and SNR-drop threshold from the Analysis \
-                     page, so the markers and the slip-rate plot agree.";
-                ui.label(format!("{ICON_LINK_BREAK} {SATELLITE_SLIP_LABEL}"))
-                    .on_hover_text(slip_help);
-                ui.checkbox(
-                    &mut self.processing_config.generated_markers.detect_slips,
-                    "",
-                )
-                .on_hover_text(slip_help);
-                ui.end_row();
+                for control in GENERATED_MARKER_CONTROLS {
+                    control.show_row(ui, self);
+                }
             });
     }
 }
 
-/// Renders compound duration fields (e.g. `[0d] [9h] [30m] [0s]`).
-///
-/// Each component is independent. The total is clamped to `[min_secs, max_secs]`.
-fn compound_duration_input(
-    ui: &mut egui::Ui,
-    value_secs: &mut u64,
-    min_secs: u64,
-    max_secs: u64,
-    show_days: bool,
-    show_hours: bool,
-) {
-    let mut remaining = *value_secs;
-    let mut d = if show_days {
-        let v = remaining / 86400;
-        remaining %= 86400;
-        v
-    } else {
-        0
-    };
-    let mut h = if show_hours {
-        let v = remaining / 3600;
-        remaining %= 3600;
-        v
-    } else {
-        0
-    };
-    let mut m = remaining / 60;
-    let mut s = remaining % 60;
+#[derive(Clone, Copy)]
+pub(super) struct ProcessingControl {
+    key: ProcessingSettingKey,
+    icon: &'static str,
+    pub(super) label: &'static str,
+    help: &'static str,
+    input: ProcessingInput,
+}
 
-    let max_d = max_secs / 86400;
-    let max_m = if show_hours { 59 } else { max_secs / 60 };
-
-    let mut changed = false;
-    if show_days {
-        changed |= ui
-            .add(DragValue::new(&mut d).range(0..=max_d).suffix("d"))
-            .changed();
+impl ProcessingControl {
+    pub(super) const fn for_key(key: ProcessingSettingKey) -> Self {
+        match key {
+            ProcessingSettingKey::ClockDiscontinuitySigmas => Self {
+                key,
+                icon: ICON_WARNING,
+                label: "Jump sensitivity",
+                help: "The clock discontinuity test compares each jump with the track's normal \
+                       clock variation in robust standard deviations. Lower values flag smaller \
+                       jumps. Enable Clock discontinuity to adjust the sensitivity.",
+                input: ProcessingInput::ClockSensitivity,
+            },
+            ProcessingSettingKey::DetectClockDiscontinuities => Self {
+                key,
+                icon: ICON_WARNING,
+                label: "Clock discontinuity",
+                help: "Mark abrupt jumps in the GPS/system clock offset. For example, a device \
+                       can report an old GPS timestamp with the current system timestamp after \
+                       resuming from suspend.",
+                input: ProcessingInput::MarkerToggle(|markers| {
+                    &mut markers.detect_clock_discontinuities
+                }),
+            },
+            ProcessingSettingKey::DetectClockOffsetExcursions => Self {
+                key,
+                icon: ICON_WARNING,
+                label: CLOCK_OFFSET_EXCURSION_LABEL,
+                help: "Mark isolated departures from the track's baseline GPS/system clock \
+                       offset. For example, a receiver can report its last GPS timestamp from \
+                       before a recording gap on the first fix after the gap. The Analysis page \
+                       sets the threshold for both markers and the plot's off-scale indicators.",
+                input: ProcessingInput::MarkerToggle(|markers| {
+                    &mut markers.detect_clock_offset_excursions
+                }),
+            },
+            ProcessingSettingKey::DetectGnssFixLost => Self {
+                key,
+                icon: ICON_X_CIRCLE,
+                label: "GNSS fix lost",
+                help: "Place a marker at the last successful GNSS fix before each loss",
+                input: ProcessingInput::MarkerToggle(|markers| &mut markers.detect_gnss_fix_lost),
+            },
+            ProcessingSettingKey::DetectGnssFixRegained => Self {
+                key,
+                icon: ICON_CHECK_CIRCLE,
+                label: "GNSS fix regained",
+                help: "Mark the first GNSS fix after a loss. The marker shows the elapsed time \
+                       since the previous fix.",
+                input: ProcessingInput::MarkerToggle(|markers| {
+                    &mut markers.detect_gnss_fix_regained
+                }),
+            },
+            ProcessingSettingKey::DetectSlips => Self {
+                key,
+                icon: ICON_LINK_BREAK,
+                label: "Satellite slip",
+                help: "Mark each loss of lock when a satellite at or above the elevation mask \
+                       disappears or its SNR drops sharply between epochs. A marker's tooltip \
+                       shows the satellite and its elevation, azimuth and SNR before and after \
+                       the slip. The Analysis page sets the elevation mask and SNR threshold for \
+                       both markers and the slip-rate plot.",
+                input: ProcessingInput::MarkerToggle(|markers| &mut markers.detect_slips),
+            },
+            ProcessingSettingKey::TrackSplitGap => Self {
+                key,
+                icon: ICON_SCISSORS,
+                label: "Track split gap",
+                help: "Start a new track when the timestamps of consecutive fixes differ by at \
+                       least this duration in either direction. With a five-minute gap, fixes \
+                       at 10:00 and 10:06 start separate tracks in either order.",
+                input: ProcessingInput::TrackSplitGap,
+            },
+        }
     }
-    if show_hours {
-        changed |= ui
-            .add(DragValue::new(&mut h).range(0..=23).suffix("h"))
-            .changed();
-    }
-    changed |= ui
-        .add(DragValue::new(&mut m).range(0..=max_m).suffix("m"))
-        .changed();
-    changed |= ui
-        .add(DragValue::new(&mut s).range(0..=59).suffix("s"))
-        .changed();
 
-    if changed {
-        let total = d * 86400 + h * 3600 + m * 60 + s;
-        *value_secs = total.clamp(min_secs, max_secs);
+    pub(super) fn catalog() -> impl Iterator<Item = Self> {
+        std::iter::once(TRACK_SPLIT_GAP).chain(
+            GENERATED_MARKER_CONTROLS
+                .iter()
+                .flat_map(|row| std::iter::once(*row).chain(row.sensitivity())),
+        )
+    }
+
+    pub(super) fn describe(self, mut config: SegmentationConfig) -> SettingInfo {
+        let value = match self.input {
+            ProcessingInput::ClockSensitivity => {
+                let value = config.generated_markers.clock_discontinuity_sigmas;
+                SettingValue::Number {
+                    value: value.is_finite().then_some(value),
+                    minimum: *CLOCK_SENSITIVITY_RANGE.start(),
+                    maximum: *CLOCK_SENSITIVITY_RANGE.end(),
+                    unit: SettingUnit::RobustStandardDeviations,
+                }
+            }
+            ProcessingInput::MarkerToggle(field) => SettingValue::Boolean {
+                value: *field(&mut config.generated_markers),
+            },
+            ProcessingInput::TrackSplitGap => SettingValue::Number {
+                value: Some(config.track_layout.track_split_gap.as_seconds_f64()),
+                minimum: *TRACK_SPLIT_GAP_RANGE.start() as f64,
+                maximum: *TRACK_SPLIT_GAP_RANGE.end() as f64,
+                unit: SettingUnit::Seconds,
+            },
+        };
+        SettingInfo {
+            key: SettingKey::Processing(self.key),
+            page: SettingsPage::Processing.rail_label().to_owned(),
+            label: self.label.to_owned(),
+            help: self.help.to_owned(),
+            apply: SettingApply::DeferredProcessing,
+            value,
+        }
+    }
+
+    fn show_row(&self, ui: &mut egui::Ui, app: &mut App) {
+        let label = ui
+            .label(format!("{} {}", self.icon, self.label))
+            .on_hover_text(self.help);
+        let input = if let Some(sensitivity) = self.sensitivity() {
+            let row = ui.horizontal(|ui| {
+                self.show_input(ui, &mut app.processing_config);
+                sensitivity.show_input(ui, &mut app.processing_config)
+            });
+            app.reveal_setting_row(ui, SettingKey::Processing(sensitivity.key), row.inner.rect);
+            row.response
+        } else {
+            self.show_input(ui, &mut app.processing_config)
+        };
+        let row = label.rect.union(input.rect);
+        let target = if row.width() <= ui.clip_rect().width() {
+            row
+        } else {
+            input.rect
+        };
+        app.reveal_setting_row(ui, SettingKey::Processing(self.key), target);
+        ui.end_row();
+    }
+
+    fn show_input(&self, ui: &mut egui::Ui, config: &mut SegmentationConfig) -> egui::Response {
+        match self.input {
+            ProcessingInput::ClockSensitivity => {
+                let markers = &mut config.generated_markers;
+                let enabled = markers.detect_clock_discontinuities;
+                let sigmas = &mut markers.clock_discontinuity_sigmas;
+                let example_sigmas = *sigmas;
+                let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(example_sigmas);
+                let response = ui.add_enabled(
+                    enabled,
+                    DragValue::from_get_set(|new| {
+                        if enabled && let Some(new) = new.filter(|new| new.is_finite()) {
+                            *sigmas = new.clamp(
+                                *CLOCK_SENSITIVITY_RANGE.start(),
+                                *CLOCK_SENSITIVITY_RANGE.end(),
+                            );
+                        }
+                        *sigmas
+                    })
+                    .range(CLOCK_SENSITIVITY_RANGE)
+                    .clamp_existing_to_range(false)
+                    .speed(0.1)
+                    .fixed_decimals(1)
+                    .suffix("σ"),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(response.id, |node| node.set_label(self.label));
+                if enabled {
+                    response.on_hover_text(format!(
+                        "{}\n\nOn a steady recording, {example_sigmas:.1}σ flags jumps larger \
+                         than about {floor_s:.1}s. The threshold rises with the track's variation.",
+                        self.help,
+                    ))
+                } else {
+                    response.on_disabled_hover_text(self.help)
+                }
+            }
+            ProcessingInput::MarkerToggle(field) => ui
+                .checkbox(field(&mut config.generated_markers), "")
+                .on_hover_text(self.help),
+            ProcessingInput::TrackSplitGap => {
+                let gap = &mut config.track_layout.track_split_gap;
+                ui.horizontal(|ui| {
+                    let mut gap_secs = gap.to_std().map_or_else(
+                        |_| ProcessingSettings::default().track_split_gap_seconds,
+                        |duration| duration.as_secs(),
+                    );
+                    let initial_secs = gap_secs;
+                    self::compound_duration_input(
+                        ui,
+                        &mut gap_secs,
+                        TRACK_SPLIT_GAP_RANGE,
+                        DurationDisplay::Days,
+                    );
+                    if gap_secs != initial_secs {
+                        *gap = Duration::seconds(gap_secs as i64);
+                    }
+                })
+                .response
+            }
+        }
+    }
+
+    fn sensitivity(&self) -> Option<Self> {
+        (self.key == ProcessingSettingKey::DetectClockDiscontinuities).then_some(Self::for_key(
+            ProcessingSettingKey::ClockDiscontinuitySigmas,
+        ))
     }
 }
 
-const TRACK_SPLIT_GAP_LABEL: &str = "Track split gap";
+#[derive(Clone, Copy)]
+enum ProcessingInput {
+    ClockSensitivity,
+    MarkerToggle(fn(&mut GeneratedMarkerConfig) -> &mut bool),
+    TrackSplitGap,
+}
+
+#[derive(Clone, Copy)]
+enum DurationDisplay {
+    Days,
+    Minutes,
+}
+
+fn compound_duration_input(
+    ui: &mut egui::Ui,
+    value_secs: &mut u64,
+    range: RangeInclusive<u64>,
+    display: DurationDisplay,
+) {
+    let mut remaining = *value_secs;
+    let show_days = matches!(display, DurationDisplay::Days);
+    let (mut days, mut hours) = if show_days {
+        let days = remaining / SECONDS_PER_DAY;
+        remaining %= SECONDS_PER_DAY;
+        let hours = remaining / SECONDS_PER_HOUR;
+        remaining %= SECONDS_PER_HOUR;
+        (days, hours)
+    } else {
+        (0, 0)
+    };
+    let mut minutes = remaining / SECONDS_PER_MINUTE;
+    let mut seconds = remaining % SECONDS_PER_MINUTE;
+    let mut add_component = |value: &mut u64, maximum: u64, suffix| {
+        let initial = *value;
+        ui.add(
+            DragValue::from_get_set(|new| {
+                if let Some(new) = new.filter(|new| new.is_finite()) {
+                    *value = u64::from_f64(new).min(maximum);
+                }
+                *value as f64
+            })
+            .range(0..=maximum)
+            .clamp_existing_to_range(false)
+            .speed(0.25)
+            .max_decimals(0)
+            .suffix(suffix),
+        );
+        *value != initial
+    };
+
+    let mut changed = false;
+    if show_days {
+        changed |= add_component(&mut days, range.end() / SECONDS_PER_DAY, "d");
+        changed |= add_component(&mut hours, 23, "h");
+    }
+    let max_minutes = if show_days {
+        59
+    } else {
+        range.end() / SECONDS_PER_MINUTE
+    };
+    changed |= add_component(&mut minutes, max_minutes, "m");
+    changed |= add_component(&mut seconds, 59, "s");
+
+    if changed {
+        let total = days * SECONDS_PER_DAY
+            + hours * SECONDS_PER_HOUR
+            + minutes * SECONDS_PER_MINUTE
+            + seconds;
+        *value_secs = total.clamp(*range.start(), *range.end());
+    }
+}
+
+const SECONDS_PER_MINUTE: u64 = 60;
+const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
+const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+const TRACK_SPLIT_GAP_RANGE: RangeInclusive<u64> = 30..=7 * SECONDS_PER_DAY;
+const CLOCK_SENSITIVITY_RANGE: RangeInclusive<f64> = 1.0..=20.0;
+const TRACK_SPLIT_GAP: ProcessingControl =
+    ProcessingControl::for_key(ProcessingSettingKey::TrackSplitGap);
+const GENERATED_MARKER_CONTROLS: &[ProcessingControl] = &[
+    ProcessingControl::for_key(ProcessingSettingKey::DetectGnssFixLost),
+    ProcessingControl::for_key(ProcessingSettingKey::DetectGnssFixRegained),
+    ProcessingControl::for_key(ProcessingSettingKey::DetectClockDiscontinuities),
+    ProcessingControl::for_key(ProcessingSettingKey::DetectClockOffsetExcursions),
+    ProcessingControl::for_key(ProcessingSettingKey::DetectSlips),
+];
+
 const DEBUG_BACKWARD_JUMP_THRESHOLD_LABEL: &str = "Debug backward jump threshold";
 const LOG_ASSOCIATION_WINDOW_LABEL: &str = "Log association window";
 pub(in crate::app) const AUTOMATIC_LOG_POSITION_SOURCE_LABEL: &str =
     "Automatically choose an unambiguous log position source";
 const GENERATED_MARKERS_LABEL: &str = "Generated markers";
-const GNSS_FIX_LOST_LABEL: &str = "GNSS fix lost";
-const GNSS_FIX_REGAINED_LABEL: &str = "GNSS fix regained";
-const CLOCK_DISCONTINUITY_LABEL: &str = "Clock discontinuity";
-const SATELLITE_SLIP_LABEL: &str = "Satellite slip";
 const APPLY_TO_LOADED_DATA_LABEL: &str = "Apply to loaded data";
 const RESTORE_DEFAULTS_LABEL: &str = "Restore defaults";
 
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    TRACK_SPLIT_GAP_LABEL,
     DEBUG_BACKWARD_JUMP_THRESHOLD_LABEL,
     LOG_ASSOCIATION_WINDOW_LABEL,
     AUTOMATIC_LOG_POSITION_SOURCE_LABEL,
     GENERATED_MARKERS_LABEL,
-    GNSS_FIX_LOST_LABEL,
-    GNSS_FIX_REGAINED_LABEL,
-    CLOCK_DISCONTINUITY_LABEL,
-    CLOCK_OFFSET_EXCURSION_LABEL,
-    SATELLITE_SLIP_LABEL,
     APPLY_TO_LOADED_DATA_LABEL,
     RESTORE_DEFAULTS_LABEL,
 ];

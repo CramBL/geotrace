@@ -5,13 +5,13 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics, OpenPoint,
-    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
-    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation, RangeDetails,
-    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, SettingApply,
-    SettingInfo, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot,
-    TrackReference,
+    AnalysisSettingKey, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics,
+    OpenPoint, PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
+    QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow,
+    QueryResultSource, QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation,
+    RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request,
+    SettingApply, SettingInfo, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap,
+    ShowOnPlot, TrackReference,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -353,7 +353,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
             settings: vec![self::setting_fixture()],
         }),
         Request::DescribeSetting(SettingSelection {
-            key: SettingKey::AnalysisSlipWindow,
+            key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
         }) => Ok(Reply::Setting {
             setting: self::setting_fixture(),
         }),
@@ -370,7 +370,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
             Ok(Reply::QueryDraftQueued)
         }
         Request::OpenSetting(SettingSelection {
-            key: SettingKey::AnalysisSlipWindow,
+            key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
         }) => Ok(Reply::SettingOpenQueued),
         Request::ShowOnPlot(ShowOnPlot {
             target:
@@ -550,7 +550,7 @@ fn track_reference() -> TrackReference {
 
 fn setting_fixture() -> SettingInfo {
     SettingInfo {
-        key: SettingKey::AnalysisSlipWindow,
+        key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
         page: "Analysis".to_owned(),
         label: "Slip window".to_owned(),
         help: "Time window for calculating the slip rate.".to_owned(),
