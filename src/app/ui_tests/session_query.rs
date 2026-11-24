@@ -1,15 +1,17 @@
 use std::num::NonZeroUsize;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use egui::accesskit::Role;
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable as _;
 use gt_loaded_files::FileHistory;
 use gt_query::Unit;
 use gt_session_bridge::{
-    CheckQuery, ErrorCode, GetQueryResults, GetRecording, ListRecordings, QueryCounts, QueryJobId,
+    ErrorCode, GetQueryResults, GetRecording, ListRecordings, QueryCounts, QueryJobId,
     QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition,
     QueryPageRequest, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
-    QueryResultValue, QueryResults, QueryValidation, RangeTarget, Reply, Request, SessionRequest,
-    ShowOnMap, ShowOnPlot, TrackReference,
+    QueryResultValue, QueryResults, QueryText, QueryValidation, RangeTarget, Reply, Request,
+    SessionRequest, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_test_utils::HarnessInteraction as _;
 use gt_test_utils::fixtures;
@@ -22,6 +24,110 @@ use crate::app::test_util::harness::TestDroppedFile;
 
 mod map;
 mod plot;
+
+#[test]
+fn pending_run_input_leaves_a_session_draft_unrun() {
+    let mut harness = ui_tests::app_with_a_recording();
+    assert!(!harness.state().query_window.open);
+    let draft = "points | where eph < 20 m | draw";
+    assert_eq!(
+        self::execute(
+            &mut harness,
+            Request::OpenQuery(QueryText {
+                text: draft.to_owned(),
+            })
+        ),
+        Reply::QueryDraftQueued
+    );
+    let press_run = |harness: &mut Harness<'_, App>| {
+        harness
+            .input_mut()
+            .events
+            .extend([true, false].map(|pressed| egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }));
+        harness.step();
+    };
+    press_run(&mut harness);
+    harness.run_steps(2);
+    let window = &harness.state().query_window;
+    assert!(window.open);
+    assert_eq!(window.text(), draft);
+    assert!(window.history().is_empty());
+    assert!(window.matches().is_none());
+
+    press_run(&mut harness);
+    test_util::harness::step_until_query_result(&mut harness);
+    assert_eq!(harness.state().query_window.history()[0].text, draft);
+}
+
+#[test]
+fn a_session_draft_opens_the_query_editor_with_diagnostics_and_previous_results() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h | hide");
+    let window = &mut harness.state_mut().query_window;
+    let previous = window.matches().unwrap().clone();
+    let history_revision = window.history_revision();
+    window.open = false;
+    harness.step();
+
+    let draft = "# Første\r\n\r\npoints | where speed > 10 km/h";
+    assert_eq!(
+        self::execute(
+            &mut harness,
+            Request::OpenQuery(QueryText {
+                text: draft.to_owned()
+            })
+        ),
+        Reply::QueryDraftQueued
+    );
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::Window, "Query");
+    harness.get_by_label_contains("unknown metric");
+    let window = &harness.state().query_window;
+    assert_eq!(window.text(), draft);
+    assert_eq!(window.matches(), Some(&previous));
+    assert_eq!(window.history_revision(), history_revision);
+    assert!(harness.state().session_query.retained_reply().is_none());
+}
+
+#[test]
+fn an_editor_run_finishes_after_a_session_draft_replaces_the_text() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    let running = "points | where eph < 20 m | draw";
+    harness
+        .state_mut()
+        .query_window
+        .set_text(running.to_owned());
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::Button, "Run").click();
+    harness.step();
+    let window = &harness.state().query_window;
+    assert!(window.matches().is_none());
+    assert_eq!(window.history()[0].text, running);
+    let history_revision = window.history_revision();
+
+    let draft = "points | where velocity > 999 km/h | hide";
+    assert_eq!(
+        self::execute(
+            &mut harness,
+            Request::OpenQuery(QueryText {
+                text: draft.to_owned()
+            })
+        ),
+        Reply::QueryDraftQueued
+    );
+    test_util::harness::step_until_query_result(&mut harness);
+    let window = &harness.state().query_window;
+    assert_eq!(window.text(), draft);
+    assert_eq!(window.history_revision(), history_revision);
+    assert_eq!(window.matches().unwrap().draws.len(), 1);
+    assert!(window.matches().unwrap().hidden.is_empty());
+}
 
 #[test]
 fn editor_and_session_results_refresh_when_enabled_tracks_change() {
@@ -130,7 +236,7 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
     assert_eq!(
         self::execute(
             &mut harness,
-            Request::RunQuery(CheckQuery {
+            Request::RunQuery(QueryText {
                 text: "points".to_owned()
             })
         ),
@@ -164,7 +270,7 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
     assert_eq!(
         self::execute(
             &mut harness,
-            Request::RunQuery(CheckQuery {
+            Request::RunQuery(QueryText {
                 text: "# empty".to_owned()
             })
         ),
@@ -512,7 +618,7 @@ fn session_query_status_becomes_stale_after_replacing_the_recording() {
 fn start(harness: &mut Harness<'_, App>, text: &str) -> QueryJobId {
     let reply = self::execute(
         harness,
-        Request::RunQuery(CheckQuery {
+        Request::RunQuery(QueryText {
             text: text.to_owned(),
         }),
     );

@@ -165,6 +165,10 @@ The serialized request must fit in 4 KiB.
 Check fewer query blocks at a time if the request or its diagnostics exceed the bridge limits.
 For a single diagnostic that exceeds the reply limit, check that query in the GeoTrace editor.
 
+Pass `text` to `open_query` to replace the draft in the Query window.
+The tool accepts any draft that fits within the bridge request limit, including text with syntax errors.
+After `query_draft_queued`, use the editor to revise the draft and run it when ready.
+
 Submit the same `text` to `run_query` to start a background query job.
 GeoTrace evaluates the tracks enabled in the track tree and applies the current global filter, including its time window.
 The job has its own query text and results and leaves the Query window, query history, and map effects intact.

@@ -19,7 +19,7 @@ use crate::query_validation::QueryValidation;
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     CancelQuery(QueryJobRequest),
-    CheckQuery(CheckQuery),
+    CheckQuery(QueryText),
     GetQueryResults(GetQueryResults),
     GetQueryStatus(QueryJobRequest),
     GetRangeDetails(GetRangeDetails),
@@ -28,7 +28,8 @@ pub enum Request {
     ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
     OpenPoint(OpenPoint),
-    RunQuery(CheckQuery),
+    OpenQuery(QueryText),
+    RunQuery(QueryText),
     ShowOnMap(ShowOnMap),
     ShowOnPlot(ShowOnPlot),
 }
@@ -77,7 +78,7 @@ pub enum RangeTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-pub struct CheckQuery {
+pub struct QueryText {
     pub text: String,
 }
 
@@ -208,6 +209,7 @@ pub enum Reply {
     Metrics { page: Metrics },
     PlotPresentationQueued,
     QueryCheck { validation: QueryValidation },
+    QueryDraftQueued,
     QueryJob { job: QueryJobStatus },
     QueryResults { results: QueryResults },
     Range { details: RangeDetails },

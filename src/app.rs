@@ -395,6 +395,7 @@ pub struct App {
     offline: bool,
     session_bridge: Option<SessionBridge>,
     session_query: session_query::SessionQuery,
+    pending_session_query_draft: Option<String>,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
     pending_writes: PendingWrites,
@@ -645,6 +646,7 @@ impl App {
             offline: options.offline,
             session_bridge: None,
             session_query: session_query::SessionQuery::default(),
+            pending_session_query_draft: None,
             pending_writes: options.pending_writes,
             shutdown: shutdown::ShutdownState::default(),
             interference_backfill_ui: backfill_ui::BackfillUi::default(),

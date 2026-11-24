@@ -5,11 +5,11 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    CheckQuery, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics, OpenPoint,
+    GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics, OpenPoint,
     PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
     QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResultValue, QueryResults, QueryValidation, RangeDetails, RangeTarget,
-    Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap, ShowOnPlot,
+    QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation, RangeDetails,
+    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap, ShowOnPlot,
     TrackReference,
 };
 use gt_types::PointIdx;
@@ -90,6 +90,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "list_metrics",
             "list_recordings",
             "open_point",
+            "open_query",
             "run_query",
             "show_on_map",
             "show_on_plot",
@@ -258,7 +259,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             }]}
         }))
     );
-    self::assert_presentation_tools_queue_requests(&mut client).await;
+    self::assert_ui_tools_queue_requests(&mut client).await;
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -266,7 +267,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         .unwrap();
 }
 
-async fn assert_presentation_tools_queue_requests(client: &mut Client) {
+async fn assert_ui_tools_queue_requests(client: &mut Client) {
     let track = self::track_reference();
     let commands = [
         (
@@ -291,6 +292,11 @@ async fn assert_presentation_tools_queue_requests(client: &mut Client) {
             "show_on_plot",
             json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}, "metrics": ["velocity"]}),
             "plot_presentation_queued",
+        ),
+        (
+            "open_query",
+            json!({"text": INVALID_QUERY_DRAFT}),
+            "query_draft_queued",
         ),
     ];
     for (index, (name, arguments, status)) in commands.into_iter().enumerate() {
@@ -318,6 +324,9 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                     end: Some(2),
                 },
         }) if track == self::track_reference() => Ok(Reply::MapPresentationQueued),
+        Request::OpenQuery(QueryText { text }) if text == INVALID_QUERY_DRAFT => {
+            Ok(Reply::QueryDraftQueued)
+        }
         Request::ShowOnPlot(ShowOnPlot {
             target:
                 RangeTarget::Track {
@@ -378,7 +387,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                 },
             })
         }
-        Request::RunQuery(CheckQuery { text }) if text == "points | draw" => Ok(Reply::QueryJob {
+        Request::RunQuery(QueryText { text }) if text == "points | draw" => Ok(Reply::QueryJob {
             job: QueryJobStatus {
                 job: self::query_job_id(),
                 state: QueryJobState::Preparing,
@@ -403,7 +412,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                 },
             })
         }
-        Request::CheckQuery(CheckQuery { text }) if text == "points | where speed > 30 km/h" => {
+        Request::CheckQuery(QueryText { text }) if text == "points | where speed > 30 km/h" => {
             Ok(Reply::QueryCheck {
                 validation: QueryValidation::Invalid {
                     diagnostics: vec![Diagnostic {
@@ -523,3 +532,5 @@ impl Client {
         self.output.write_all(line.as_bytes()).await.unwrap();
     }
 }
+
+const INVALID_QUERY_DRAFT: &str = "# Første\r\n\r\npoints | where speed > 10 km/h";

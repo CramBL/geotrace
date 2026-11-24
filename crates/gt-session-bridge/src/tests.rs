@@ -18,8 +18,8 @@ use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 use super::inspection::Inspection;
 use super::{
-    ChannelEntry, CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Pending, QueryValidation, Recording,
+    ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
+    MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Pending, QueryText, QueryValidation, Recording,
     RecordingReference, Recordings, Reply, Request, Server,
 };
 
@@ -343,7 +343,7 @@ fn query_check_uses_loaded_channels_and_requires_a_standalone_channel_source() {
         session: Uuid::nil(),
     };
     let check = |text: &str| {
-        view.execute(Request::CheckQuery(CheckQuery {
+        view.execute(Request::CheckQuery(QueryText {
             text: text.to_owned(),
         }))
     };
@@ -386,7 +386,7 @@ fn query_check_reports_byte_spans_and_hints_in_submitted_text() {
         session: Uuid::nil(),
     };
     let check = |text: &str| {
-        view.execute(Request::CheckQuery(CheckQuery {
+        view.execute(Request::CheckQuery(QueryText {
             text: text.to_owned(),
         }))
     };
@@ -422,7 +422,7 @@ fn query_check_reports_byte_spans_and_hints_in_submitted_text() {
 #[tokio::test]
 async fn oversized_query_requests_fail_before_connecting() {
     let fixture = TestEndpoint::new();
-    let request = Request::CheckQuery(CheckQuery {
+    let request = Request::CheckQuery(QueryText {
         text: "\n".repeat(MAX_REQUEST_BYTES / 2),
     });
     let error = super::request_at(&fixture.endpoint, request)
@@ -451,7 +451,7 @@ async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
         gt_test_utils::loaded_file_with_tracks(vec![track]),
         FileHistory::None,
     );
-    let request = Request::CheckQuery(CheckQuery {
+    let request = Request::CheckQuery(QueryText {
         text: "@accel | where @accel.x > 1 g".to_owned(),
     });
     let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, request), async {

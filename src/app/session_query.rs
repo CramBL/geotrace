@@ -132,6 +132,7 @@ struct StagedSessionChanges {
     job: Option<Job>,
     map: Option<MapPresentation>,
     plot: Option<PlotPresentation>,
+    query_draft: Option<String>,
 }
 
 impl StagedSessionChanges {
@@ -143,6 +144,11 @@ impl StagedSessionChanges {
     fn queue_plot(&mut self, presentation: PlotPresentation) -> Reply {
         self.plot = Some(presentation);
         Reply::PlotPresentationQueued
+    }
+
+    fn queue_query_draft(&mut self, text: String) -> Reply {
+        self.query_draft = Some(text);
+        Reply::QueryDraftQueued
     }
 }
 
@@ -295,6 +301,9 @@ impl App {
             self.shared.borrow_mut().pending_session_plot = Some(presentation);
             self.tiles_tree.tiles.set_visible(self.plot_tile_id, true);
         }
+        if let Some(text) = staged.query_draft {
+            self.pending_session_query_draft = Some(text);
+        }
     }
 
     fn execute_session_request(
@@ -324,6 +333,7 @@ impl App {
             Request::OpenPoint(args) => self
                 .session_open_point(request.session, args)
                 .map(|presentation| staged.queue_map(presentation)),
+            Request::OpenQuery(args) => Ok(staged.queue_query_draft(args.text)),
             Request::RunQuery(args) => queries.submit(
                 self.shared.borrow().loaded_files.view(),
                 request.session,
