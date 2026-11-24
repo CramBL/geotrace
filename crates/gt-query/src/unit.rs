@@ -46,17 +46,9 @@ pub fn example_literal(quantity: Quantity) -> Option<&'static str> {
 
 /// Canonical units shown in diagnostics. Other accepted prefixes stay omitted
 /// so the message remains short.
-pub fn unit_list(quantity: Quantity) -> Option<&'static str> {
-    match quantity {
-        Quantity::Angle | Quantity::WrappingAngle => Some("deg"),
-        Quantity::Speed => Some("km/h, m/s, kn"),
-        Quantity::Acceleration => Some("m/s2, g, km/h/s"),
-        Quantity::Length => Some("m, km"),
-        Quantity::Duration => Some("ms, s, min, h"),
-        Quantity::Ratio => Some("%"),
-        Quantity::Rate => Some("per s, per min, per h"),
-        Quantity::Timestamp | Quantity::Count | Quantity::Index | Quantity::Condition => None,
-    }
+pub fn unit_list(quantity: Quantity) -> Option<String> {
+    let units: Vec<_> = quantity.canonical_units().collect();
+    (!units.is_empty()).then(|| units.join(", "))
 }
 
 #[cfg(test)]

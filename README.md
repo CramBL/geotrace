@@ -143,6 +143,19 @@ Use recording IDs and cursors from the current desktop session.
 Start again with `list_recordings` after restarting GeoTrace.
 Get fresh track references with `get_recording` after changing the loaded recordings.
 
+`list_metrics` returns the built-in query identifiers, summaries, quantities, accepted unit examples, and sources.
+Metric definitions describe where values can come from, including environment archives and completed road snapping runs.
+Actual values depend on the recording and time range.
+The tool also lists channels from the current recordings, with units, wrap periods in degrees, and component labels.
+The `reference` fields contain query expressions such as `@orientation.x`, or null for labels outside the query syntax.
+When a component label repeats, its query reference selects the first column with that label.
+The query checker rejects channels with conflicting definitions across loaded tracks.
+The channel entry includes the total number of conflicts and up to eight diagnostic messages.
+Entries with oversized channel metadata have status `metadata_omitted` and count toward the page limit.
+Set `channel_limit` to request fewer than 100 channels per page.
+Pass `next_channel_start` as `channel_start` for the next page.
+Restart channel pagination after changing the loaded recordings.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta};
 use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_query::{ConstructKind, MetricSource};
+use gt_test_utils::fixtures;
 use gt_types::PointIdx;
 use proptest::strategy::Strategy as _;
 use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
@@ -16,8 +18,9 @@ use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 use super::inspection::Inspection;
 use super::{
-    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListRecordings, MAX_POINTS_PER_PAGE,
-    MAX_TRACKS_PER_PAGE, Recording, RecordingReference, Recordings, Reply, Request, Server,
+    ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
+    MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Recording, RecordingReference, Recordings, Reply,
+    Request, Server,
 };
 
 struct TestEndpoint {
@@ -84,6 +87,149 @@ async fn local_request_dispatches_on_the_calling_thread() {
             }
         }
     );
+}
+
+#[test]
+fn metric_definitions_are_listed_without_recordings() {
+    let files = LoadedFiles::new();
+    let view = Inspection {
+        files: files.view(),
+        name_template: "{filename}",
+        session: Uuid::nil(),
+    };
+    let Reply::Metrics { page } = view.execute(Request::ListMetrics(ListMetrics {
+        channel_start: None,
+        channel_limit: None,
+    })) else {
+        panic!("expected metrics");
+    };
+    assert!(page.channels.is_empty());
+    let names: Vec<_> = page.definitions.iter().map(|m| m.name.as_str()).collect();
+    let expected: Vec<_> = gt_query::catalog()
+        .iter()
+        .filter(|item| item.kind == ConstructKind::Metric)
+        .map(|item| item.name)
+        .collect();
+    assert_eq!(names, expected);
+    let velocity = page
+        .definitions
+        .iter()
+        .find(|m| m.name == "velocity")
+        .unwrap();
+    assert_eq!(velocity.summary, "ground speed");
+    assert_eq!(velocity.quantity, "speed");
+    assert_eq!(velocity.units, ["km/h", "m/s", "kn"]);
+    assert_eq!(velocity.source, MetricSource::Recording);
+    let tec = page.definitions.iter().find(|m| m.name == "tec").unwrap();
+    assert!(tec.units.is_empty());
+    assert_eq!(tec.source, MetricSource::EnvironmentArchive);
+}
+
+#[test]
+fn metric_discovery_pages_channel_metadata_and_conflicts() {
+    let mut first = gt_test_utils::loaded_track_with_points(Vec::new());
+    let oversized_label = "x".repeat(MAX_REPLY_BYTES);
+    first.channels.push(fixtures::vector_channel(
+        "a_large",
+        None,
+        &[&oversized_label],
+        vec![],
+        vec![],
+    ));
+    first
+        .channels
+        .push(fixtures::scalar_channel("accel.x", None, vec![], vec![]));
+    first.channels.push(fixtures::vector_channel(
+        "accel",
+        Some("g"),
+        &["x", "y", "bad label", "x"],
+        vec![],
+        vec![],
+    ));
+    let mut second = first.clone();
+    second.channels = vec![fixtures::vector_channel(
+        "accel",
+        Some("mg"),
+        &["x", "y", "bad label", "x"],
+        vec![],
+        vec![],
+    )];
+    let mut incompatible = second.clone();
+    incompatible.channels = vec![fixtures::scalar_channel(
+        "accel",
+        Some("deg"),
+        vec![],
+        vec![],
+    )];
+    let mut files = LoadedFiles::new();
+    for tracks in [vec![first, second], vec![incompatible]] {
+        files.push(
+            gt_test_utils::loaded_file_with_tracks(tracks),
+            FileHistory::None,
+        );
+    }
+    let view = Inspection {
+        files: files.view(),
+        name_template: "{filename}",
+        session: Uuid::nil(),
+    };
+    let mut args = ListMetrics {
+        channel_start: None,
+        channel_limit: Some(NonZeroUsize::MIN),
+    };
+    let Reply::Metrics { page } = view.execute(Request::ListMetrics(args)) else {
+        panic!("expected first channel page");
+    };
+    assert_eq!(
+        page.channels,
+        [ChannelEntry::MetadataOmitted {
+            name: Some("a_large".to_owned()),
+        }]
+    );
+    args.channel_start = page.next_channel_start;
+    assert_eq!(args.channel_start, Some(1));
+    let Reply::Metrics { page } = view.execute(Request::ListMetrics(args)) else {
+        panic!("expected next channel page");
+    };
+    let [ChannelEntry::Defined(accel)] = page.channels.as_slice() else {
+        panic!("expected acceleration channel");
+    };
+    assert_eq!(accel.name, "accel");
+    assert_eq!(accel.reference.as_deref(), Some("@accel"));
+    assert_eq!(accel.unit.as_deref(), Some("g"));
+    let components: Vec<_> = accel
+        .components
+        .iter()
+        .map(|part| (part.label.as_str(), part.reference.as_deref()))
+        .collect();
+    assert_eq!(
+        components,
+        [
+            ("x", Some("@accel.x")),
+            ("y", Some("@accel.y")),
+            ("bad label", None),
+            ("x", None)
+        ]
+    );
+    assert_eq!(
+        accel.conflicts,
+        [
+            "units g and deg",
+            "components [\"x\", \"y\", \"bad label\", \"x\"] and []"
+        ]
+    );
+    assert_eq!(accel.conflict_count, 2);
+    args.channel_start = page.next_channel_start;
+    assert_eq!(args.channel_start, Some(2));
+    let Reply::Metrics { page } = view.execute(Request::ListMetrics(args)) else {
+        panic!("expected last channel page");
+    };
+    let [ChannelEntry::Defined(dotted_name)] = page.channels.as_slice() else {
+        panic!("expected channel with a dotted name");
+    };
+    assert_eq!(dotted_name.name, "accel.x");
+    assert_eq!(dotted_name.reference, None);
+    assert_eq!(page.next_channel_start, None);
 }
 
 #[test]

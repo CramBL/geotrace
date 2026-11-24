@@ -1,8 +1,10 @@
 //! The metrics a query can reference, and their quantity kinds.
 
 use gt_types::MetricKind;
+use serde::{Deserialize, Serialize};
 
 use crate::dimension::Dimension;
+use crate::unit::{self, Unit};
 
 /// Every metric addressable from a query.
 ///
@@ -77,6 +79,15 @@ pub enum QueryMetric {
     Tec,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricSource {
+    Derived,
+    EnvironmentArchive,
+    Recording,
+    RoadSnap,
+}
+
 /// The dimension of a value, checked statically before a run.
 ///
 /// `Condition` is the type of comparisons and `and`/`or`/`not` - it never
@@ -106,6 +117,17 @@ pub enum Quantity {
 }
 
 impl Quantity {
+    pub fn canonical_units(self) -> impl Iterator<Item = &'static str> {
+        let quantity = match self {
+            Self::WrappingAngle => Self::Angle,
+            quantity => quantity,
+        };
+        Unit::CANONICAL
+            .into_iter()
+            .filter(move |&unit| unit::quantity(unit) == quantity)
+            .filter_map(Unit::canonical_text)
+    }
+
     /// The physical dimension of this quantity, or `None` for the quantities
     /// that never take part in dimensional arithmetic ([`Quantity::Timestamp`]
     /// and [`Quantity::Condition`]).
@@ -127,6 +149,56 @@ impl Quantity {
 }
 
 impl QueryMetric {
+    /// The data or calculation a metric requires.
+    pub fn source(self) -> MetricSource {
+        match self {
+            Self::Jamming | Self::Hp30 | Self::Kp | Self::Tec => MetricSource::EnvironmentArchive,
+            Self::SnapError => MetricSource::RoadSnap,
+            Self::Accel
+            | Self::UtilAll
+            | Self::UtilGps
+            | Self::UtilGlonass
+            | Self::UtilGalileo
+            | Self::UtilBeidou
+            | Self::UtilNavic
+            | Self::UtilQzss
+            | Self::SlipAll
+            | Self::SlipGps
+            | Self::SlipGlonass
+            | Self::SlipGalileo
+            | Self::SlipBeidou
+            | Self::SlipNavic
+            | Self::SlipQzss => MetricSource::Derived,
+            Self::Time
+            | Self::SysTime
+            | Self::Lat
+            | Self::Lon
+            | Self::InvalidCoordinates
+            | Self::Velocity
+            | Self::Heading
+            | Self::Eph
+            | Self::Hdop
+            | Self::Vdop
+            | Self::Pdop
+            | Self::ClockDelta
+            | Self::SystemBootDelta
+            | Self::SatsSeen
+            | Self::SatsFix
+            | Self::GpsSeen
+            | Self::GpsFix
+            | Self::GlonassSeen
+            | Self::GlonassFix
+            | Self::GalileoSeen
+            | Self::GalileoFix
+            | Self::BeidouSeen
+            | Self::BeidouFix
+            | Self::NavicSeen
+            | Self::NavicFix
+            | Self::QzssSeen
+            | Self::QzssFix => MetricSource::Recording,
+        }
+    }
+
     pub fn quantity(self) -> Quantity {
         match self {
             QueryMetric::Time | QueryMetric::SysTime => Quantity::Timestamp,

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::inspection::{RangeDetails, RecordingDetails, TrackDetails};
+use crate::metrics::Metrics;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
@@ -14,6 +15,7 @@ pub enum Request {
     GetRangeDetails(GetRangeDetails),
     GetRecording(GetRecording),
     GetTrack(GetTrack),
+    ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
 }
 
@@ -44,6 +46,15 @@ pub struct GetRecording {
 #[serde(deny_unknown_fields)]
 pub struct GetTrack {
     pub track: TrackReference,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ListMetrics {
+    /// Channel offset in name order. Defaults to zero.
+    pub channel_start: Option<usize>,
+    pub channel_limit: Option<NonZeroUsize>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -89,6 +100,7 @@ impl TrackReference {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Reply {
     Error { code: ErrorCode },
+    Metrics { page: Metrics },
     Range { details: RangeDetails },
     Recording { details: RecordingDetails },
     Recordings { page: Recordings },

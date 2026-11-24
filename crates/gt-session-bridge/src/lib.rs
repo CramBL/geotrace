@@ -15,14 +15,18 @@ pub use crate::inspection::{
     MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, MapBounds, PointDetails, Position, RangeDetails,
     RecordingDetails, TrackDetails,
 };
+pub use crate::metrics::{
+    ChannelComponent, ChannelDefinition, ChannelEntry, MetricDefinition, Metrics,
+};
 pub use crate::protocol::{
-    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListRecordings, Recording,
+    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings, Recording,
     RecordingReference, Recordings, Reply, Request, TimeRange, TrackReference,
 };
 
 mod endpoint;
 mod framing;
 mod inspection;
+mod metrics;
 mod protocol;
 
 #[derive(Debug)]

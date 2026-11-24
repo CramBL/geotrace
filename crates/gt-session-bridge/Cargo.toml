@@ -16,6 +16,8 @@ schema = ["dep:schemars"]
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 gt-loaded-files = { path = "../gt-loaded-files" }
+gt-query = { path = "../gt-query" }
+gt-query-run = { path = "../gt-query-run" }
 gt-types = { path = "../gt-types" }
 interprocess = { version = "2.4.9", features = ["tokio"] }
 log.workspace = true

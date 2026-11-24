@@ -12,8 +12,7 @@ pub fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {
     let mut schema = ChannelSchema::new();
     for file in files {
         for channel in file.tracks.iter().flat_map(|t| &t.channels) {
-            if let Some(existing) = schema.get(&channel.name).cloned() {
-                let mut merged = existing;
+            if let Some(merged) = schema.get_mut(&channel.name) {
                 if !channel_units_compatible(merged.unit.as_ref(), channel.unit.as_ref()) {
                     merged.conflicts.push(ChannelConflict::Unit {
                         expected: merged.unit.clone(),
@@ -33,7 +32,6 @@ pub fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {
                         found_deg: period_deg,
                     });
                 }
-                schema.insert(&channel.name, merged);
                 continue;
             }
             schema.insert(
