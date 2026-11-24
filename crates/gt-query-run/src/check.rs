@@ -1,12 +1,31 @@
 use std::ops::Range;
 
 use gt_query::lexer::{self, TokenClass};
-use gt_query::{ChannelSchema, CheckedQuery, Diagnostic};
+use gt_query::{ChannelSchema, CheckedQuery, Diagnostic, Span};
 
 /// One query in the editor text: its byte range and its check outcome.
 pub struct QueryChunk {
     pub range: Range<usize>,
     pub result: Result<CheckedQuery, Diagnostic>,
+}
+
+impl QueryChunk {
+    pub fn document_span(&self, span: Span) -> Span {
+        span.offset_by(self.range.start)
+    }
+
+    pub fn channel_source_span(&self, text: &str) -> Option<Span> {
+        if !self
+            .result
+            .as_ref()
+            .is_ok_and(CheckedQuery::is_channel_source)
+        {
+            return None;
+        }
+        let source = text.get(self.range.clone())?;
+        let first = lexer::tokenize(source).into_iter().next()?;
+        Some(self.document_span(first.span))
+    }
 }
 
 /// Parse and check one query against the loaded channels.
@@ -21,25 +40,29 @@ pub fn check_text(text: &str, schema: &ChannelSchema) -> Result<CheckedQuery, Di
 /// A chunk holding no code, a standalone comment paragraph, is skipped: a block
 /// comment between queries neither errors nor blocks a run.
 pub fn check_all(text: &str, schema: &ChannelSchema) -> Vec<QueryChunk> {
-    split_queries(text)
-        .into_iter()
-        .filter_map(|range| {
-            let src = text.get(range.clone()).unwrap_or("");
-            // Comment-only via the highlighter's classes: the parsing
-            // tokenizer drops rejected characters, which must still be checked
-            // and reported.
-            let comment_only = lexer::highlight_classes(src)
-                .iter()
-                .all(|(_, class)| *class == TokenClass::Comment);
-            if comment_only {
-                return None;
-            }
-            Some(QueryChunk {
-                result: check_text(src, schema),
-                range,
-            })
+    self::check_chunks(text, schema).collect()
+}
+
+pub fn check_chunks<'a>(
+    text: &'a str,
+    schema: &'a ChannelSchema,
+) -> impl Iterator<Item = QueryChunk> + 'a {
+    split_queries(text).into_iter().filter_map(move |range| {
+        let src = text.get(range.clone()).unwrap_or("");
+        // Comment-only via the highlighter's classes: the parsing
+        // tokenizer drops rejected characters, which must still be checked
+        // and reported.
+        let comment_only = lexer::highlight_classes(src)
+            .iter()
+            .all(|(_, class)| *class == TokenClass::Comment);
+        if comment_only {
+            return None;
+        }
+        Some(QueryChunk {
+            result: check_text(src, schema),
+            range,
         })
-        .collect()
+    })
 }
 
 /// The byte range of the text the caret's completions analyze.

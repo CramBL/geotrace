@@ -3,9 +3,11 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta};
+use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    GetRangeDetails, ListMetrics, ListRecordings, Metrics, PointDetails, RangeDetails, Recording,
-    RecordingReference, Recordings, Reply, Request, TrackReference,
+    CheckQuery, GetRangeDetails, ListMetrics, ListRecordings, Metrics, PointDetails,
+    QueryValidation, RangeDetails, Recording, RecordingReference, Recordings, Reply, Request,
+    TrackReference,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -74,6 +76,7 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
     assert_eq!(
         names,
         [
+            "check_query",
             "get_range_details",
             "get_recording",
             "get_track",
@@ -91,6 +94,18 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
     );
     assert!(tool.pointer("/inputSchema/properties/after").is_some());
     assert!(tool.pointer("/inputSchema/properties/limit").is_some());
+    let query_tool = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("check_query")))
+        .unwrap();
+    assert_eq!(
+        query_tool.pointer("/annotations/readOnlyHint"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        query_tool.pointer("/inputSchema/required"),
+        Some(&json!(["text"]))
+    );
 
     let absent = client
         .exchange(json!({
@@ -160,6 +175,21 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
         metrics.pointer("/result/structuredContent"),
         Some(&json!({"definitions": [], "channels": [], "next_channel_start": 4}))
     );
+    let checked = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+            "params": {"name": "check_query", "arguments": {"text": "points | where speed > 30 km/h"}}
+        }))
+        .await;
+    assert_eq!(checked.pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(
+        checked.pointer("/result/structuredContent"),
+        Some(&json!({
+            "status": "invalid", "diagnostics": [{
+                "message": "unknown metric `speed`", "help": "Use velocity", "span": {"start": 15, "end": 20}
+            }]
+        }))
+    );
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -169,6 +199,17 @@ async fn the_companion_lists_inspection_tools_and_returns_structured_pages() {
 
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
+        Request::CheckQuery(CheckQuery { text }) if text == "points | where speed > 30 km/h" => {
+            Ok(Reply::QueryCheck {
+                validation: QueryValidation::Invalid {
+                    diagnostics: vec![Diagnostic {
+                        message: "unknown metric `speed`".to_owned(),
+                        help: Some("Use velocity".to_owned()),
+                        span: Span::new(15, 20),
+                    }],
+                },
+            })
+        }
         Request::ListRecordings(ListRecordings {
             after: None,
             limit: None,

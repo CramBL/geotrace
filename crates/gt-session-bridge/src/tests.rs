@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta};
 use gt_loaded_files::{FileHistory, LoadedFiles};
-use gt_query::{ConstructKind, MetricSource};
+use gt_query::{ConstructKind, MetricSource, Span};
 use gt_test_utils::fixtures;
 use gt_types::PointIdx;
 use proptest::strategy::Strategy as _;
@@ -18,9 +18,9 @@ use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 use super::inspection::Inspection;
 use super::{
-    ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
-    MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Recording, RecordingReference, Recordings, Reply,
-    Request, Server,
+    ChannelEntry, CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
+    ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, QueryValidation, Recording,
+    RecordingReference, Recordings, Reply, Request, Server,
 };
 
 struct TestEndpoint {
@@ -259,10 +259,10 @@ fn inspection_pages_tracks_and_rejects_old_session_and_track_references() {
     assert_eq!(details.recording.id, id);
     assert_eq!(details.tracks.len(), MAX_TRACKS_PER_PAGE);
     let track = *details.tracks.first().unwrap();
-    let get_track = Request::GetTrack(GetTrack { track });
+    let get_track = GetTrack { track };
     let Reply::Track {
         details: track_details,
-    } = view.execute(get_track)
+    } = view.execute(Request::GetTrack(get_track))
     else {
         panic!("expected track");
     };
@@ -298,7 +298,148 @@ fn inspection_pages_tracks_and_rejects_old_session_and_track_references() {
         name_template: "{filename}",
         session: id.session,
     };
-    assert_eq!(updated.execute(get_track), ErrorCode::StaleTrack.into());
+    assert_eq!(
+        updated.execute(Request::GetTrack(get_track)),
+        ErrorCode::StaleTrack.into()
+    );
+}
+
+#[test]
+fn query_check_uses_loaded_channels_and_requires_a_standalone_channel_source() {
+    let mut track = gt_test_utils::loaded_track_with_points(Vec::new());
+    track
+        .channels
+        .push(fixtures::scalar_channel("accel", Some("g"), vec![], vec![]));
+    let mut files = LoadedFiles::new();
+    files.push(
+        gt_test_utils::loaded_file_with_tracks(vec![track]),
+        FileHistory::None,
+    );
+    let view = Inspection {
+        files: files.view(),
+        name_template: "{filename}",
+        session: Uuid::nil(),
+    };
+    let check = |text: &str| {
+        view.execute(Request::CheckQuery(CheckQuery {
+            text: text.to_owned(),
+        }))
+    };
+    let channel = "@accel | where @accel > 1 g";
+    assert_eq!(
+        check(channel),
+        Reply::QueryCheck {
+            validation: QueryValidation::Valid
+        }
+    );
+    assert_eq!(
+        check(
+            "points | where velocity > 1 km/h\n\n# På et nyt afsnit\n\npoints | where eph < 20 m"
+        ),
+        Reply::QueryCheck {
+            validation: QueryValidation::Valid
+        }
+    );
+    let text = format!("points | where velocity > 1 km/h\n\n# På et nyt afsnit\n\n{channel}");
+    let Reply::QueryCheck {
+        validation: QueryValidation::Invalid { diagnostics },
+    } = check(&text)
+    else {
+        panic!("expected a mixed-channel diagnostic");
+    };
+    let [diagnostic] = diagnostics.as_slice() else {
+        panic!("expected one diagnostic");
+    };
+    let start = text.find("@accel").unwrap();
+    assert_eq!(diagnostic.span, Span::new(start, start + "@accel".len()));
+    assert_eq!(diagnostic.message, gt_query_run::MIXED_CHANNEL_MESSAGE);
+}
+
+#[test]
+fn query_check_reports_byte_spans_and_hints_in_submitted_text() {
+    let files = LoadedFiles::new();
+    let view = Inspection {
+        files: files.view(),
+        name_template: "{filename}",
+        session: Uuid::nil(),
+    };
+    let check = |text: &str| {
+        view.execute(Request::CheckQuery(CheckQuery {
+            text: text.to_owned(),
+        }))
+    };
+    assert_eq!(
+        check(" # Første\r\n\r\n# Sidste"),
+        Reply::QueryCheck {
+            validation: QueryValidation::Empty
+        }
+    );
+    let text = "# Første\r\n\r\npoints | where speed > 30 km/h\r\n\r\npoints | where 🧭\r\n\r\npoints | where";
+    let Reply::QueryCheck {
+        validation: QueryValidation::Invalid { diagnostics },
+    } = check(text)
+    else {
+        panic!("expected query diagnostics");
+    };
+    let [unknown, symbol, missing] = diagnostics.as_slice() else {
+        panic!("expected three diagnostics");
+    };
+    assert_eq!(unknown.message, "unknown metric `speed`");
+    assert_eq!(
+        unknown.help.as_deref(),
+        Some("metrics are lowercase snake_case, e.g. velocity, heading, sats_fix")
+    );
+    assert_eq!(
+        text.get(unknown.span.start..unknown.span.end),
+        Some("speed")
+    );
+    assert_eq!(text.get(symbol.span.start..symbol.span.end), Some("🧭"));
+    assert_eq!(missing.span, Span::new(text.len(), text.len()));
+}
+
+#[tokio::test]
+async fn oversized_query_requests_fail_before_connecting() {
+    let fixture = TestEndpoint::new();
+    let request = Request::CheckQuery(CheckQuery {
+        text: "\n".repeat(MAX_REQUEST_BYTES / 2),
+    });
+    let error = super::request_at(&fixture.endpoint, request)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::FileTooLarge);
+}
+
+#[tokio::test]
+async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
+    let fixture = TestEndpoint::new();
+    let (wake, mut wakes) = mpsc::channel(1);
+    let mut server =
+        Server::bind(fixture.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
+    let oversized_label = "x".repeat(MAX_REPLY_BYTES);
+    let mut track = gt_test_utils::loaded_track_with_points(Vec::new());
+    track.channels.push(fixtures::vector_channel(
+        "accel",
+        Some("g"),
+        &[&oversized_label],
+        vec![],
+        vec![],
+    ));
+    let mut files = LoadedFiles::new();
+    files.push(
+        gt_test_utils::loaded_file_with_tracks(vec![track]),
+        FileHistory::None,
+    );
+    let request = Request::CheckQuery(CheckQuery {
+        text: "@accel | where @accel.x > 1 g".to_owned(),
+    });
+    let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, request), async {
+        tokio::time::timeout(Duration::from_secs(1), wakes.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        server.dispatch(files.view(), "{filename}");
+    });
+    assert_eq!(reply.unwrap(), ErrorCode::ReplyTooLarge.into());
 }
 
 #[test]

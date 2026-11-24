@@ -39,6 +39,10 @@ impl Frame {
         stream.write_u32(length).await?;
         stream.write_all(&self.payload).await
     }
+
+    pub(crate) fn payload_len(&self) -> usize {
+        self.payload.len()
+    }
 }
 
 impl Write for Frame {

@@ -3,12 +3,13 @@
 use std::num::NonZeroU64;
 
 use gt_types::DisplayMode;
+use serde::{Deserialize, Serialize};
 
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::Unit;
 
 /// Byte range into the query source, for error underlining.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -24,6 +25,10 @@ impl Span {
             start: self.start.min(other.start),
             end: self.end.max(other.end),
         }
+    }
+
+    pub fn offset_by(self, bytes: usize) -> Self {
+        Self::new(self.start + bytes, self.end + bytes)
     }
 }
 

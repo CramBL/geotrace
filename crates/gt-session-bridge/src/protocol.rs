@@ -8,15 +8,24 @@ use uuid::Uuid;
 
 use crate::inspection::{RangeDetails, RecordingDetails, TrackDetails};
 use crate::metrics::Metrics;
+use crate::query_validation::QueryValidation;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    CheckQuery(CheckQuery),
     GetRangeDetails(GetRangeDetails),
     GetRecording(GetRecording),
     GetTrack(GetTrack),
     ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct CheckQuery {
+    pub text: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -101,6 +110,7 @@ impl TrackReference {
 pub enum Reply {
     Error { code: ErrorCode },
     Metrics { page: Metrics },
+    QueryCheck { validation: QueryValidation },
     Range { details: RangeDetails },
     Recording { details: RecordingDetails },
     Recordings { page: Recordings },

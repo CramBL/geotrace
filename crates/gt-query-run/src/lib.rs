@@ -30,7 +30,7 @@
 //! editor and results panel, and the worker thread that calls
 //! [`PreparedRun::execute`] off the UI thread.
 
-pub use check::{QueryChunk, analysis_context, check_all, check_text, split_queries};
+pub use check::{QueryChunk, analysis_context, check_all, check_chunks, check_text, split_queries};
 pub use fingerprint::{JammingValues, RunFingerprint, RunInputs, SnapErrorValues};
 pub use provider::{SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData};
 pub use results::{
@@ -39,7 +39,7 @@ pub use results::{
 };
 pub use run::{PreparedRun, RunHandle, RunKind, RunOutcome};
 pub use schema::schema_from_files;
-pub use session::{CheckRefresh, QueryProgress, QuerySession};
+pub use session::{CheckRefresh, MIXED_CHANNEL_MESSAGE, QueryProgress, QuerySession};
 
 mod check;
 mod fingerprint;

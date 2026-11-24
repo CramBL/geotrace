@@ -10,6 +10,7 @@ use gt_types::{Channel, DisplayMode, LoadedFile, NavPoint, TrackRef};
 use gt_ui_types::QueryMatches;
 use rustc_hash::FxHashMap;
 
+use crate::check::QueryChunk;
 use crate::fingerprint::RunInputs;
 use crate::provider::{
     CapturedTrackValues, SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData,
@@ -29,6 +30,23 @@ pub enum RunKind {
     MixedChannel,
     /// Every query is points-source: run the composing pipeline.
     Points,
+}
+
+impl RunKind {
+    pub fn of_checked_chunks(chunks: &[QueryChunk]) -> Self {
+        let sources = chunks
+            .iter()
+            .filter_map(|chunk| chunk.result.as_ref().ok())
+            .map(CheckedQuery::is_channel_source);
+        let (channel_count, total) = sources.fold((0, 0), |(channels, total), is_channel| {
+            (channels + usize::from(is_channel), total + 1)
+        });
+        match channel_count {
+            0 => Self::Points,
+            1 if total == 1 => Self::Channel,
+            _ => Self::MixedChannel,
+        }
+    }
 }
 
 /// The handle shared between a run and its driver: the driver's cancel flag and

@@ -4,7 +4,8 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings, Reply, Request,
+    CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
+    Reply, Request,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -38,6 +39,14 @@ struct Companion {
 
 #[tool_router]
 impl Companion {
+    #[tool(
+        description = "Check query editor text against the loaded recording channels. Returns diagnostics with byte spans into the full text.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn check_query(&self, Parameters(args): Parameters<CheckQuery>) -> CallToolResult {
+        self.inspect(Request::CheckQuery(args)).await
+    }
+
     #[tool(
         description = "Read a page of points in recorded order. Use next_start as start with the same end.",
         annotations(read_only_hint = true, open_world_hint = false)
@@ -85,12 +94,21 @@ impl Companion {
     }
 
     async fn inspect(&self, request: Request) -> CallToolResult {
+        let checking_query = matches!(&request, Request::CheckQuery(_));
         let result = match self.bridge.request(request).await {
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
+            Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
             Ok(Reply::Range { details }) => serde_json::to_value(details),
             Ok(Reply::Recording { details }) => serde_json::to_value(details),
             Ok(Reply::Recordings { page }) => serde_json::to_value(page),
             Ok(Reply::Track { details }) => serde_json::to_value(details),
+            Ok(Reply::Error {
+                code: ErrorCode::ReplyTooLarge,
+            }) if checking_query => {
+                return Self::tool_error(
+                    "The query diagnostics exceed the reply size limit. Check fewer blocks at a time. For a single oversized diagnostic, check the query in the GeoTrace editor.",
+                );
+            }
             Ok(Reply::Error { code }) => return Self::tool_error(Self::reply_error_message(code)),
             Err(error) => return Self::tool_error(Self::connection_error_message(error.kind())),
         };
@@ -106,13 +124,16 @@ impl Companion {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
             ErrorCode::InvalidRange => "Choose an ordered point range within the track.",
-            ErrorCode::InvalidRequest | ErrorCode::RequestTooLarge => {
+            ErrorCode::InvalidRequest => {
                 "GeoTrace could not read the request. Use the companion from the same release."
             }
             ErrorCode::RecordingNotFound => {
                 "The recording is no longer loaded. List the loaded recordings again."
             }
             ErrorCode::ReplyTooLarge => "The reply is too large. Use a smaller page limit.",
+            ErrorCode::RequestTooLarge => {
+                "The request is too large. Shorten the request and try again."
+            }
             ErrorCode::StaleSession => {
                 "The desktop session has changed. List the loaded recordings from the beginning."
             }
@@ -125,6 +146,7 @@ impl Companion {
     fn connection_error_message(kind: ErrorKind) -> String {
         match kind {
             ErrorKind::ConnectionRefused | ErrorKind::NotFound => START_DESKTOP.to_owned(),
+            ErrorKind::FileTooLarge => Self::reply_error_message(ErrorCode::RequestTooLarge).to_owned(),
             ErrorKind::PermissionDenied => {
                 "The GeoTrace session denied access. Run GeoTrace and its companion as the same user."
                     .to_owned()

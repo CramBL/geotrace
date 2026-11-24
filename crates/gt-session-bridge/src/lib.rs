@@ -19,15 +19,17 @@ pub use crate::metrics::{
     ChannelComponent, ChannelDefinition, ChannelEntry, MetricDefinition, Metrics,
 };
 pub use crate::protocol::{
-    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings, Recording,
-    RecordingReference, Recordings, Reply, Request, TimeRange, TrackReference,
+    CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
+    Recording, RecordingReference, Recordings, Reply, Request, TimeRange, TrackReference,
 };
+pub use crate::query_validation::QueryValidation;
 
 mod endpoint;
 mod framing;
 mod inspection;
 mod metrics;
 mod protocol;
+mod query_validation;
 
 #[derive(Debug)]
 pub struct Server {
@@ -118,12 +120,15 @@ pub async fn request(request: Request) -> io::Result<Reply> {
 }
 
 async fn request_at(endpoint: &Endpoint, request: Request) -> io::Result<Reply> {
+    let frame = Frame::encode(&request, MAX_REQUEST_BYTES).map_err(|error| {
+        io::Error::new(
+            error.io_error_kind().unwrap_or(ErrorKind::InvalidData),
+            error,
+        )
+    })?;
     tokio::time::timeout(EXCHANGE_TIMEOUT, async {
         let mut stream = endpoint.connect().await?;
-        Frame::encode(&request, MAX_REQUEST_BYTES)
-            .map_err(io::Error::other)?
-            .write(&mut stream)
-            .await?;
+        frame.write(&mut stream).await?;
         framing::read(&mut stream, MAX_REPLY_BYTES).await
     })
     .await

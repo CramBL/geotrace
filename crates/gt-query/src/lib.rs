@@ -19,6 +19,8 @@
 //! This crate is pure language and evaluation - no data loading, no UI, no
 //! rendering.
 
+use serde::{Deserialize, Serialize};
+
 pub use ast::{ParamName, Query, Span};
 pub use check::{
     AggregateColumn, ChannelConflict, ChannelInfo, ChannelSchema, CheckedQuery, Params,
@@ -57,7 +59,7 @@ mod wrap;
 
 /// A parse or type error: what went wrong, where, and optionally how to fix
 /// it. Rendered by the editor as an underline plus message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Diagnostic {
     pub span: Span,
     pub message: String,
