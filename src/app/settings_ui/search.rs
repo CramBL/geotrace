@@ -47,8 +47,6 @@ impl SettingsSearch {
             .filter_map(|page| {
                 let labels: Vec<&'static str> = page
                     .searchable_labels()
-                    .iter()
-                    .copied()
                     .filter(|label| label.to_lowercase().contains(&query))
                     .collect();
                 let name_matches = page.rail_label().to_lowercase().contains(&query);

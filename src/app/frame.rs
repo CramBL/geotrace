@@ -177,6 +177,10 @@ impl eframe::App for App {
             self.query_window.open = true;
             ui.ctx().request_repaint();
         }
+        if let Some(key) = self.pending_session_setting.take() {
+            self.open_setting(key);
+            ui.ctx().request_repaint();
+        }
     }
 }
 

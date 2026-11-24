@@ -222,6 +222,14 @@ The `plot_presentation_queued` status acknowledges the request.
 GeoTrace applies a current request on the next frame with a visible plot area.
 With Sync to map enabled, the plot keeps that time range until the map's visible time range changes or the user changes the plot view.
 
+Use `get_settings` to list the current values and descriptions on the Analysis page.
+Pass a setting's `key` to `describe_setting` for its help, value, and limits, or to `open_setting` to reveal the control in Settings.
+For numeric settings, the description includes the unit and inclusive bounds.
+The `value` field is null if a loaded configuration contains a non-finite number.
+An `apply` value of `live` means the plot updates as the control changes.
+With `live_with_deferred_markers`, the plot updates as the control changes and GeoTrace regenerates affected markers on load or through Apply to loaded data.
+`open_setting` returns `setting_open_queued` when the bridge schedules the navigation.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

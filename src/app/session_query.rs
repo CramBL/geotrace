@@ -2,7 +2,7 @@ use gt_loaded_files::{LoadedFilesView, RecordingData};
 use gt_query_run::RunResults;
 use gt_session_bridge::{
     ErrorCode, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation, QueryResults, Reply,
-    Request, SessionRequest,
+    Request, SessionRequest, SettingKey,
 };
 use gt_types::Generation;
 use uuid::Uuid;
@@ -133,6 +133,7 @@ struct StagedSessionChanges {
     map: Option<MapPresentation>,
     plot: Option<PlotPresentation>,
     query_draft: Option<String>,
+    open_setting: Option<SettingKey>,
 }
 
 impl StagedSessionChanges {
@@ -149,6 +150,11 @@ impl StagedSessionChanges {
     fn queue_query_draft(&mut self, text: String) -> Reply {
         self.query_draft = Some(text);
         Reply::QueryDraftQueued
+    }
+
+    fn queue_setting(&mut self, key: SettingKey) -> Reply {
+        self.open_setting = Some(key);
+        Reply::SettingOpenQueued
     }
 }
 
@@ -304,6 +310,9 @@ impl App {
         if let Some(text) = staged.query_draft {
             self.pending_session_query_draft = Some(text);
         }
+        if let Some(key) = staged.open_setting {
+            self.pending_session_setting = Some(key);
+        }
     }
 
     fn execute_session_request(
@@ -318,6 +327,9 @@ impl App {
                 job.refresh(self);
                 job.reply()
             }),
+            Request::DescribeSetting(args) => Ok(Reply::Setting {
+                setting: self.describe_setting(args.key),
+            }),
             Request::GetQueryResults(args) => queries
                 .results(self, request.session, args.job)
                 .and_then(|results| {
@@ -330,10 +342,14 @@ impl App {
                     job.reply()
                 })
             }
+            Request::GetSettings => Ok(Reply::Settings {
+                settings: self.get_settings(),
+            }),
             Request::OpenPoint(args) => self
                 .session_open_point(request.session, args)
                 .map(|presentation| staged.queue_map(presentation)),
             Request::OpenQuery(args) => Ok(staged.queue_query_draft(args.text)),
+            Request::OpenSetting(args) => Ok(staged.queue_setting(args.key)),
             Request::RunQuery(args) => queries.submit(
                 self.shared.borrow().loaded_files.view(),
                 request.session,

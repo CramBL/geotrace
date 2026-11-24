@@ -1,175 +1,251 @@
-//! Detection parameters the plot applies to loaded data as they are edited.
+use std::ops::RangeInclusive;
 
+use egui::style::ScrollAnimation;
 use egui::{DragValue, Grid};
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
+use gt_session_bridge::{SettingApply, SettingInfo, SettingKey, SettingUnit, SettingValue};
 
 use crate::app::App;
 use crate::app::settings_ui::SettingsPage;
+use crate::settings::AnalysisSettings;
 
 impl App {
     pub(super) fn show_analysis_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::Analysis.show_header(ui);
+        let mut values = AnalysisSettings::from(&self.shared.borrow().plot_state);
+        let mut changed = false;
         Grid::new("analysis_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
-                // Start from the analysis config the plot currently uses,
-                // then live-apply any edits below.
-                let mut analysis = self.shared.borrow().plot_state.analysis;
-
-                let mask_help =
-                    "Satellites below this elevation are excluded from the 'in view' \
-                     baseline of the utilization rate, and a satellite must sit above it \
-                     to count toward the slip rate. This keeps the receiver from being \
-                     penalised for ignoring low-elevation satellites (high atmospheric \
-                     delay and multipath). \
-                     For example, a 0° mask counts horizon satellites the receiver \
-                     naturally rejects, which lowers the utilization rate and inflates the \
-                     slip rate with routine horizon fades; a 30° mask considers only \
-                     high, clean satellites.";
-                ui.label(format!("{ICON_FUNNEL} {ELEVATION_MASK_LABEL}"))
-                    .on_hover_text(mask_help);
-                ui.add(
-                    DragValue::new(&mut analysis.elevation_mask_deg)
-                        .range(0.0..=90.0)
-                        .speed(1.0)
-                        .fixed_decimals(0)
-                        .suffix("°"),
-                )
-                .on_hover_text(mask_help);
-                ui.end_row();
-
-                let snr_help =
-                    "An above-mask satellite whose SNR falls by more than this many dB-Hz \
-                     between consecutive epochs is counted as a loss-of-lock (slip), a \
-                     sign of a momentary signal break rather than ordinary variation. \
-                     For example, a low threshold like 3 dB-Hz flags ordinary signal \
-                     fluctuation as slips and inflates the rate; a high threshold like \
-                     25 dB-Hz reports only near-total dropouts and may miss real slips.";
-                ui.label(format!("{ICON_WAVE_SINE} {SNR_DROP_THRESHOLD_LABEL}"))
-                    .on_hover_text(snr_help);
-                ui.add(
-                    DragValue::new(&mut analysis.snr_drop_db)
-                        .range(1.0..=60.0)
-                        .speed(0.5)
-                        .fixed_decimals(0)
-                        .suffix(" dB-Hz"),
-                )
-                .on_hover_text(snr_help);
-                ui.end_row();
-
-                let window_help =
-                    "Trailing window over which the slip rate is averaged, in minutes. \
-                     The plotted value is the slips counted in the window divided by its \
-                     length, in slips per minute.";
-                ui.label(format!("{ICON_CLOCK} {SLIP_WINDOW_LABEL}"))
-                    .on_hover_text(window_help);
-                ui.add(
-                    DragValue::new(&mut analysis.slip_window_min)
-                        .range(1.0..=120.0)
-                        .speed(1.0)
-                        .fixed_decimals(0)
-                        .suffix("min"),
-                )
-                .on_hover_text(window_help);
-                ui.end_row();
-
-                let excursion_help =
-                    "A sample whose GPS/system clock offset sits more than this far from \
-                     the track's own baseline offset is treated as a clock offset \
-                     excursion: it is kept off the clock offset line, so one sample \
-                     carrying a whole recording gap cannot flatten the shared y-axis, and \
-                     marked at the edge of the view instead. Hover a marker for its real \
-                     offset. A large but steady offset sits at the baseline and is never \
-                     an excursion, and an offset that steps and stays is a clock \
-                     discontinuity, not an excursion.";
-                ui.label(format!("{ICON_WARNING} {CLOCK_OFFSET_EXCURSION_LABEL}"))
-                    .on_hover_text(excursion_help);
-                ui.add(
-                    DragValue::new(&mut analysis.clock_excursion_threshold_s)
-                        .range(gt_plot::CLOCK_EXCURSION_THRESHOLD_RANGE_S)
-                        .speed(1.0)
-                        .fixed_decimals(0)
-                        .suffix("s"),
-                )
-                .on_hover_text(excursion_help);
-                ui.end_row();
-
-                // Live-apply: re-derives only the analysis-dependent
-                // series, and keeps the loader in step for files loaded
-                // later. `set_analysis` is a no-op when unchanged.
-                self.loader.analysis_config = analysis;
-                // Slip markers share these detection parameters, but as
-                // load-time generated markers they only pick up the
-                // change on the next load or "Apply to loaded data".
-                self.processing_config
-                    .generated_markers
-                    .slip_elevation_mask_deg = analysis.elevation_mask_deg;
-                self.processing_config.generated_markers.slip_snr_drop_db = analysis.snr_drop_db;
-                self.processing_config
-                    .generated_markers
-                    .clock_excursion_threshold_s = analysis.clock_excursion_threshold_s;
-                {
-                    let mut shared = self.shared.borrow_mut();
-                    let s = &mut *shared;
-                    s.plot_state.set_analysis(&s.loaded_files, analysis);
+                for control in ANALYSIS_CONTROLS {
+                    let label = ui
+                        .label(format!("{} {}", control.icon, control.label))
+                        .on_hover_text(control.help);
+                    let (input, edited) = control.input.show(ui, &mut values);
+                    let input = input.on_hover_text(control.help);
+                    if self.setting_to_reveal == Some(control.key)
+                        && !ui.is_sizing_pass()
+                        && ui.clip_rect().is_positive()
+                    {
+                        ui.ctx().move_to_top(ui.layer_id());
+                        ui.scroll_to_rect_animation(
+                            label.rect.union(input.rect),
+                            None,
+                            ScrollAnimation::none(),
+                        );
+                        self.setting_to_reveal = None;
+                        ui.ctx().request_repaint();
+                    }
+                    changed |= edited;
+                    ui.end_row();
                 }
-
-                let mark_help =
-                    "Place a red cross on the plot at each epoch where the receiver used a \
-                     satellite below the elevation mask. Hover a marker to see which \
-                     satellites and their elevation. Such satellites are excluded from the \
-                     utilization rate, and the marker keeps that exclusion visible. Markers \
-                     show with the 'Util all' plot.";
-                ui.label(format!("{ICON_WARNING} {MARK_MASKED_SATELLITES_LABEL}"))
-                    .on_hover_text(mark_help);
-                let mut mark = self.shared.borrow().plot_state.mark_masked_fix;
-                if ui.checkbox(&mut mark, "").on_hover_text(mark_help).changed() {
-                    self.shared.borrow_mut().plot_state.mark_masked_fix = mark;
-                }
-                ui.end_row();
-
-                let backward_step_help =
-                    "Place a mark at the bottom of the plot wherever a sensor channel's sample \
-                     timestamps step backwards - a clock problem in the recorder, not a damaged \
-                     file. Hover a mark for the channels it covers, the two timestamps and how \
-                     far the clock stepped back. The samples stay in the order the file stored \
-                     them, and the marks show with the channel lines.";
-                ui.label(format!(
-                    "{ICON_CLOCK_COUNTER_CLOCKWISE} {MARK_BACKWARD_TIME_STEPS_LABEL}"
-                ))
-                .on_hover_text(backward_step_help);
-                let mut mark_steps = self.shared.borrow().plot_state.mark_backward_time_steps;
-                if ui
-                    .checkbox(&mut mark_steps, "")
-                    .on_hover_text(backward_step_help)
-                    .changed()
-                {
-                    self.shared.borrow_mut().plot_state.mark_backward_time_steps = mark_steps;
-                }
-                ui.end_row();
             });
+        if changed {
+            self.apply_analysis_controls(values);
+        }
+    }
+
+    fn apply_analysis_controls(&mut self, values: AnalysisSettings) {
+        let analysis = values.plot_config();
+        self.loader.analysis_config = analysis;
+        let markers = &mut self.processing_config.generated_markers;
+        markers.slip_elevation_mask_deg = analysis.elevation_mask_deg;
+        markers.slip_snr_drop_db = analysis.snr_drop_db;
+        markers.clock_excursion_threshold_s = analysis.clock_excursion_threshold_s;
+        let mut shared = self.shared.borrow_mut();
+        let state = &mut *shared;
+        state.plot_state.set_analysis(&state.loaded_files, analysis);
+        state.plot_state.mark_masked_fix = values.mark_masked_fix;
+        state.plot_state.mark_backward_time_steps = values.mark_backward_time_steps;
     }
 }
 
-const ELEVATION_MASK_LABEL: &str = "Elevation mask";
-const SNR_DROP_THRESHOLD_LABEL: &str = "SNR drop threshold";
-const SLIP_WINDOW_LABEL: &str = "Slip window";
-/// The Processing page's generated-marker row for the same excursions carries
-/// this label too, and reads the threshold from this page.
-pub(super) const CLOCK_OFFSET_EXCURSION_LABEL: &str = "Clock offset excursion";
-const MARK_MASKED_SATELLITES_LABEL: &str = "Mark masked-out used satellites";
-const MARK_BACKWARD_TIME_STEPS_LABEL: &str = "Mark backward time steps";
+pub(super) struct AnalysisControl {
+    key: SettingKey,
+    icon: &'static str,
+    pub(super) label: &'static str,
+    help: &'static str,
+    apply: SettingApply,
+    input: AnalysisInput,
+}
 
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    ELEVATION_MASK_LABEL,
-    SNR_DROP_THRESHOLD_LABEL,
-    SLIP_WINDOW_LABEL,
-    CLOCK_OFFSET_EXCURSION_LABEL,
-    MARK_MASKED_SATELLITES_LABEL,
-    MARK_BACKWARD_TIME_STEPS_LABEL,
+impl AnalysisControl {
+    pub(super) const fn for_key(key: SettingKey) -> Self {
+        match key {
+            SettingKey::AnalysisClockExcursionThreshold => Self {
+                key,
+                icon: ICON_WARNING,
+                label: CLOCK_OFFSET_EXCURSION_LABEL,
+                help: "Clock offset excursions deviate from the track's baseline GPS/system clock \
+                       offset by more than this threshold. The plot marks excursions at the \
+                       edge of the view and excludes them from the clock offset line. The line \
+                       includes sustained shifts in the baseline.",
+                apply: SettingApply::LiveWithDeferredMarkers,
+                input: AnalysisInput::Number {
+                    field: |values| &mut values.clock_excursion_threshold_s,
+                    range: gt_plot::CLOCK_EXCURSION_THRESHOLD_RANGE_S,
+                    unit: SettingUnit::Seconds,
+                    speed: 1.0,
+                },
+            },
+            SettingKey::AnalysisElevationMask => Self {
+                key,
+                icon: ICON_FUNNEL,
+                label: "Elevation mask",
+                help: "The utilization and slip rates use satellites at or above this elevation. \
+                       A higher mask excludes more satellites near the horizon, where atmospheric \
+                       delay and multipath are more common.",
+                apply: SettingApply::LiveWithDeferredMarkers,
+                input: AnalysisInput::Number {
+                    field: |values| &mut values.elevation_mask_deg,
+                    range: 0.0..=90.0,
+                    unit: SettingUnit::Degrees,
+                    speed: 1.0,
+                },
+            },
+            SettingKey::AnalysisMarkBackwardTimeSteps => Self {
+                key,
+                icon: ICON_CLOCK_COUNTER_CLOCKWISE,
+                label: "Mark backward time steps",
+                help: "Mark backward steps in channel sample time at the bottom of the plot. \
+                       Hover a mark for the affected channels and both timestamps. \
+                       Marks appear with the channel lines. The plot preserves the file's \
+                       sample order.",
+                apply: SettingApply::Live,
+                input: AnalysisInput::Toggle(|values| &mut values.mark_backward_time_steps),
+            },
+            SettingKey::AnalysisMarkMaskedFix => Self {
+                key,
+                icon: ICON_WARNING,
+                label: "Mark masked-out used satellites",
+                help: "Show a red cross on the Util all plot when a fix uses a satellite below \
+                       the elevation mask. Hover the cross for the satellites and their elevations.",
+                apply: SettingApply::Live,
+                input: AnalysisInput::Toggle(|values| &mut values.mark_masked_fix),
+            },
+            SettingKey::AnalysisSlipWindow => Self {
+                key,
+                icon: ICON_CLOCK,
+                label: "Slip window",
+                help: "The plot divides the number of slips in this trailing window by its \
+                       duration, in slips per minute.",
+                apply: SettingApply::Live,
+                input: AnalysisInput::Number {
+                    field: |values| &mut values.slip_window_min,
+                    range: 1.0..=120.0,
+                    unit: SettingUnit::Minutes,
+                    speed: 1.0,
+                },
+            },
+            SettingKey::AnalysisSnrDropThreshold => Self {
+                key,
+                icon: ICON_WAVE_SINE,
+                label: "SNR drop threshold",
+                help: "A drop greater than this threshold between consecutive epochs counts as \
+                       a slip when the receiver still tracks the satellite at or above the \
+                       elevation mask.",
+                apply: SettingApply::LiveWithDeferredMarkers,
+                input: AnalysisInput::Number {
+                    field: |values| &mut values.snr_drop_db,
+                    range: 1.0..=60.0,
+                    unit: SettingUnit::DecibelHertz,
+                    speed: 0.5,
+                },
+            },
+        }
+    }
+
+    pub(super) fn describe(&self, mut values: AnalysisSettings) -> SettingInfo {
+        let value = match &self.input {
+            AnalysisInput::Number {
+                field, range, unit, ..
+            } => {
+                let number = *field(&mut values);
+                SettingValue::Number {
+                    value: number.is_finite().then_some(number),
+                    minimum: *range.start(),
+                    maximum: *range.end(),
+                    unit: *unit,
+                }
+            }
+            AnalysisInput::Toggle(field) => SettingValue::Boolean {
+                value: *field(&mut values),
+            },
+        };
+        SettingInfo {
+            key: self.key,
+            page: SettingsPage::Analysis.rail_label().to_owned(),
+            label: self.label.to_owned(),
+            help: self.help.to_owned(),
+            apply: self.apply,
+            value,
+        }
+    }
+}
+
+enum AnalysisInput {
+    Number {
+        field: fn(&mut AnalysisSettings) -> &mut f32,
+        range: RangeInclusive<f32>,
+        unit: SettingUnit,
+        speed: f64,
+    },
+    Toggle(fn(&mut AnalysisSettings) -> &mut bool),
+}
+
+impl AnalysisInput {
+    fn show(&self, ui: &mut egui::Ui, values: &mut AnalysisSettings) -> (egui::Response, bool) {
+        match self {
+            Self::Number {
+                field,
+                range,
+                unit,
+                speed,
+            } => {
+                let value = field(values);
+                let initial = value.to_bits();
+                let suffix = match unit {
+                    SettingUnit::DecibelHertz => " dB-Hz",
+                    SettingUnit::Degrees => "°",
+                    SettingUnit::Minutes => "min",
+                    SettingUnit::Seconds => "s",
+                };
+                let response = ui.add(
+                    DragValue::from_get_set(|new| {
+                        if let Some(new) = new.filter(|new| new.is_finite()) {
+                            *value = (new as f32).clamp(*range.start(), *range.end());
+                        }
+                        f64::from(*value)
+                    })
+                    .range(range.clone())
+                    .clamp_existing_to_range(false)
+                    .speed(*speed)
+                    .fixed_decimals(0)
+                    .suffix(suffix),
+                );
+                (response, value.to_bits() != initial)
+            }
+            Self::Toggle(field) => {
+                let response = ui.checkbox(field(values), "");
+                let changed = response.changed();
+                (response, changed)
+            }
+        }
+    }
+}
+
+pub(super) const CLOCK_OFFSET_EXCURSION_LABEL: &str = "Clock offset excursion";
+
+pub(super) const ANALYSIS_CONTROLS: &[AnalysisControl] = &[
+    AnalysisControl::for_key(SettingKey::AnalysisElevationMask),
+    AnalysisControl::for_key(SettingKey::AnalysisSnrDropThreshold),
+    AnalysisControl::for_key(SettingKey::AnalysisSlipWindow),
+    AnalysisControl::for_key(SettingKey::AnalysisClockExcursionThreshold),
+    AnalysisControl::for_key(SettingKey::AnalysisMarkMaskedFix),
+    AnalysisControl::for_key(SettingKey::AnalysisMarkBackwardTimeSteps),
 ];

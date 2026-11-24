@@ -8,6 +8,7 @@ use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
 use egui_phosphor::regular::SUN as ICON_SUN;
 use egui_phosphor::regular::WAVES as ICON_WAVES;
 use gt_map::MapLayer;
+use gt_session_bridge::{SettingInfo, SettingKey};
 use gt_store::EnvironmentArchive;
 use strum::{EnumIter, IntoEnumIterator};
 
@@ -15,6 +16,7 @@ use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
 use super::App;
 use super::backfill_ui::BackfillReadiness;
+use crate::settings::AnalysisSettings;
 
 mod analysis;
 mod application;
@@ -77,10 +79,10 @@ impl SettingsPage {
     /// The labels the query field matches, alongside the page name. Each one
     /// must be a label the page renders, which
     /// `every_settings_page_renders_the_labels_it_declares` checks.
-    pub(super) fn searchable_labels(self) -> &'static [&'static str] {
-        match self {
+    pub(super) fn searchable_labels(self) -> impl Iterator<Item = &'static str> {
+        let labels: &[&str] = match self {
             Self::Processing => processing::SEARCHABLE_LABELS,
-            Self::Analysis => analysis::SEARCHABLE_LABELS,
+            Self::Analysis => &[],
             Self::AircraftInterference => interference::SEARCHABLE_LABELS,
             Self::GeomagneticIndices => geomagnetic_indices::SEARCHABLE_LABELS,
             Self::IonosphericTec => tec::SEARCHABLE_LABELS,
@@ -88,7 +90,14 @@ impl SettingsPage {
             Self::SnapToRoad => snap::SEARCHABLE_LABELS,
             Self::Interface => interface::SEARCHABLE_LABELS,
             Self::Application => application::SEARCHABLE_LABELS,
-        }
+        };
+        labels.iter().copied().chain(
+            (self == Self::Analysis)
+                .then_some(analysis::ANALYSIS_CONTROLS)
+                .into_iter()
+                .flatten()
+                .map(|control| control.label),
+        )
     }
 
     /// The header the page opens with: the same icon and label the rail entry
@@ -103,6 +112,12 @@ impl SettingsPage {
 }
 
 impl App {
+    pub(super) fn open_setting(&mut self, key: SettingKey) {
+        self.settings_open = true;
+        self.settings_page = SettingsPage::Analysis;
+        self.setting_to_reveal = Some(key);
+    }
+
     /// What a download control may do right now. An archive still opening or
     /// one that could not be opened outranks offline mode: there is nowhere
     /// to download to either way.
@@ -136,6 +151,7 @@ impl App {
     /// signalling that the caller should call `apply_resegmentation`.
     pub(super) fn show_settings_window(&mut self, ui: &egui::Ui) -> bool {
         if !self.settings_open {
+            self.setting_to_reveal = None;
             return false;
         }
         // The name-template preview reads a stored recording from the History
@@ -177,7 +193,23 @@ impl App {
         }
 
         self.settings_open = open;
+        if !open || self.settings_page != SettingsPage::Analysis {
+            self.setting_to_reveal = None;
+        }
         apply
+    }
+
+    pub(super) fn describe_setting(&self, key: SettingKey) -> SettingInfo {
+        let values = AnalysisSettings::from(&self.shared.borrow().plot_state);
+        analysis::AnalysisControl::for_key(key).describe(values)
+    }
+
+    pub(super) fn get_settings(&self) -> Vec<SettingInfo> {
+        let values = AnalysisSettings::from(&self.shared.borrow().plot_state);
+        analysis::ANALYSIS_CONTROLS
+            .iter()
+            .map(|control| control.describe(values))
+            .collect()
     }
 
     fn show_category_rail(&mut self, ui: &mut egui::Ui) {

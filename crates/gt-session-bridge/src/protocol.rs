@@ -14,21 +14,25 @@ use crate::metrics::Metrics;
 use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
+use crate::settings::{SettingInfo, SettingSelection};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     CancelQuery(QueryJobRequest),
     CheckQuery(QueryText),
+    DescribeSetting(SettingSelection),
     GetQueryResults(GetQueryResults),
     GetQueryStatus(QueryJobRequest),
     GetRangeDetails(GetRangeDetails),
     GetRecording(GetRecording),
+    GetSettings,
     GetTrack(GetTrack),
     ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
     OpenPoint(OpenPoint),
     OpenQuery(QueryText),
+    OpenSetting(SettingSelection),
     RunQuery(QueryText),
     ShowOnMap(ShowOnMap),
     ShowOnPlot(ShowOnPlot),
@@ -215,6 +219,9 @@ pub enum Reply {
     Range { details: RangeDetails },
     Recording { details: RecordingDetails },
     Recordings { page: Recordings },
+    Setting { setting: SettingInfo },
+    SettingOpenQueued,
+    Settings { settings: Vec<SettingInfo> },
     Track { details: TrackDetails },
 }
 

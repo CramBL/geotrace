@@ -5,7 +5,8 @@ use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
     ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, ShowOnMap, ShowOnPlot,
+    ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SettingSelection,
+    ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -60,6 +61,17 @@ impl Companion {
     }
 
     #[tool(
+        description = "Read one setting's current value, limits, and help.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn describe_setting(
+        &self,
+        Parameters(args): Parameters<SettingSelection>,
+    ) -> CallToolResult {
+        self.inspect(Request::DescribeSetting(args)).await
+    }
+
+    #[tool(
         description = "Read a page of matches or the rows of one match from a completed query job. Use next_start for the next page.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -98,6 +110,14 @@ impl Companion {
     )]
     async fn get_recording(&self, Parameters(args): Parameters<GetRecording>) -> CallToolResult {
         self.inspect(Request::GetRecording(args)).await
+    }
+
+    #[tool(
+        description = "List current Analysis settings with their limits and help.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_settings(&self) -> CallToolResult {
+        self.inspect(Request::GetSettings).await
     }
 
     #[tool(
@@ -152,6 +172,18 @@ impl Companion {
     }
 
     #[tool(
+        description = "Open the Settings window at the selected control.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn open_setting(&self, Parameters(args): Parameters<SettingSelection>) -> CallToolResult {
+        self.inspect(Request::OpenSetting(args)).await
+    }
+
+    #[tool(
         description = "Start a background query using the current filter and enabled tracks. A busy response includes the active job ID. Poll the job with get_query_status.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
@@ -189,7 +221,9 @@ impl Companion {
             Ok(
                 reply @ (Reply::MapPresentationQueued
                 | Reply::PlotPresentationQueued
-                | Reply::QueryDraftQueued),
+                | Reply::QueryDraftQueued
+                | Reply::SettingOpenQueued
+                | Reply::Settings { .. }),
             ) => serde_json::to_value(reply),
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
@@ -198,6 +232,7 @@ impl Companion {
             Ok(Reply::Range { details }) => serde_json::to_value(details),
             Ok(Reply::Recording { details }) => serde_json::to_value(details),
             Ok(Reply::Recordings { page }) => serde_json::to_value(page),
+            Ok(Reply::Setting { setting }) => serde_json::to_value(setting),
             Ok(Reply::Track { details }) => serde_json::to_value(details),
             Ok(Reply::Error {
                 code: ErrorCode::ReplyTooLarge,
