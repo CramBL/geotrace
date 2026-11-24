@@ -119,6 +119,10 @@ impl RunFingerprint {
     pub fn tracks(&self) -> &[TrackRef] {
         &self.tracks
     }
+
+    pub(crate) fn matches_loaded_files(&self, files: LoadedFilesView<'_>) -> bool {
+        self.data_generation == files.data_generation()
+    }
 }
 
 #[cfg(test)]

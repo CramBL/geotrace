@@ -366,7 +366,7 @@ impl App {
                     // closed, the button turns amber with a "!" so the active
                     // filter is not forgotten. Right-click clears it. The amber
                     // is dimmed in light mode, where the bright tone glares.
-                    let query_active = self.query_window.filter_active();
+                    let query_active = self.query_filter_active();
                     let show_alert = query_active && !self.query_window.open;
                     let query_label = if show_alert {
                         RichText::new(format!("{ICON_TERMINAL_WINDOW} !"))
@@ -496,7 +496,7 @@ impl App {
                             filter_state: &mut s.filter_state,
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
-                            query_matches: self.query_window.matches(),
+                            query_matches: self.query_window.map_matches(loaded_files),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
                             shelf_request: &mut shelf_request,
@@ -549,7 +549,7 @@ impl App {
                         filter_state: &mut s.filter_state,
                         map_center_request: &mut s.map_center_request,
                         popup_pos_request: &mut s.popup_pos_request,
-                        query_matches: self.query_window.matches(),
+                        query_matches: self.query_window.map_matches(loaded_files),
                         zoom_to_visible_request: &mut s.zoom_to_visible_request,
                         warnings_request: &mut s.warnings_popup,
                         shelf_request: &mut shelf_request,
@@ -796,11 +796,9 @@ impl App {
             if let Some(inputs) = query_series.inputs(s.loaded_files.view(), &s.tree, &s.filter) {
                 self.session_query.refresh(inputs);
             }
-            s.discard_stale_session_map(
-                &mut self.map,
-                self.query_window.matches(),
-                &self.session_query,
-            );
+            let query_matches = self.query_window.map_matches(s.loaded_files.view());
+            s.discard_stale_session_map(&mut self.map, query_matches, &self.session_query);
+
             if s.pending_session_plot
                 .as_ref()
                 .is_some_and(|presentation| !presentation.is_current(&s, &self.session_query))
@@ -857,7 +855,7 @@ impl App {
                     map_hover_time,
                     match_hover_time_range,
                     toggle_plot_request: false,
-                    query_matches: self.query_window.matches(),
+                    query_matches,
                     snapped_tracks: &snapped_tracks,
                     log_matches,
                     snap_error: &snap_error,
@@ -901,7 +899,7 @@ impl App {
                         s.loaded_files.files(),
                         s.tree.visibility(),
                         &s.filter,
-                        self.query_window.matches(),
+                        query_matches,
                         s.tree.generated_marker_visibility(),
                         s.tree.event_marker_visibility(),
                     )
@@ -934,9 +932,7 @@ impl App {
                     s.highlight.plot_hover_snapped = false;
                 }
             } else {
-                s.plot_state.hovered_time = None;
-                s.plot_state.hovered_metric_fix = None;
-                s.plot_state.plot_cursor_snapped = false;
+                s.plot_state.clear_hover();
                 s.highlight.plot_hover_time = None;
                 s.highlight.plot_hover_point = None;
                 s.highlight.plot_hover_snapped = false;

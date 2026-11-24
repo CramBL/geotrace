@@ -928,21 +928,23 @@ impl App {
     /// A recording without nav points has no track structure to re-segment and
     /// is left unchanged.
     fn apply_resegmentation(&mut self) {
+        if !self.has_loaded_nav_points() {
+            return;
+        }
         let config = self.processing_config;
         {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
             for file in s.loaded_files.files_mut() {
-                let has_nav_points = file.tracks.iter().any(|t| !t.points.is_empty());
-                if !has_nav_points {
-                    continue;
-                }
                 let all_points: Vec<gt_types::NavPoint> = file
                     .tracks
                     .iter()
                     .flat_map(|t| t.points.iter())
                     .cloned()
                     .collect();
+                if all_points.is_empty() {
+                    continue;
+                }
                 let all_custom_markers: Vec<gt_types::CustomMarker> = file
                     .tracks
                     .iter()
@@ -979,6 +981,16 @@ impl App {
             s.tree.reset_for_resegmented_files(s.loaded_files.view());
         }
         self.on_track_indices_changed();
+        self.ctx.request_repaint();
+    }
+
+    fn has_loaded_nav_points(&self) -> bool {
+        self.shared
+            .borrow()
+            .loaded_files
+            .iter()
+            .flat_map(|file| &file.tracks)
+            .any(|track| !track.points.is_empty())
     }
 
     fn handle_completed_load(&mut self, completed: CompletedLoad, now: f64) {
@@ -1261,7 +1273,12 @@ impl App {
         self.snap_auto_sweep = true;
         self.hidden_snapped.clear();
         self.sky_trails_window.invalidate();
-        let s = self.shared.borrow();
+        let mut s = self.shared.borrow_mut();
+        s.highlight.clear_recording_targets();
+        s.plot_state.clear_hover();
+        s.popup_pos_request = None;
+        s.reveal_query_matches_request = None;
+        s.sky_trails_request = None;
         self.map.rebuild_spatial_index(&s.loaded_files);
         self.logs.reassociate_all(&s.loaded_files.view());
     }

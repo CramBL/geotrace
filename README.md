@@ -240,6 +240,14 @@ GeoTrace returns the effective value in the current session.
 GeoTrace saves eligible settings changes automatically and keeps changes in memory in read-only sessions.
 The `apply` field indicates when GeoTrace uses the setting.
 
+Use `apply_processing` to rebuild the loaded tracks and generated markers with the current Processing settings, as with Apply to loaded data in Settings.
+GeoTrace requires a loaded recording with navigation points.
+GeoTrace acknowledges the request with `processing_queued`.
+The app may be busy while it rebuilds the tracks.
+If a read times out, try it again when GeoTrace responds.
+Use `get_recording` to obtain fresh track references and rerun queries against the rebuilt tracks.
+History keeps its stored track layout.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

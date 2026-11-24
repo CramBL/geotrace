@@ -201,6 +201,18 @@ impl MapHighlight {
         self.set_sticky(None);
     }
 
+    pub fn clear_recording_targets(&mut self) {
+        self.clear_sticky();
+        self.hover = None;
+        self.plot_hover_time = None;
+        self.plot_hover_point = None;
+        self.plot_hover_snapped = false;
+        self.scrub_time = None;
+        self.suppress_hover_labels = false;
+        self.hover_match = None;
+        self.presented_match = None;
+    }
+
     pub fn pin(&mut self, present: PresentElementRef<'_>) {
         self.set_sticky(Some(present.element_ref()));
     }

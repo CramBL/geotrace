@@ -338,6 +338,12 @@ impl App {
         self.instance_lock.mark_shutting_down(&self.pending_writes);
     }
 
+    pub(in crate::app) fn shutdown_requested(&self) -> bool {
+        self.shutdown.has_begun()
+            || TERMINATION_SIGNAL_FLAG.is_raised()
+            || self.ctx.input(|input| input.viewport().close_requested())
+    }
+
     /// Hands the app's worker to a thread of its own, which joins its
     /// `history-db` thread while the GUI thread carries on painting. The app
     /// is left with a disabled worker, which has nothing to join.

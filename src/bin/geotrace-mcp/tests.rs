@@ -81,6 +81,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     assert_eq!(
         names,
         [
+            "apply_processing",
             "cancel_query",
             "check_query",
             "describe_setting",
@@ -134,6 +135,18 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     assert_eq!(
         setting_tool.pointer("/annotations/idempotentHint"),
         Some(&json!(true))
+    );
+    let processing_tool = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("apply_processing")))
+        .unwrap();
+    assert_eq!(
+        processing_tool.pointer("/annotations/destructiveHint"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        processing_tool.pointer("/annotations/idempotentHint"),
+        Some(&json!(false))
     );
 
     let absent = client
@@ -373,10 +386,22 @@ async fn assert_setting_tools_report_typed_values(client: &mut Client) {
         changed.pointer("/result/structuredContent"),
         Some(&expected)
     );
+
+    let applied = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 22, "method": "tools/call",
+            "params": {"name": "apply_processing", "arguments": {}}
+        }))
+        .await;
+    assert_eq!(
+        applied.pointer("/result/structuredContent"),
+        Some(&json!({"status": "processing_queued"}))
+    );
 }
 
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
+        Request::ApplyProcessing => Ok(Reply::ProcessingQueued),
         Request::GetSettings => Ok(Reply::Settings {
             settings: vec![self::setting_fixture(10.0)],
         }),
