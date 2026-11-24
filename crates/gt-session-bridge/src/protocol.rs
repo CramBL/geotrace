@@ -1,8 +1,10 @@
 use std::num::NonZeroUsize;
 
 use chrono::{DateTime, Utc};
-use gt_loaded_files::{RecordingPage, RecordingSummary, SessionTrackRef};
-use gt_types::TimeRange as LoadedTimeRange;
+use gt_loaded_files::{
+    LoadedFileEntry, LoadedFilesView, RecordingPage, RecordingSummary, SessionTrackRef,
+};
+use gt_types::{TimeRange as LoadedTimeRange, TrackIdx, TrackRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -24,7 +26,35 @@ pub enum Request {
     GetTrack(GetTrack),
     ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
+    OpenPoint(OpenPoint),
     RunQuery(CheckQuery),
+    ShowOnMap(ShowOnMap),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct OpenPoint {
+    pub track: TrackReference,
+    pub point: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ShowOnMap {
+    pub target: MapTarget,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MapTarget {
+    Track {
+        track: TrackReference,
+        start: Option<usize>,
+        end: Option<usize>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -89,6 +119,26 @@ pub struct RecordingReference {
     pub number: u64,
 }
 
+impl RecordingReference {
+    pub(crate) fn number_in(self, session: Uuid) -> Result<u64, ErrorCode> {
+        if self.session == session {
+            Ok(self.number)
+        } else {
+            Err(ErrorCode::StaleSession)
+        }
+    }
+
+    pub(crate) fn resolve(
+        self,
+        files: LoadedFilesView<'_>,
+        session: Uuid,
+    ) -> Result<LoadedFileEntry<'_>, ErrorCode> {
+        files
+            .entry_for_id_number(self.number_in(session)?)
+            .ok_or(ErrorCode::RecordingNotFound)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -109,12 +159,20 @@ impl TrackReference {
             revision: track.revision(),
         }
     }
+
+    pub fn resolve(self, files: LoadedFilesView<'_>, session: Uuid) -> Result<TrackRef, ErrorCode> {
+        let entry = self.recording.resolve(files, session)?;
+        files
+            .resolve_track_at_revision(entry.id(), TrackIdx::new(self.index), self.revision)
+            .ok_or(ErrorCode::StaleTrack)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Reply {
     Error { code: ErrorCode },
+    MapPresentationQueued,
     Metrics { page: Metrics },
     QueryCheck { validation: QueryValidation },
     QueryJob { job: QueryJobStatus },
@@ -135,9 +193,11 @@ impl From<ErrorCode> for Reply {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Busy,
+    InvalidPoint,
     InvalidQueryCursor,
     InvalidRange,
     InvalidRequest,
+    NoVisibleMapGeometry,
     QueryColumnsTooLarge,
     QueryJobNotFound,
     QueryNotComplete,

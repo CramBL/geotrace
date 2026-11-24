@@ -57,8 +57,6 @@ impl fmt::Display for StaleRunNote {
     }
 }
 
-/// What the map frames and re-reveals for a map button press in the query
-/// window: every match the run drew, or the one match on a name row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchRevealTarget {
     OneMatch {

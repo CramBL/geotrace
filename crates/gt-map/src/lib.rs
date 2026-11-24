@@ -11,14 +11,17 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_track_builder::SpatialIndex;
-use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackRef};
+use gt_types::{
+    DataCategory, FileIdx, GeoBounds, Latitude, LoadedFile, Longitude, SpatialPoint, TrackRef,
+};
 use gt_ui_types::log_matches::LogMatchScope;
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope,
     LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapEligibility, MapHighlight,
-    MapPresence, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, ResolvedElement,
-    ResolvedMapHighlight, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    MapPresence, MatchHighlight, MatchRevealTarget, PinRevision, PinnedPopup, PointWindowFolds,
+    QueryMatches, ResolvedElement, ResolvedMapHighlight, SkyGlyphVariant, SkyTrailsRequest,
+    SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -47,7 +50,7 @@ pub use display_toggle::{DISPLAY_TOGGLE_BUTTON_AREA_ID, DISPLAY_TOGGLE_POPUP_ARE
 pub use sky_trails_window::SkyTrailsWindow;
 pub use space_weather_indicator::SpaceWeatherIndicator;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
-pub use viewport::ViewportBounds;
+pub use viewport::{ViewportBounds, query_match_has_geometry};
 
 #[cfg(any(test, feature = "test-util"))]
 #[doc(hidden)]
@@ -272,6 +275,15 @@ impl<'a> MapFiles<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum PresentationCamera {
+    Center {
+        latitude: Latitude,
+        longitude: Longitude,
+    },
+    TrackRange(MatchHighlight),
+}
+
 /// Context provided to the map for a single frame.
 pub struct MapDrawContext<'a> {
     pub files: MapFiles<'a>,
@@ -307,10 +319,10 @@ pub struct MapDrawContext<'a> {
     pub point_window_folds: &'a mut PointWindowFolds,
     pub center_request: Option<(f64, f64)>,
     pub zoom_to_visible: bool,
-    /// Set for one frame by a map button in the query window: frames the map on
-    /// what the request names and plays the reveal animation again.
+    /// The map restarts the match reveal animation for each request.
     pub reveal_query_matches: Option<MatchRevealTarget>,
     pub sticky_pos_override: Option<egui::Pos2>,
+    pub presentation_camera: Option<PresentationCamera>,
 }
 
 impl<'a> MapDrawContext<'a> {
@@ -346,12 +358,20 @@ impl<'a> MapDrawContext<'a> {
 
     /// The bounding box around every element currently drawn, for framing.
     fn visible_bounding_box(&self) -> Option<GeoBounds> {
-        viewport::visible_bounds(self.scope(), *self.sky_glyph_variant)
+        let scope = self.scope();
+        let presentation = self
+            .highlight
+            .presented_match
+            .filter(|&range| self.highlight.map_match() == Some(range))
+            .and_then(|range| {
+                viewport::query_match_bounds(scope, range.track, &(range.start..range.end))
+            });
+        viewport::visible_bounds(scope, *self.sky_glyph_variant)
+            .into_iter()
+            .chain(presentation)
+            .reduce(GeoBounds::union)
     }
 
-    /// The bounding box a reveal request frames: every match the run drew, or
-    /// the points of the one match the request names. `None` when the filter
-    /// hides every one of them, which leaves the camera where it is.
     fn reveal_bounding_box(&self, target: &MatchRevealTarget) -> Option<GeoBounds> {
         match target {
             MatchRevealTarget::WholeRun => {
@@ -690,6 +710,7 @@ impl NavMap {
         let now = ui.ctx().input(|i| i.time);
         self.apply_camera_requests(ui, &ctx);
         self.adopt_new_files(ui, &ctx, now);
+        self.apply_presentation_camera(ui, &ctx);
 
         // Read before the click below can open or close either of them: the
         // hover labels state the popups the frame was drawn under.
@@ -831,6 +852,30 @@ impl NavMap {
         }
     }
 
+    fn apply_presentation_camera(&mut self, ui: &egui::Ui, ctx: &MapDrawContext<'_>) {
+        match ctx.presentation_camera {
+            Some(PresentationCamera::Center {
+                latitude,
+                longitude,
+            }) => {
+                self.map_memory.center_at(walkers::lat_lon(
+                    latitude.clamped_to_the_mercator_limit().as_degrees(),
+                    longitude.as_degrees(),
+                ));
+            }
+            Some(PresentationCamera::TrackRange(range)) => {
+                if let Some(bounds) = viewport::query_match_bounds(
+                    ctx.scope(),
+                    range.track,
+                    &(range.start..range.end),
+                ) {
+                    self.fit_to_bounds(ui.max_rect(), bounds);
+                }
+            }
+            None => {}
+        }
+    }
+
     /// Frame `bounds`, keeping what the projection could not show for
     /// [`NavMap::take_fit_notice`].
     fn fit_to_bounds(&mut self, viewport: egui::Rect, bounds: GeoBounds) {
@@ -846,8 +891,7 @@ impl NavMap {
     /// Frame newly loaded files, start the load-highlight pulse, and rebuild
     /// the spatial index around them.
     ///
-    /// A new file is visible by default, so it is always framed. Existing
-    /// files honor their current visibility.
+    /// The automatic fit uses each file's current visibility.
     fn adopt_new_files(&mut self, ui: &egui::Ui, ctx: &MapDrawContext<'_>, now: f64) {
         if ctx.files.files().len() <= self.last_file_count {
             return;
@@ -860,7 +904,11 @@ impl NavMap {
         if had_tracks {
             self.blink.trigger(now);
         }
-        if let Some(bbox) = ctx.visible_bounding_box() {
+        if !matches!(
+            ctx.presentation_camera,
+            Some(PresentationCamera::TrackRange(_))
+        ) && let Some(bbox) = ctx.visible_bounding_box()
+        {
             self.fit_to_bounds(ui.max_rect(), bbox);
         }
         self.spatial_index = SpatialIndex::build(ctx.files.files());
@@ -1228,20 +1276,22 @@ impl NavMap {
                 },
             },
             || {
-                counts_cache.get(
-                    ctx.files,
-                    ctx.visibility,
-                    ctx.filter,
-                    ctx.event_marker_visibility,
-                    ctx.generated_marker_visibility,
-                    ctx.query_matches,
-                    display_counts::SuppliedCounts {
-                        snapped_tracks: ctx.snapped_tracks,
-                        jamming_cells: ctx.jamming_dataset.map_or(0, JamDataset::len),
-                        tec_nodes,
-                        log_matches: Some(ctx.log_matches),
-                    },
-                )
+                counts_cache
+                    .get(
+                        ctx.files,
+                        ctx.visibility,
+                        ctx.filter,
+                        ctx.event_marker_visibility,
+                        ctx.generated_marker_visibility,
+                        ctx.query_matches,
+                        display_counts::SuppliedCounts {
+                            snapped_tracks: ctx.snapped_tracks,
+                            jamming_cells: ctx.jamming_dataset.map_or(0, JamDataset::len),
+                            tec_nodes,
+                            log_matches: Some(ctx.log_matches),
+                        },
+                    )
+                    .including_map_presentation(ctx.highlight.presented_match)
             },
         );
 
@@ -1255,11 +1305,20 @@ impl NavMap {
 
     fn click_selection(&self, highlight: &MapHighlight) -> ClickSelection {
         ClickSelection {
-            sticky: highlight.sticky(),
+            pin: Some(highlight.pin_selection()),
             sticky_pos: self.sticky_pos,
             candidates: self.disambiguation_candidates,
             disambiguation_pos: self.disambiguation_pos,
         }
+    }
+
+    pub fn pin_rollback_revision(&self, highlight: &MapHighlight) -> Option<PinRevision> {
+        self.primary_click
+            .pin_rollback_revision(self.click_selection(highlight), &self.map_memory)
+    }
+
+    pub fn discard_pin_rollback(&mut self, revision: PinRevision) {
+        self.primary_click.discard_pin_rollback(revision);
     }
 
     fn restore_click_selection(
@@ -1268,9 +1327,10 @@ impl NavMap {
         highlight: &mut MapHighlight,
         scope: MapPresence<'_>,
     ) {
-        highlight.clear_sticky();
-        if let Some(sticky) = selection.sticky {
-            highlight.toggle_sticky_if_drawn(scope, sticky);
+        if let Some(pin) = selection.pin {
+            highlight.restore_pin(pin, scope);
+        } else {
+            highlight.clear_sticky();
         }
         self.sticky_pos = selection.sticky_pos;
         self.disambiguation_candidates = selection.candidates.retaining_present(scope);

@@ -66,10 +66,8 @@ impl MapElementRef {
     }
 }
 
-/// A query-result match hovered in the results table: one track's matched
-/// point range, echoed on the map as a halo band and on the plot as a shaded
-/// time band. Stores the range as two indices (not a [`std::ops::Range`]) so
-/// it stays `Copy` like the rest of [`MapHighlight`].
+/// The map uses this range for hovered query matches and session presentations.
+/// The plot shades the time span of a hovered query match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchHighlight {
     pub track: TrackRef,
@@ -110,7 +108,8 @@ pub enum HighlightScope {
 #[derive(Debug, Clone, Copy)]
 pub struct MapHighlight {
     pub hover: Option<HighlightScope>,
-    sticky: Option<MapElementRef>,
+    pin: PinSelection,
+    last_pin_revision: PinRevision,
     /// Time of the selected plot sample, or the cursor time between samples.
     /// `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
@@ -139,9 +138,33 @@ pub struct MapHighlight {
     /// renders. The map and plot read it one frame behind (the query window
     /// draws after both).
     pub hover_match: Option<MatchHighlight>,
+    pub presented_match: Option<MatchHighlight>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PinRevision(u64);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PinSelection {
+    element: Option<MapElementRef>,
+    revision: PinRevision,
+}
+
+impl PinSelection {
+    pub fn element(self) -> Option<MapElementRef> {
+        self.element
+    }
+
+    pub fn revision(self) -> PinRevision {
+        self.revision
+    }
 }
 
 impl MapHighlight {
+    pub fn map_match(&self) -> Option<MatchHighlight> {
+        self.hover_match.or(self.presented_match)
+    }
+
     pub fn resolve<'a>(&'a self, presence: MapPresence<'a>) -> ResolvedMapHighlight<'a> {
         let plot_hover =
             self.plot_hover_point
@@ -157,22 +180,52 @@ impl MapHighlight {
 
     /// The raw identity currently pinned across frames.
     pub fn sticky(&self) -> Option<MapElementRef> {
-        self.sticky
+        self.pin.element
     }
 
     /// Whether `candidate` is the currently pinned element.
     pub fn is_sticky(&self, candidate: MapElementRef) -> bool {
-        self.sticky == Some(candidate)
+        self.pin.element == Some(candidate)
+    }
+
+    pub fn pin_revision(&self) -> PinRevision {
+        self.pin.revision
+    }
+
+    pub fn pin_selection(&self) -> PinSelection {
+        self.pin
     }
 
     /// Dismiss the current pin.
     pub fn clear_sticky(&mut self) {
-        self.sticky = None;
+        self.set_sticky(None);
+    }
+
+    pub fn pin(&mut self, present: PresentElementRef<'_>) {
+        self.set_sticky(Some(present.element_ref()));
+    }
+
+    pub fn restore_pin(&mut self, pin: PinSelection, presence: MapPresence<'_>) {
+        if pin.element.is_none_or(|element| presence.draws(element)) {
+            self.pin = pin;
+        } else {
+            self.clear_sticky();
+        }
+    }
+
+    fn set_sticky(&mut self, sticky: Option<MapElementRef>) {
+        if self.pin.element != sticky {
+            self.last_pin_revision.0 = self.last_pin_revision.0.wrapping_add(1);
+            self.pin = PinSelection {
+                element: sticky,
+                revision: self.last_pin_revision,
+            };
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn set_sticky_for_test(&mut self, sticky: Option<MapElementRef>) {
-        self.sticky = sticky;
+        self.set_sticky(sticky);
     }
 
     /// Pin a map-present element's popup, or unpin it when it is already the
@@ -180,9 +233,13 @@ impl MapHighlight {
     /// popup only for one that opened.
     pub fn toggle_sticky(&mut self, present: PresentElementRef<'_>) -> bool {
         let point_ref = present.element_ref();
-        let pinned = self.sticky != Some(point_ref);
-        self.sticky = pinned.then_some(point_ref);
-        pinned
+        if self.is_sticky(point_ref) {
+            self.clear_sticky();
+            false
+        } else {
+            self.pin(present);
+            true
+        }
     }
 
     /// [`Self::toggle_sticky`] for a point the map draws, and nothing at all for
@@ -203,7 +260,7 @@ impl MapHighlight {
     /// The pinned point's window, any open popup, and the compound label each
     /// take that label's place.
     pub fn shows_hover_label(&self, candidate: MapElementRef, any_popup_open: bool) -> bool {
-        self.sticky != Some(candidate) && !any_popup_open && !self.suppress_hover_labels
+        !self.is_sticky(candidate) && !any_popup_open && !self.suppress_hover_labels
     }
 
     /// Whether the hover is on `track` as a whole, and not on one of its
@@ -217,7 +274,7 @@ impl MapHighlight {
     /// What the pinned popup does this frame, dropping a pin whose element is
     /// gone. Called once per frame by the map, and by the headless tests.
     pub fn pin_this_frame(&mut self, presence: MapPresence<'_>) -> Option<PinnedPopup> {
-        let pinned = self.sticky?;
+        let pinned = self.sticky()?;
         let withheld = |reason| Some(PinnedPopup::Withheld { pinned, reason });
         match presence.point_visibility(pinned) {
             PointVisibility::Shown => Some(PinnedPopup::Drawn(pinned)),
@@ -225,7 +282,7 @@ impl MapHighlight {
             // indexed shrank), so the pin is dropped before whatever later
             // occupies that index can rebind it.
             PointVisibility::NoSuchElement => {
-                self.sticky = None;
+                self.clear_sticky();
                 None
             }
             PointVisibility::TrackNotShown => withheld(PinWithheld::TrackNotShown),
@@ -346,7 +403,8 @@ impl Default for MapHighlight {
     fn default() -> Self {
         Self {
             hover: None,
-            sticky: None,
+            pin: PinSelection::default(),
+            last_pin_revision: PinRevision::default(),
             plot_hover_time: None,
             plot_hover_point: None,
             plot_hover_snapped: false,
@@ -354,6 +412,7 @@ impl Default for MapHighlight {
             suppress_hover_labels: false,
             fading_enabled: true,
             hover_match: None,
+            presented_match: None,
         }
     }
 }
@@ -414,13 +473,11 @@ mod tests {
     ) {
         let mut fixture = ScopeFixture::all_drawn();
         withhold(&mut fixture);
-        let mut highlight = MapHighlight {
-            sticky: Some(test_util::point(1)),
-            ..MapHighlight::default()
-        };
+        let mut highlight = MapHighlight::default();
+        highlight.set_sticky_for_test(Some(test_util::point(1)));
         assert_eq!(highlight.pin_this_frame(fixture.scope()), expected);
         assert_eq!(
-            highlight.sticky,
+            highlight.sticky(),
             Some(test_util::point(1)),
             "a point that still exists keeps its pin"
         );
@@ -438,10 +495,8 @@ mod tests {
         let mut fixture = ScopeFixture::all_drawn();
         hidden.hide(&mut fixture);
         let pinned = hidden.marker();
-        let mut highlight = MapHighlight {
-            sticky: Some(pinned),
-            ..MapHighlight::default()
-        };
+        let mut highlight = MapHighlight::default();
+        highlight.set_sticky_for_test(Some(pinned));
 
         assert_eq!(
             highlight.pin_this_frame(fixture.scope()),
@@ -450,7 +505,7 @@ mod tests {
                 reason: PinWithheld::MarkerTypeHidden,
             })
         );
-        assert_eq!(highlight.sticky, Some(pinned));
+        assert_eq!(highlight.sticky(), Some(pinned));
         fixture.show_every_marker_type();
         assert_eq!(
             highlight.pin_this_frame(fixture.scope()),
@@ -511,12 +566,10 @@ mod tests {
     fn a_pin_on_a_vanished_element_is_dropped() {
         let fixture = ScopeFixture::all_drawn();
         let stale = test_util::point(POINT_COUNT);
-        let mut highlight = MapHighlight {
-            sticky: Some(stale),
-            ..MapHighlight::default()
-        };
+        let mut highlight = MapHighlight::default();
+        highlight.set_sticky_for_test(Some(stale));
         assert_eq!(highlight.pin_this_frame(fixture.scope()), None);
-        assert_eq!(highlight.sticky, None);
+        assert_eq!(highlight.sticky(), None);
     }
 
     #[test]
@@ -536,12 +589,12 @@ mod tests {
             !highlight.toggle_sticky_if_drawn(fixture.scope(), test_util::point(1)),
             "the hidden point does not pin"
         );
-        assert_eq!(highlight.sticky, None);
+        assert_eq!(highlight.sticky(), None);
         assert!(
             highlight.toggle_sticky_if_drawn(fixture.scope(), test_util::point(0)),
             "the drawn point next to it does"
         );
-        assert_eq!(highlight.sticky, Some(test_util::point(0)));
+        assert_eq!(highlight.sticky(), Some(test_util::point(0)));
     }
 
     /// A click pins a marker only while the tree shows its type.
@@ -558,13 +611,13 @@ mod tests {
             !highlight.toggle_sticky_if_drawn(fixture.scope(), hidden.marker()),
             "the marker of a hidden type pinned"
         );
-        assert_eq!(highlight.sticky, None);
+        assert_eq!(highlight.sticky(), None);
         fixture.show_every_marker_type();
         assert!(
             highlight.toggle_sticky_if_drawn(fixture.scope(), hidden.marker()),
             "the marker did not pin once its type was shown"
         );
-        assert_eq!(highlight.sticky, Some(hidden.marker()));
+        assert_eq!(highlight.sticky(), Some(hidden.marker()));
     }
 
     #[test]
@@ -582,18 +635,18 @@ mod tests {
             highlight.toggle_sticky(present(test_util::point(3))),
             "a first click pins"
         );
-        assert_eq!(highlight.sticky, Some(test_util::point(3)));
+        assert_eq!(highlight.sticky(), Some(test_util::point(3)));
         assert!(
             !highlight.toggle_sticky(present(test_util::point(3))),
             "clicking the pinned point unpins it"
         );
-        assert_eq!(highlight.sticky, None);
+        assert_eq!(highlight.sticky(), None);
         highlight.toggle_sticky(present(test_util::point(3)));
         assert!(
             highlight.toggle_sticky(present(test_util::point(4))),
             "another point takes the pin over"
         );
-        assert_eq!(highlight.sticky, Some(test_util::point(4)));
+        assert_eq!(highlight.sticky(), Some(test_util::point(4)));
     }
 
     /// Every way an element under the pointer loses its own hover label, and
@@ -611,12 +664,12 @@ mod tests {
         #[case] expected: bool,
     ) {
         let hovered = test_util::point(0);
-        let highlight = MapHighlight {
+        let mut highlight = MapHighlight {
             hover: Some(HighlightScope::Point(hovered)),
-            sticky,
             suppress_hover_labels,
             ..MapHighlight::default()
         };
+        highlight.set_sticky_for_test(sticky);
 
         assert_eq!(
             highlight.shows_hover_label(hovered, any_popup_open),

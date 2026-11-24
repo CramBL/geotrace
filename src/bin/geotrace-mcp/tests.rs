@@ -5,11 +5,12 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    CheckQuery, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics,
-    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
-    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResultValue, QueryResults, QueryValidation, RangeDetails, Recording,
-    RecordingReference, Recordings, Reply, Request, TrackReference,
+    CheckQuery, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, MapTarget, Metrics,
+    OpenPoint, PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
+    QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow,
+    QueryResultSource, QueryResultTime, QueryResultValue, QueryResults, QueryValidation,
+    RangeDetails, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap,
+    TrackReference,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -88,7 +89,9 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "get_track",
             "list_metrics",
             "list_recordings",
-            "run_query"
+            "open_point",
+            "run_query",
+            "show_on_map"
         ]
     );
     let tool = tools
@@ -254,6 +257,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             }]}
         }))
     );
+    self::assert_map_tools_queue_presentation(&mut client).await;
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -261,8 +265,40 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         .unwrap();
 }
 
+async fn assert_map_tools_queue_presentation(client: &mut Client) {
+    let track = self::track_reference();
+    let commands = [
+        ("open_point", json!({"track": track, "point": 1})),
+        (
+            "show_on_map",
+            json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}}),
+        ),
+    ];
+    for (index, (name, arguments)) in commands.into_iter().enumerate() {
+        let presented = client
+            .exchange(json!({
+                "jsonrpc": "2.0", "id": 13 + index, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}
+            }))
+            .await;
+        assert_eq!(
+            presented.pointer("/result/structuredContent"),
+            Some(&json!({"status": "map_presentation_queued"}))
+        );
+    }
+}
+
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
+        Request::OpenPoint(OpenPoint { track, point: 1 })
+        | Request::ShowOnMap(ShowOnMap {
+            target:
+                MapTarget::Track {
+                    track,
+                    start: Some(1),
+                    end: Some(2),
+                },
+        }) if track == self::track_reference() => Ok(Reply::MapPresentationQueued),
         Request::GetQueryResults(GetQueryResults {
             job,
             query: 0,

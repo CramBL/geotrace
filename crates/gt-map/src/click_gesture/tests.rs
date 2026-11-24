@@ -508,17 +508,23 @@ fn restoring_a_pin_preserves_the_popup_position_and_current_hover_state() {
     );
 }
 
-#[test]
-fn an_external_selection_change_cancels_navigation_rollback() {
+#[rstest]
+#[case::different_point(CENTRE_FIX - 1)]
+#[case::same_point_replacement(CENTRE_FIX)]
+fn an_external_selection_change_cancels_navigation_rollback(#[case] replacement: usize) {
     let mut scene = GestureScene::new(Target::Fix);
     scene.release(PointerButton::Primary);
-    let other = test_util::point_ref(DataCategory::Tpv, CENTRE_FIX - 1);
-    assert!(scene.map.pin(other));
+    let reinstalls_same_point = replacement == CENTRE_FIX;
+    let replacement = test_util::point_ref(DataCategory::Tpv, replacement);
+    if reinstalls_same_point {
+        assert!(!scene.map.pin(replacement));
+    }
+    assert!(scene.map.pin(replacement));
     scene.release(PointerButton::Primary);
     assert_eq!(scene.zoom().to_bits(), INITIAL_ZOOM.to_bits());
     assert_eq!(
         scene.sticky(),
-        Some(test_util::point_ref(DataCategory::Tpv, CENTRE_FIX))
+        (!reinstalls_same_point).then(|| test_util::point_ref(DataCategory::Tpv, CENTRE_FIX))
     );
 }
 

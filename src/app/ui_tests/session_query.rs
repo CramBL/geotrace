@@ -18,6 +18,8 @@ use super::{self as ui_tests, App};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 
+mod map;
+
 #[test]
 fn session_query_uses_current_filter_and_visibility_without_changing_the_editor() {
     let mut harness = ui_tests::app_with_query_window_open();

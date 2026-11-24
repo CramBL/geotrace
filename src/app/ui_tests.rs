@@ -78,7 +78,11 @@ fn base_time() -> DateTime<Utc> {
 }
 
 fn minimal_gtd_bytes() -> Vec<u8> {
-    gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
+    gt_test_utils::synthetic_gtd_bytes(self::minimal_gtd_spec())
+}
+
+fn minimal_gtd_spec() -> SyntheticGtdSpec {
+    SyntheticGtdSpec {
         start: base_time(),
         point_count: 61,
         step_secs: 1,
@@ -91,7 +95,7 @@ fn minimal_gtd_bytes() -> Vec<u8> {
         eph_m: 2.4,
         sats_seen: 10,
         sats_in_fix: 7,
-    })
+    }
 }
 
 fn load_three_overlapping_files(harness: &mut Harness<App>) {
@@ -193,13 +197,17 @@ fn harness_with_three_files_loaded() -> Harness<'static, App> {
 /// Build an app with one loaded file and the query window open. Shared setup
 /// for the interactive query-history tests.
 fn app_with_a_recording() -> Harness<'static, App> {
+    self::app_with_recording_bytes(self::minimal_gtd_bytes())
+}
+
+fn app_with_recording_bytes(bytes: Vec<u8>) -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
-        TestDroppedFile::bytes(minimal_gtd_bytes(), "test.gtd"),
+        TestDroppedFile::bytes(bytes, "test.gtd"),
     );
     harness
 }

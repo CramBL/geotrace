@@ -785,6 +785,7 @@ impl App {
         CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
             let mut s = self.shared.borrow_mut();
+            s.discard_stale_session_map(&mut self.map, self.query_window.matches());
             let plot_hover_scope = match s.highlight.hover {
                 Some(HighlightScope::File { .. })
                 | Some(HighlightScope::Track(_))

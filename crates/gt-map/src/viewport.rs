@@ -7,8 +7,9 @@ use std::ops::Range;
 use gt_filter::GlobalFilter;
 use gt_track_builder::SpatialIndex;
 use gt_types::{
-    DataCategory, DataCategorySet, FileIdx, FixRef, GeoBounds, LoadedFile, LoadedTrack, MercBounds,
-    PlacedPoint, PointIdx, PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
+    DataCategory, DataCategorySet, FileIdx, FixRef, GeoBounds, Latitude, LoadedFile, LoadedTrack,
+    Longitude, MercBounds, PlacedPoint, PointIdx, PoleWinding, SpatialPoint, TrackIdx, TrackRef,
+    mercator,
 };
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EligibleElementRef, EventMarkerVisibility,
@@ -19,9 +20,6 @@ use gt_ui_types::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use walkers::{MapMemory, MercatorProjection};
-
-#[cfg(test)]
-use gt_types::{Latitude, Longitude};
 
 use crate::sat_labels::SatelliteLabelDisplay;
 use crate::tpv_renderer::{self, TrackIconFade};
@@ -703,6 +701,20 @@ pub(crate) fn query_bounds(scope: MapPresence<'_>, matches: &QueryMatches) -> Op
         .reduce(GeoBounds::union)
 }
 
+pub fn query_match_has_geometry(
+    scope: MapPresence<'_>,
+    track: TrackRef,
+    points: &Range<usize>,
+) -> bool {
+    self::query_track_positions(
+        scope.eligibility().prepare_track(track),
+        scope.display_mask(),
+        std::slice::from_ref(points),
+    )
+    .next()
+    .is_some()
+}
+
 pub(crate) fn query_match_bounds(
     scope: MapPresence<'_>,
     track: TrackRef,
@@ -720,24 +732,33 @@ fn query_track_bounds(
     mask: DisplayMask,
     ranges: &[Range<usize>],
 ) -> Option<GeoBounds> {
-    if !prepared.category_visible(DataCategory::Track)
-        || !mask.is_visible(DisplayCategory::QueryHighlights)
-    {
-        return None;
-    }
-    let placed = prepared.track()?.placed_points()?;
-    let positions = || {
-        ranges
-            .iter()
-            .filter(|range| placed.range((*range).clone()).is_some())
-            .flat_map(|range| range.clone())
-            .filter(|index| prepared.fix_is_available(PointIdx::new(*index)))
-            .filter_map(|index| placed.get(index).map(PlacedPoint::resolved_position))
-    };
+    let positions = || self::query_track_positions(prepared, mask, ranges);
     Some(
         GeoBounds::from_positions(positions())?
             .extended_to_the_encircled_pole(PoleWinding::of_track(positions())),
     )
+}
+
+fn query_track_positions<'a>(
+    prepared: PreparedTrackEligibility<'a>,
+    mask: DisplayMask,
+    ranges: &'a [Range<usize>],
+) -> impl Iterator<Item = (Latitude, Longitude)> + 'a {
+    let placed = prepared
+        .track()
+        .filter(|_| {
+            prepared.category_visible(DataCategory::Track)
+                && mask.is_visible(DisplayCategory::QueryHighlights)
+        })
+        .and_then(LoadedTrack::placed_points);
+    placed.into_iter().flat_map(move |placed| {
+        ranges
+            .iter()
+            .filter(move |range| placed.range((*range).clone()).is_some())
+            .flat_map(|range| range.clone())
+            .filter(move |index| prepared.fix_is_available(PointIdx::new(*index)))
+            .filter_map(move |index| placed.get(index).map(PlacedPoint::resolved_position))
+    })
 }
 
 #[cfg(test)]

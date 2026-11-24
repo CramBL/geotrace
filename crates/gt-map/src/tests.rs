@@ -19,7 +19,7 @@ use uom::si::length::{kilometer, meter};
 use super::*;
 use crate::hover_labels;
 use crate::match_reveal::HaloStyle;
-use crate::test_util::{self, DrawState, MapScene};
+use crate::test_util::{self, DrawState, MapScene, RenderedMap};
 use crate::viewport;
 
 fn tpv_spatial_point(fi: usize, ti: usize, pi: usize) -> SpatialPoint {
@@ -42,11 +42,13 @@ pub(crate) fn vis_all_visible() -> TrackDataVisibility {
 }
 
 #[rstest::rstest]
-#[case::one_omitted_fix(25..26, Vec::new())]
-#[case::coincident_omitted_fixes(1..63, (2..63).step_by(2).map(|i| i..i + 1).collect())]
-fn query_hover_paints_one_ring_for_omitted_fixes_at_the_same_position(
+#[case::one_omitted_fix(25..26, Vec::new(), false)]
+#[case::coincident_omitted_fixes(1..63, (2..63).step_by(2).map(|i| i..i + 1).collect(), false)]
+#[case::presented_fix(25..26, Vec::new(), true)]
+fn map_highlight_paints_one_ring_for_omitted_fixes_at_the_same_position(
     #[case] points: Range<usize>,
     #[case] hidden: Vec<Range<usize>>,
+    #[case] presented: bool,
 ) {
     let mut files = test_util::a_recording_of(64, 0.0);
     let stationary = &mut files[0].tracks[0];
@@ -65,7 +67,12 @@ fn query_hover_paints_one_ring_for_omitted_fixes_at_the_same_position(
         .zoomed_to(zoom)
         .centred_on_fix(25)
         .draw_state(|state| {
-            state.highlight.hover_match = Some(MatchHighlight::new(track, &points));
+            let highlight = Some(MatchHighlight::new(track, &points));
+            if presented {
+                state.highlight.presented_match = highlight;
+            } else {
+                state.highlight.hover_match = highlight;
+            }
         })
         .overlays(|overlays| {
             overlays.query_matches = Some(QueryMatches {
@@ -425,6 +432,36 @@ fn track_at(lat: f64, lon: f64) -> LoadedTrack {
         Longitude::new(lon),
         gt_types::fixtures::FixKind::Measured,
     )])
+}
+
+#[rstest::rstest]
+#[case::gui_reveal(true)]
+#[case::session_range(false)]
+fn file_load_fit_precedence_depends_on_camera_source(#[case] second_file_is_framed: bool) {
+    let first_latitude = 55.0;
+    let second_latitude = 56.0;
+    let first = gt_test_utils::loaded_file_with_tracks(vec![track_at(first_latitude, 12.0)]);
+    let second = gt_test_utils::loaded_file_with_tracks(vec![track_at(second_latitude, 13.0)]);
+    let mut map = MapScene::of(vec![first]).render_one_frame();
+    let initial = map.framed().unwrap();
+    assert!(initial.lat_max < second_latitude);
+    map.add_file(second);
+    let track = test_util::track0();
+    if second_file_is_framed {
+        map.overlays().reveal = Some(MatchRevealTarget::OneMatch {
+            track,
+            points: 0..1,
+        });
+    } else {
+        map.overlays().presentation_camera = Some(PresentationCamera::TrackRange(
+            MatchHighlight::new(track, &(0..1)),
+        ));
+    }
+    map.render_one_more_frame();
+    let bounds = map.framed().unwrap();
+    let latitudes = bounds.lat_min..=bounds.lat_max;
+    assert!(latitudes.contains(&first_latitude));
+    assert_eq!(latitudes.contains(&second_latitude), second_file_is_framed);
 }
 
 /// Regression test: "zoom to fit" frames only the visible tracks. Hiding a
@@ -1369,6 +1406,54 @@ fn revealing_matches_frames_the_map_on_them() {
             && framed_matches.lat_max < 56.1,
         "the reveal frames the matched track alone, got {framed_matches:?}"
     );
+}
+
+#[test]
+fn fitting_visible_data_includes_the_presented_range() {
+    let files = test_util::a_recording_of(5, 0.02);
+    let start_longitude = test_util::fix_position(&files, 0).1;
+    let first_longitude = test_util::fix_position(&files, 2).1;
+    let last_longitude = test_util::fix_position(&files, 3).1;
+    let finish_longitude = test_util::fix_position(&files, 4).1;
+    let map = MapScene::of(files)
+        .draw_state(|draw| {
+            draw.display_mask.solo(DisplayCategory::QueryHighlights);
+            draw.highlight.presented_match =
+                Some(MatchHighlight::new(test_util::track0(), &(2..4)));
+        })
+        .render_one_frame();
+    let framed = map.framed().unwrap();
+    let longitudes = framed.lon_min..=framed.lon_max;
+    assert!(longitudes.contains(&first_longitude));
+    assert!(longitudes.contains(&last_longitude));
+    assert!(framed.lon_min > start_longitude);
+    assert!(framed.lon_max < finish_longitude);
+}
+
+#[test]
+fn solo_map_presentation_draws_only_the_selected_range() {
+    let files = test_util::a_recording_of(5, 0.001);
+    let range = MatchHighlight::new(test_util::track0(), &(2..4));
+    let mut map = MapScene::of(files)
+        .centred_on_fix(2)
+        .zoomed_to(14.0)
+        .draw_state(|draw| {
+            draw.display_mask.solo(DisplayCategory::QueryHighlights);
+            draw.highlight.presented_match = Some(range);
+        })
+        .render();
+    let start_flag_drawn = |map: &RenderedMap| {
+        let dark_mode = map.harness.inner.ctx.theme() == egui::Theme::Dark;
+        let flag_color = gt_ui_theme::TRACK_START_FLAG.resolve(dark_mode);
+        map.harness.inner.output().shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Mesh(mesh)
+                if mesh.vertices.iter().any(|vertex| vertex.color == flag_color))
+        })
+    };
+    assert!(!start_flag_drawn(&map));
+    map.draw_state().highlight.hover_match = Some(range);
+    map.render_one_more_frame();
+    assert!(start_flag_drawn(&map));
 }
 
 static NO_EVENT_MARKER_PATH_HIDDEN: EventMarkerVisibility = EventMarkerVisibility::new();
