@@ -139,6 +139,10 @@ impl Job {
         if self.phase != JobPhase::Started || self.query.session().results().is_none() {
             return;
         }
+        if self.data_generation != app.shared.borrow().loaded_files.data_generation() {
+            self.phase = JobPhase::Stale;
+            return;
+        }
         let series = QuerySeries::capture(app);
         let shared = app.shared.borrow();
         if let Some(inputs) = series.inputs(

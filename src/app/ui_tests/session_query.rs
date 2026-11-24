@@ -1,10 +1,12 @@
 use chrono::TimeDelta;
 use egui_kittest::Harness;
+use gt_loaded_files::FileHistory;
 use gt_session_bridge::{
     CheckQuery, ErrorCode, QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
     QueryValidation, Reply, Request, SessionRequest,
 };
 use gt_test_utils::HarnessInteraction as _;
+use gt_test_utils::fixtures;
 use uuid::Uuid;
 
 use super::{self as ui_tests, App};
@@ -100,6 +102,29 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
         }
     );
     assert_eq!(self::status(&mut harness, job), QueryJobState::Cancelled);
+}
+
+#[test]
+fn session_query_status_becomes_stale_after_replacing_the_recording() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let job = self::start(&mut harness, "points | where velocity > 1 km/h");
+    let completed = self::completed(1);
+    assert_eq!(self::complete(&mut harness, job), completed);
+    assert_eq!(self::status(&mut harness, job), completed);
+
+    let points = fixtures::nav_points_from(ui_tests::base_time(), 1, 1);
+    let replacement =
+        gt_test_utils::loaded_file_with_tracks(vec![gt_test_utils::loaded_track_with_points(
+            points,
+        )]);
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .loaded_files
+        .replace_file(0, replacement, FileHistory::None);
+
+    assert_eq!(self::status(&mut harness, job), QueryJobState::Stale);
 }
 
 fn start(harness: &mut Harness<'_, App>, text: &str) -> QueryJobId {

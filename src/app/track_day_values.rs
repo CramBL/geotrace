@@ -3,7 +3,7 @@
 //!
 //! The cache reuses values for the same recording data and archived days.
 
-use std::sync::Arc;
+use std::collections::hash_map::Entry;
 
 use chrono::NaiveDate;
 use gt_loaded_files::{LoadedFilesView, RecordingData};
@@ -14,7 +14,7 @@ use super::environment_storage::PrunedDays;
 
 struct ResolvedTrackValues<T> {
     archived_days: Vec<NaiveDate>,
-    values: Arc<T>,
+    values: T,
 }
 
 /// One scheduler's per-track values, each keyed by the archived days it was
@@ -42,32 +42,20 @@ impl<T> TrackValuesByArchivedDays<T> {
         }
     }
 
-    /// The track's values as resolved from `archived_days`, calling `resolve`
-    /// only when the cache holds none for that set of days.
-    ///
-    /// The returned `Arc` stays the same for the current recording data and archived days.
     pub fn resolve(
         &mut self,
         track: TrackRef,
         archived_days: Vec<NaiveDate>,
         resolve: impl FnOnce() -> T,
-    ) -> Arc<T> {
-        if let Some(resolved) = self
-            .by_track
-            .get(&track)
-            .filter(|resolved| resolved.archived_days == archived_days)
-        {
-            return Arc::clone(&resolved.values);
-        }
-        let values = Arc::new(resolve());
-        self.by_track.insert(
-            track,
-            ResolvedTrackValues {
+    ) -> &T {
+        let resolved = match self.by_track.entry(track) {
+            Entry::Occupied(entry) if entry.get().archived_days == archived_days => entry,
+            entry => entry.insert_entry(ResolvedTrackValues {
                 archived_days,
-                values: Arc::clone(&values),
-            },
-        );
-        values
+                values: resolve(),
+            }),
+        };
+        &resolved.into_mut().values
     }
 
     pub fn retain_loaded_tracks(&mut self, loaded: &FxHashSet<TrackRef>) {
@@ -81,7 +69,7 @@ impl<T> TrackValuesByArchivedDays<T> {
             .retain(|_, resolved| !resolved.archived_days.iter().any(|day| pruned.covers(*day)));
     }
 
-    pub fn iter_unsorted(&self) -> impl Iterator<Item = (TrackRef, &Arc<T>)> {
+    pub fn iter_unsorted(&self) -> impl Iterator<Item = (TrackRef, &T)> {
         self.by_track
             .iter()
             .map(|(&track, resolved)| (track, &resolved.values))
@@ -90,6 +78,8 @@ impl<T> TrackValuesByArchivedDays<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gt_types::{FileIdx, TrackIdx};
 
     use super::*;
@@ -102,21 +92,18 @@ mod tests {
         TrackRef::new(FileIdx::new(0), TrackIdx::new(index))
     }
 
-    /// An unchanged set of archived days hands out the `Arc` already
-    /// resolved, and a changed one resolves fresh values under a new
-    /// identity.
     #[test]
-    fn values_keep_their_identity_until_the_archived_days_change() {
+    fn changing_archived_days_replaces_the_resolved_values() {
         let mut cache = TrackValuesByArchivedDays::default();
 
-        let first = cache.resolve(track(0), vec![day(20)], || 1);
-        let second = cache.resolve(track(0), vec![day(20)], || 2);
-        let after_archiving = cache.resolve(track(0), vec![day(20), day(21)], || 3);
+        let first = Arc::clone(cache.resolve(track(0), vec![day(20)], || Arc::new(1)));
+        let second = Arc::clone(cache.resolve(track(0), vec![day(20)], || Arc::new(2)));
+        let after_archiving = cache.resolve(track(0), vec![day(20), day(21)], || Arc::new(3));
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(*second, 1);
-        assert!(!Arc::ptr_eq(&second, &after_archiving));
-        assert_eq!(*after_archiving, 3);
+        assert!(!Arc::ptr_eq(&second, after_archiving));
+        assert_eq!(**after_archiving, 3);
     }
 
     #[test]
@@ -130,7 +117,7 @@ mod tests {
         assert_eq!(*revisited, 1);
         let mut held: Vec<(TrackRef, i32)> = cache
             .iter_unsorted()
-            .map(|(track, values)| (track, **values))
+            .map(|(track, values)| (track, *values))
             .collect();
         held.sort_by_key(|&(track, _)| track);
         assert_eq!(held, vec![(track(0), 1), (track(1), 2)]);
@@ -153,8 +140,8 @@ mod tests {
     #[test]
     fn a_track_resolved_from_a_deleted_day_is_dropped() {
         let mut cache = TrackValuesByArchivedDays::default();
-        let kept = cache.resolve(track(0), vec![day(21)], || 1);
-        cache.resolve(track(1), vec![day(19), day(21)], || 2);
+        let kept = Arc::clone(cache.resolve(track(0), vec![day(21)], || Arc::new(1)));
+        cache.resolve(track(1), vec![day(19), day(21)], || Arc::new(2));
 
         cache.forget_pruned_days(PrunedDays::Before(day(20)));
 
@@ -162,7 +149,22 @@ mod tests {
         assert_eq!(held, vec![track(0)]);
         assert!(Arc::ptr_eq(
             &kept,
-            &cache.resolve(track(0), vec![day(21)], || 3)
+            cache.resolve(track(0), vec![day(21)], || Arc::new(3))
         ));
+    }
+
+    #[test]
+    fn missing_values_stay_cached_until_the_archived_days_change() {
+        let mut cache = TrackValuesByArchivedDays::default();
+        let archived = day(20);
+        let resolve = || Some(Arc::new(vec![5]));
+
+        assert_eq!(cache.resolve(track(0), vec![archived], || None), &None);
+        assert_eq!(cache.resolve(track(0), vec![archived], resolve), &None);
+
+        assert_eq!(
+            cache.resolve(track(0), vec![archived, day(21)], resolve),
+            &Some(Arc::new(vec![5]))
+        );
     }
 }
