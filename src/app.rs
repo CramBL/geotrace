@@ -83,6 +83,7 @@ mod mapbox_token_test;
 mod modals;
 mod panes;
 mod query;
+mod query_run;
 mod read_only_session;
 mod recording_from_disk;
 mod recording_name_template;

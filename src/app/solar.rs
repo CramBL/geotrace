@@ -17,6 +17,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Transport, TransportSource};
+use gt_loaded_files::LoadedFilesView;
 use gt_pending_writes::PendingWrites;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
@@ -25,7 +26,7 @@ use gt_store::{
     ArchiveUsage, DayArchiveError as _, EnvironmentArchive, GeomagneticIndexArchive,
     ReadOnlySolarStore, SolarStore, SolarStoreError, WritableArchive,
 };
-use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
+use gt_types::{LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
     GeomagneticContextLines, GeomagneticPoint, GeomagneticSeries, IndexContextSample,
 };
@@ -301,17 +302,15 @@ impl GeomagneticIndexScheduler {
     /// Geomagnetic index values for the plot: one point per fix of every
     /// loaded track, from the archived period covering that fix's own UTC
     /// time.
-    ///
-    /// A track's points are rebuilt only when the archive gains one of the
-    /// days it spans, so the `Arc` the plot caches on stays stable.
-    pub fn plot_series(&mut self, files: &[LoadedFile]) -> GeomagneticSeries {
+    pub fn plot_series(&mut self, files: LoadedFilesView<'_>) -> GeomagneticSeries {
+        self.plot_points.sync_recordings(files);
         let mut series = GeomagneticSeries::default();
         let mut live: FxHashSet<TrackRef> = FxHashSet::default();
         // Shared across tracks: a batch of recordings from one drive all read
         // the same day.
         let mut archived: FxHashMap<NaiveDate, ArchivedDay> = FxHashMap::default();
 
-        for (fi, file) in files.iter().enumerate() {
+        for (fi, file) in files.files().iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref =
                     TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
@@ -732,13 +731,14 @@ mod tests {
 
     use gt_fetch::HttpResponse;
     use gt_fetch::test_util::ScriptedTransport;
+    use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::activity::GeomagneticStormClass;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
     use gt_store::Store;
     use gt_test_utils::pending_writes;
-    use gt_types::fixtures;
+    use gt_types::{LoadedFile, fixtures};
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
@@ -1622,15 +1622,20 @@ mod tests {
         track
     }
 
-    fn loaded_files_of(track: gt_types::LoadedTrack) -> Vec<LoadedFile> {
-        vec![LoadedFile {
-            metadata: gt_test_utils::empty_file_metadata(),
-            tracks: vec![track],
-            event_marker_styles: FxHashMap::default(),
-            orphaned_event_markers: vec![],
-            load_warnings: vec![],
-            source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
-        }]
+    fn loaded_files_of(track: LoadedTrack) -> LoadedFiles {
+        let mut files = LoadedFiles::new();
+        files.push(
+            LoadedFile {
+                metadata: gt_test_utils::empty_file_metadata(),
+                tracks: vec![track],
+                event_marker_styles: FxHashMap::default(),
+                orphaned_event_markers: vec![],
+                load_warnings: vec![],
+                source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
+            },
+            FileHistory::None,
+        );
+        files
     }
 
     fn hp30_sample(period_start: DateTime<Utc>, value: f64) -> Hp30Sample {
@@ -1682,7 +1687,7 @@ mod tests {
             30,
         ));
 
-        let series = scheduler.plot_series(&files);
+        let series = scheduler.plot_series(files.view());
         let points = series
             .points_by_track
             .values()
@@ -1709,7 +1714,7 @@ mod tests {
         scheduler.archived_days.insert(archived);
         let files = loaded_files_of(track_over(fixtures::utc_instant(2026, 7, 20, 12, 0), 4, 30));
 
-        assert!(scheduler.plot_series(&files).is_empty());
+        assert!(scheduler.plot_series(files.view()).is_empty());
     }
 
     /// A recording from before Hp30 begins draws the Kp line alone.
@@ -1731,7 +1736,7 @@ mod tests {
         scheduler.archived_days.insert(archived);
         let files = loaded_files_of(track_over(midnight, 2, 30));
 
-        let series = scheduler.plot_series(&files);
+        let series = scheduler.plot_series(files.view());
         let points = series
             .points_by_track
             .values()
@@ -1747,7 +1752,7 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let files = loaded_files_of(track_over(fixtures::utc_instant(2026, 7, 20, 0, 0), 4, 30));
 
-        assert!(scheduler.plot_series(&files).is_empty());
+        assert!(scheduler.plot_series(files.view()).is_empty());
     }
 
     /// A day the fetch worker archives is resolved into the loaded track's
@@ -1757,7 +1762,7 @@ mod tests {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = fixtures::date(2026, 7, 20);
         let files = loaded_files_of(track_over(fixtures::utc_instant(2026, 7, 20, 0, 0), 4, 30));
-        assert!(scheduler.plot_series(&files).is_empty());
+        assert!(scheduler.plot_series(files.view()).is_empty());
 
         archive_first_periods_of(&store, archived);
         scheduler
@@ -1770,7 +1775,7 @@ mod tests {
             .expect("send");
         scheduler.poll();
 
-        let series = scheduler.plot_series(&files);
+        let series = scheduler.plot_series(files.view());
         let points = series
             .points_by_track
             .values()

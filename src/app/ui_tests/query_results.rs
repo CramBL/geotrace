@@ -1,14 +1,17 @@
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 
+use chrono::NaiveDate;
 use egui::Role;
 use egui_kittest::{Harness, OsThreshold, kittest::NodeT as _, kittest::Queryable as _};
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use gt_jam::wire::HexObservation;
-use gt_store::{EnvironmentArchive, JamStore};
+use gt_loaded_files::FileHistory;
+use gt_store::{EnvironmentArchive, JamStore, RecordingMeta};
 use gt_test_utils::{
-    By, CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, HarnessInteraction as _, TestHarness,
+    By, CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, HarnessInteraction as _, TestHarness, fixtures,
 };
 use gt_types::{DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
@@ -20,6 +23,7 @@ use uom::si::length::kilometer;
 use crate::app::App;
 use crate::app::environment_storage;
 use crate::app::query;
+use crate::app::query_run::QuerySeries;
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 use crate::app::ui_tests::{self, ACCEL_HIGH_RANGES, MANY_MATCH_QUERY, QUERY_WINDOW_TITLE};
@@ -106,16 +110,103 @@ fn query_results_go_stale_with_the_query_window_closed() {
     );
 }
 
+#[test]
+fn a_query_completes_with_the_query_window_closed() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    harness
+        .state_mut()
+        .query_window
+        .set_text("points | where velocity > 1 km/h".to_owned());
+    harness.run_steps(3);
+    let max_passes = harness.ctx.options(|options| options.max_passes);
+    harness
+        .ctx
+        .options_mut(|options| options.max_passes = NonZeroUsize::MIN);
+    harness.get_by_role_and_label(Role::Button, "Run").click();
+    harness.step();
+    assert!(harness.state().query_window.matches().is_none());
+    harness.state_mut().query_window.open = false;
+    harness
+        .ctx
+        .options_mut(|options| options.max_passes = max_passes);
+
+    test_util::harness::step_until_query_result(&mut harness);
+
+    assert!(!harness.state().query_window.open);
+    let matches = harness.state().query_window.matches().unwrap();
+    assert_eq!(matches.run, 1);
+    assert!(!matches.stale);
+}
+
+#[test]
+fn replacing_a_recording_in_place_marks_its_query_results_stale() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
+    let app = harness.state_mut();
+    let previous_series = QuerySeries::capture(app);
+    {
+        let mut shared = app.shared.borrow_mut();
+        let shared = &mut *shared;
+        let files = &mut shared.loaded_files;
+        let original = files.view().get(0).unwrap();
+        let id = original.id();
+        assert!(
+            previous_series
+                .inputs(files.view(), shared.tree.visibility(), &shared.filter)
+                .is_some()
+        );
+        let replacement = gt_test_utils::segmented_recording(original.file().tracks.len());
+        files.replace_file(0, replacement, FileHistory::None);
+        assert_eq!(files.view().get(0).unwrap().id(), id);
+        assert!(
+            previous_series
+                .inputs(files.view(), shared.tree.visibility(), &shared.filter)
+                .is_none()
+        );
+        shared.sync_tree_from_loaded_files();
+        shared.plot_state.rebuild_all(&shared.loaded_files);
+    }
+    app.on_track_indices_changed();
+    harness.run_steps(2);
+
+    let matches = harness.state().query_window.matches().unwrap();
+    assert_eq!(matches.run, 1);
+    assert!(matches.stale);
+}
+
+#[test]
+fn renaming_a_recording_identity_keeps_its_query_results_current() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    {
+        let mut shared = harness.state_mut().shared.borrow_mut();
+        let files = &mut shared.loaded_files;
+        let file = files.get(0).unwrap().clone();
+        files.replace_file(
+            0,
+            file,
+            FileHistory::recording("before".to_owned(), RecordingMeta::default(), None),
+        );
+    }
+    ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
+    {
+        let mut shared = harness.state_mut().shared.borrow_mut();
+        let files = &mut shared.loaded_files;
+        let generation = files.generation();
+        files.rename_identity("before", "after");
+        assert_eq!(files.view().get(0).unwrap().identity(), Some("after"));
+        assert_ne!(files.generation(), generation);
+    }
+    harness.run_steps(2);
+
+    assert!(!harness.state().query_window.matches().unwrap().stale);
+}
+
 /// Gives every loaded track interference query values: installs a scheduler
 /// whose archive values the cell each loaded fix sits in.
 fn install_interference_archive_covering_loaded_fixes(
     harness: &mut Harness<'_, App>,
 ) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let store = gt_store::Store::open_in(dir.path())
-        .open_or_create_archive::<JamStore>()
-        .expect("archive");
-    let mut observations_by_day: BTreeMap<chrono::NaiveDate, Vec<HexObservation>> = BTreeMap::new();
+    let mut observations_by_day: BTreeMap<NaiveDate, Vec<HexObservation>> = BTreeMap::new();
     {
         let state = harness.state();
         let shared = state.shared.borrow();
@@ -143,6 +234,17 @@ fn install_interference_archive_covering_loaded_fixes(
             }
         }
     }
+    self::install_interference_archive(harness, observations_by_day)
+}
+
+fn install_interference_archive(
+    harness: &mut Harness<'_, App>,
+    observations_by_day: BTreeMap<NaiveDate, Vec<HexObservation>>,
+) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_or_create_archive::<JamStore>()
+        .expect("archive");
     for (day, observations) in observations_by_day {
         environment_storage::archive_one_day(
             &store,
@@ -196,6 +298,72 @@ fn query_results_over_archived_interference_stay_fresh() {
             .stale,
         "its results stay live: nothing changed since the run"
     );
+}
+
+#[test]
+fn query_capture_resolves_interference_for_a_replacement_on_the_same_day() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let (start, original_cell) = {
+        let shared = harness.state().shared.borrow();
+        let loaded = track.resolve(shared.loaded_files.files()).unwrap();
+        let (latitude, longitude) = loaded.resolved_position_at(0).unwrap();
+        (
+            loaded.metadata.time_range.start,
+            gt_jam::dataset::cell_at(latitude, longitude).unwrap(),
+        )
+    };
+    let replacement =
+        gt_test_utils::loaded_track_with_points(fixtures::nav_points_from(start, 1, 1));
+    let (latitude, longitude) = replacement.resolved_position_at(0).unwrap();
+    let replacement_cell = gt_jam::dataset::cell_at(latitude, longitude).unwrap();
+    assert_ne!(original_cell, replacement_cell);
+    let _archive = self::install_interference_archive(
+        &mut harness,
+        BTreeMap::from([(
+            start.date_naive(),
+            vec![
+                HexObservation {
+                    cell: original_cell,
+                    good: 75,
+                    bad: 25,
+                },
+                HexObservation {
+                    cell: replacement_cell,
+                    good: 25,
+                    bad: 75,
+                },
+            ],
+        )]),
+    );
+    let app = harness.state_mut();
+    let before = QuerySeries::capture(app);
+    {
+        let mut shared = app.shared.borrow_mut();
+        let shared = &mut *shared;
+        let view = shared.loaded_files.view();
+        let inputs = before
+            .inputs(view, shared.tree.visibility(), &shared.filter)
+            .unwrap();
+        let original_values = inputs.jamming.get(&track).unwrap();
+        assert_eq!(original_values.first(), Some(&Some(25.0)));
+        shared.loaded_files.replace_file(
+            0,
+            gt_test_utils::loaded_file_with_tracks(vec![replacement]),
+            FileHistory::None,
+        );
+    }
+
+    let after = QuerySeries::capture(app);
+    let shared = app.shared.borrow();
+    let inputs = after
+        .inputs(
+            shared.loaded_files.view(),
+            shared.tree.visibility(),
+            &shared.filter,
+        )
+        .unwrap();
+    assert_eq!(inputs.jamming.get(&track).unwrap().as_slice(), [Some(75.0)]);
 }
 
 /// `snap_error` evaluates over a completed run's values without any network

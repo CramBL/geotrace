@@ -23,6 +23,7 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_jam::transport::{self, FetchOutcome, REQUEST_INTERVAL};
 use gt_jam::wire::{self, ParseWarningReporter};
+use gt_loaded_files::LoadedFilesView;
 use gt_pending_writes::PendingWrites;
 use gt_query_run::JammingValues;
 #[cfg(test)]
@@ -32,7 +33,7 @@ use gt_store::{
     ReadOnlyJamStore, WritableArchive,
 };
 use gt_types::TimeRange;
-use gt_types::{LoadedFile, TrackRef};
+use gt_types::TrackRef;
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -406,17 +407,15 @@ impl JammingScheduler {
 
     /// Interference values for the plot: one point per fix of every loaded
     /// track, from that fix's own UTC day.
-    ///
-    /// A track's points are rebuilt only when the archive gains one of the
-    /// days it spans, so the `Arc` the plot caches on stays stable.
-    pub fn plot_series(&mut self, files: &[LoadedFile]) -> JammingSeries {
+    pub fn plot_series(&mut self, files: LoadedFilesView<'_>) -> JammingSeries {
+        self.interference_by_track.sync_recordings(files);
         let mut series = JammingSeries::default();
         let mut live: FxHashSet<TrackRef> = FxHashSet::default();
         // Shared across tracks: recordings loaded together often span the same
         // day.
         let mut datasets: FxHashMap<NaiveDate, Option<JamDataset>> = FxHashMap::default();
 
-        for (fi, file) in files.iter().enumerate() {
+        for (fi, file) in files.files().iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref =
                     TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
@@ -701,10 +700,11 @@ mod tests {
     use gt_fetch::HttpResponse;
     use gt_fetch::test_util::ScriptedTransport;
     use gt_jam::DEFAULT_BASE_URL;
+    use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::WritableDayArchive as _;
     use gt_test_utils::pending_writes;
-    use gt_types::fixtures;
+    use gt_types::{LoadedFile, LoadedTrack, fixtures};
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
@@ -1298,15 +1298,20 @@ mod tests {
     }
 
     /// The one loaded file the plot series is resolved over.
-    fn files_holding(track: gt_types::LoadedTrack) -> Vec<gt_types::LoadedFile> {
-        vec![gt_types::LoadedFile {
-            metadata: gt_test_utils::empty_file_metadata(),
-            tracks: vec![track],
-            event_marker_styles: FxHashMap::default(),
-            orphaned_event_markers: vec![],
-            load_warnings: vec![],
-            source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
-        }]
+    fn files_holding(track: LoadedTrack) -> LoadedFiles {
+        let mut files = LoadedFiles::new();
+        files.push(
+            LoadedFile {
+                metadata: gt_test_utils::empty_file_metadata(),
+                tracks: vec![track],
+                event_marker_styles: FxHashMap::default(),
+                orphaned_event_markers: vec![],
+                load_warnings: vec![],
+                source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
+            },
+            FileHistory::None,
+        );
+        files
     }
 
     /// A track whose fixes fall in an archived cell gets a value per fix.
@@ -1333,7 +1338,7 @@ mod tests {
 
         let files = files_holding(track);
 
-        let series = scheduler.plot_series(&files);
+        let series = scheduler.plot_series(files.view());
         let points = series
             .points_by_track
             .values()
@@ -1390,9 +1395,9 @@ mod tests {
                 .expect("the archived track has values")
         };
 
-        scheduler.plot_series(&files);
+        scheduler.plot_series(files.view());
         let first_frame = values_of(&scheduler.query_values());
-        scheduler.plot_series(&files);
+        scheduler.plot_series(files.view());
         let second_frame = values_of(&scheduler.query_values());
 
         assert!(
@@ -1402,7 +1407,7 @@ mod tests {
 
         archive_day(&store, next, &observations);
         scheduler.archived_cells.insert(next, 1);
-        scheduler.plot_series(&files);
+        scheduler.plot_series(files.view());
         let after_archiving = values_of(&scheduler.query_values());
 
         assert!(
@@ -1499,7 +1504,7 @@ mod tests {
         let track = track_with_time_range();
         let files = files_holding(track);
 
-        assert!(scheduler.plot_series(&files).is_empty());
+        assert!(scheduler.plot_series(files.view()).is_empty());
     }
 
     /// A changed host drops what belonged to the old one, and keeps what
