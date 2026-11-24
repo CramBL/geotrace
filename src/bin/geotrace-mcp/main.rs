@@ -5,7 +5,7 @@ use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
     CheckQuery, ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, OpenPoint, QueryJobRequest, Reply, Request, ShowOnMap,
+    ListRecordings, OpenPoint, QueryJobRequest, Reply, Request, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -159,10 +159,24 @@ impl Companion {
         self.inspect(Request::ShowOnMap(args)).await
     }
 
+    #[tool(
+        description = "Open the plot and frame the time range of a track, an original point range, or a retained query match.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn show_on_plot(&self, Parameters(args): Parameters<ShowOnPlot>) -> CallToolResult {
+        self.inspect(Request::ShowOnPlot(args)).await
+    }
+
     async fn inspect(&self, request: Request) -> CallToolResult {
         let checking_query = matches!(&request, Request::CheckQuery(_) | Request::RunQuery(_));
         let result = match self.bridge.request(request).await {
-            Ok(reply @ Reply::MapPresentationQueued) => serde_json::to_value(reply),
+            Ok(reply @ (Reply::MapPresentationQueued | Reply::PlotPresentationQueued)) => {
+                serde_json::to_value(reply)
+            }
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
             Ok(Reply::QueryJob { job }) => serde_json::to_value(job),
@@ -192,6 +206,9 @@ impl Companion {
     fn reply_error_message(code: ErrorCode) -> &'static str {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
+            ErrorCode::InvalidPlotMetric => {
+                "Use metric identifiers from list_metrics that have plot series, such as velocity or eph."
+            }
             ErrorCode::InvalidPoint => "The point index is outside the track.",
             ErrorCode::InvalidQueryCursor => "The query, match or row index is outside the result.",
             ErrorCode::InvalidRange => "Choose an ordered point range within the track.",
@@ -200,6 +217,9 @@ impl Companion {
             }
             ErrorCode::NoVisibleMapGeometry => {
                 "The selected points have no visible geometry under the current map settings."
+            }
+            ErrorCode::NoVisiblePlotTime => {
+                "The selected range has no visible plot timestamps under the current filter and track visibility."
             }
             ErrorCode::QueryColumnsTooLarge => "Query result columns exceed the page size limit.",
             ErrorCode::QueryJobNotFound => {

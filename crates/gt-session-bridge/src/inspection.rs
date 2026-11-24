@@ -29,7 +29,8 @@ impl<'a> Inspection<'a> {
             | Request::GetQueryStatus(_)
             | Request::OpenPoint(_)
             | Request::RunQuery(_)
-            | Request::ShowOnMap(_) => Err(ErrorCode::InvalidRequest),
+            | Request::ShowOnMap(_)
+            | Request::ShowOnPlot(_) => Err(ErrorCode::InvalidRequest),
             Request::CheckQuery(args) => QueryValidation::check(args.text, self.files.files())
                 .map(|validation| Reply::QueryCheck { validation }),
             Request::GetRangeDetails(args) => {

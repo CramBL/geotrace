@@ -26,7 +26,10 @@ use crate::AnalysisConfig;
 use crate::series::{self, PlacedTrackSeries};
 
 use self::backward_time_step::BackwardTimeStepViewport;
-use self::chips::{FlareChipState, HoveredChip, MetricAvailability, MetricChipState, SectionGates};
+use self::chips::{
+    FlareChipState, HoveredChip, MetricAvailability, MetricChipState, MetricKindUi as _,
+    SectionGates,
+};
 use self::clock_offset::ClockOffsetViewport;
 use self::context::{ContextLineGates, ContextPlotCaches};
 use self::flares::{FlareSpanMarking, FlareViewport};
@@ -225,6 +228,42 @@ pub struct ArchiveOverlays<'a> {
     pub solar_flares: &'a [MarkedFlare],
 }
 
+pub struct PlotViewRequest {
+    extent: RangeInclusive<f64>,
+    metrics: Vec<MetricKind>,
+    channel: Option<String>,
+}
+
+impl PlotViewRequest {
+    pub fn new(
+        times: impl IntoIterator<Item = f64>,
+        metrics: Vec<MetricKind>,
+        channel: Option<String>,
+    ) -> Option<Self> {
+        let mut times = times.into_iter().filter(|time| time.is_finite());
+        let first = times.next()?;
+        let (start, end) = times.fold((first, first), |(start, end), time| {
+            (start.min(time), end.max(time))
+        });
+        Some(Self {
+            extent: start..=end,
+            metrics,
+            channel,
+        })
+    }
+
+    fn enable_series(&self, state: &mut PlotState) {
+        for &metric in &self.metrics {
+            state.metric_vis.set(metric, true);
+            state.show_advanced_metrics |= metric.is_advanced();
+        }
+        if let Some(channel) = &self.channel {
+            state.show_channels = true;
+            state.channel_vis.set(channel, true);
+        }
+    }
+}
+
 /// Persistent state for the track plot panel.
 ///
 /// Plot panel visibility is managed externally (via the tiles tree in the app),
@@ -287,9 +326,8 @@ pub struct PlotState {
     /// What the current `level_cache` was computed from.  `None` forces a
     /// recompute on the next frame.
     last_level_cache_inputs: Option<LevelCacheInputs>,
-    /// The map x-range (encoded as bit-pattern pairs) most recently applied to
-    /// the plot via `set_plot_bounds_x`.  Used to detect changes and avoid
-    /// re-applying the same range every frame (which would prevent manual zoom).
+    /// The map x range most recently applied or superseded by a view request.
+    /// The plot clears the key when the map viewport has no fixes.
     applied_map_x_range: Option<(u64, u64)>,
     /// Per-track snap error mipmaps and marker lists, rebuilt only when a
     /// track's series `Arc` changes (see [`snap_error::sync_snap_error_cache`]).
@@ -408,6 +446,19 @@ impl PlotState {
         self.last_visible_x_range.clone()
     }
 
+    pub fn is_track_visible(
+        &self,
+        files: &[LoadedFile],
+        visibility: &TrackDataVisibility,
+        filter: &GlobalFilter,
+        track: TrackRef,
+    ) -> bool {
+        self.series_cache
+            .iter()
+            .find(|series| series.track_ref() == track)
+            .is_some_and(|series| self::track_is_visible(visibility, filter, files, series))
+    }
+
     fn invalidate_level_cache(&mut self) {
         self.last_level_cache_inputs = None;
         self.level_cache.clear();
@@ -423,6 +474,7 @@ impl PlotState {
 ///   frame.  The caller should forward this to `MapHighlight::plot_hover_time`
 ///   before drawing the map so the renderer can cross-highlight the nearest
 ///   TPV arrow.
+/// - Returns whether the plot applied the view request.
 #[expect(
     clippy::too_many_arguments,
     reason = "plot rendering needs files, visibility/filter state, cross-highlight inputs, map-sync range, and mutable plot state"
@@ -459,14 +511,18 @@ pub fn show_track_plot(
     tec: &TecSeries,
     // What the app resolved from the archives over the span the plot shows.
     archive: ArchiveOverlays<'_>,
+    view_request: Option<&PlotViewRequest>,
     state: &mut PlotState,
-) {
+) -> bool {
+    if state.sync_to_map && map_sync_x_range.is_none() {
+        state.applied_map_x_range = None;
+    }
     // Computed once, shared by `visible_count`, the full-x-range loop and the
     // render loop.
     let visible: Vec<bool> = state
         .series_cache
         .iter()
-        .map(|s| track_is_visible(visibility, filter, files, s.fi, &s.series))
+        .map(|series| self::track_is_visible(visibility, filter, files, series))
         .collect();
     let visible_count = visible.iter().filter(|&&v| v).count();
 
@@ -481,7 +537,7 @@ pub fn show_track_plot(
         state.hovered_time = None;
         state.hovered_metric_fix = None;
         state.plot_cursor_snapped = false;
-        return;
+        return false;
     }
 
     // Per-series count, for the line-name prefix.  Distinct from the
@@ -576,6 +632,11 @@ pub fn show_track_plot(
         },
     );
 
+    let view_request = view_request.filter(|_| {
+        ui.available_rect_before_wrap()
+            .intersect(ui.clip_rect())
+            .is_positive()
+    });
     let available_width = ui.available_width();
     let sample_cap = levels::budget_cap(available_width, visible_count);
 
@@ -628,12 +689,13 @@ pub fn show_track_plot(
     // without float equality warnings.
     let map_x_key = map_sync_x_range.map(|(a, b)| (a.to_bits(), b.to_bits()));
     let need_map_sync = map_x_key.is_some_and(|k| state.applied_map_x_range != Some(k));
+    let map_x_range = map_sync_x_range
+        .filter(|_| need_map_sync)
+        .map(|(start, end)| start..=end);
 
     let mut new_hovered_time: Option<DateTime<Utc>> = None;
     let mut new_level_cache_inputs: Option<LevelCacheInputs> = None;
     let mut new_level_cache: Option<Vec<TrackLevelCache>> = None;
-    let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
-    let mut new_visible_x_range: Option<RangeInclusive<f64>> = None;
     // The custom hover label to draw: the closest candidate offered by any
     // series of any recording inside the plot closure, turned into a tooltip
     // after it returns.
@@ -673,9 +735,8 @@ pub fn show_track_plot(
     // whatever the plot shows, cannot feed their own extent back into the fit
     // and widen the view further every frame.
     if let Some(extent) = reset_extent {
-        let span = extent.end() - extent.start();
-        let margin = (span * RESET_X_MARGIN_FRACTION).max(RESET_X_MARGIN_MIN_SECS);
-        plot = plot.default_x_bounds(extent.start() - margin, extent.end() + margin);
+        let range = self::padded_time_range(&extent);
+        plot = plot.default_x_bounds(*range.start(), *range.end());
     }
 
     let dark_mode = ui.visuals().dark_mode;
@@ -704,15 +765,18 @@ pub fn show_track_plot(
     }
     let plot_response = plot.show(ui, |plot_ui| {
         let bounds = plot_ui.plot_bounds();
-        let plot_x_min = bounds.min()[0];
-        let plot_x_max = bounds.max()[0];
+        let view = view_request.filter(|_| plot_ui.response().interact_rect.is_positive());
+        let requested_x_range = view.map(|request| self::padded_time_range(&request.extent));
+        let x_range = requested_x_range
+            .clone()
+            .unwrap_or_else(|| bounds.range_x());
 
         // Intersect the visible plot range with the active time filter.
         //
         // `eff_x_min`/`eff_x_max` may end up inverted when the active filter
         // and the visible viewport don't overlap.  `MipMap` normalizes that
         // into an empty-range query (see `SelectionRange::counted_span`).
-        let effective = time_window.intersection(plot_x_min..=plot_x_max);
+        let effective = time_window.intersection(x_range);
         let eff_x_min = *effective.start();
         let eff_x_max = *effective.end();
         let inputs = LevelCacheInputs {
@@ -760,12 +824,9 @@ pub fn show_track_plot(
             std::borrow::Cow::Owned(fresh)
         };
 
-        // Pan the plot to the map-visible time range when it changes.
-        if need_map_sync {
-            if let Some((x_min, x_max)) = map_sync_x_range {
-                plot_ui.set_plot_bounds_x(x_min..=x_max);
-            }
-            new_applied_map_x_range = Some(map_x_key);
+        let next_x_range = requested_x_range.as_ref().or(map_x_range.as_ref());
+        if let Some(range) = next_x_range {
+            plot_ui.set_plot_bounds_x(range.clone());
         }
 
         // Pointer position for anomaly-marker hit-testing, sampled once.
@@ -925,11 +986,11 @@ pub fn show_track_plot(
             );
         }
 
-        new_visible_x_range = Some(plot_x_min..=plot_x_max);
         custom_hover_label_shown.set(hovered_label.has_candidate());
         new_hovered_time = plot_ui
             .pointer_coordinate()
             .and_then(|c| DateTime::from_timestamp(c.x as i64, 0));
+        (view, next_x_range.is_some())
     });
     if !dark_mode {
         ui.visuals_mut().extreme_bg_color = saved_extreme_bg;
@@ -945,10 +1006,15 @@ pub fn show_track_plot(
     if let Some(cache) = new_level_cache {
         state.level_cache = cache;
     }
-    if let Some(applied) = new_applied_map_x_range {
-        state.applied_map_x_range = applied;
+    let (applied_view, applied_x_range) = plot_response.inner;
+    if applied_x_range {
+        state.applied_map_x_range = map_x_key;
     }
-    state.last_visible_x_range = new_visible_x_range;
+    if let Some(view) = applied_view {
+        view.enable_series(state);
+        ui.ctx().request_repaint();
+    }
+    state.last_visible_x_range = Some(plot_response.transform.bounds().range_x());
     let selected_metric = hovered_label
         .selected()
         .and_then(|hover| hover.metric_selection());
@@ -977,6 +1043,13 @@ pub fn show_track_plot(
     } else {
         None
     };
+    applied_view.is_some()
+}
+
+fn padded_time_range(extent: &RangeInclusive<f64>) -> RangeInclusive<f64> {
+    let span = extent.end() - extent.start();
+    let margin = (span * RESET_X_MARGIN_FRACTION).max(RESET_X_MARGIN_MIN_SECS);
+    extent.start() - margin..=extent.end() + margin
 }
 
 /// Draws the band row under the plot's tick labels: a divider at each band edge in view, and
@@ -1034,29 +1107,16 @@ fn track_is_visible(
     visibility: &TrackDataVisibility,
     global_filter: &GlobalFilter,
     files: &[LoadedFile],
-    fi: usize,
-    series: &crate::series::TrackSeries,
+    series: &PlacedTrackSeries,
 ) -> bool {
-    let Some(file_vis) = visibility.files.get(fi) else {
-        return false;
-    };
-    if !file_vis.enabled {
-        return false;
-    }
-    let Some(track_vis) = file_vis.tracks.get(series.ti) else {
-        return false;
-    };
-    if !track_vis.enabled {
-        return false;
-    }
-    let Some(file) = files.get(fi) else {
-        return false;
-    };
-    let Some(track) = file.tracks.get(series.ti) else {
-        return false;
-    };
-    gt_filter::track_passes_filter(track, &global_filter.with_time_bounds(None, None))
-        && series.x_range.is_some_and(|(lo, hi)| {
+    gt_ui_types::visibility::track_in_scope(
+        files,
+        visibility,
+        &global_filter.with_time_bounds(None, None),
+        series.track_ref(),
+    )
+    .is_some()
+        && series.series.x_range.is_some_and(|(lo, hi)| {
             !FilterTimeWindow::from(global_filter)
                 .intersection(lo..=hi)
                 .is_empty()

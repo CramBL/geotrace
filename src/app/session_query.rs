@@ -10,6 +10,7 @@ use uuid::Uuid;
 use super::App;
 use super::query_run::{BackgroundQuery, CapturedQueryInputs, QuerySeries};
 use super::session_map::MapPresentation;
+use super::session_plot::PlotPresentation;
 
 #[derive(Default)]
 pub(super) struct SessionQuery {
@@ -130,12 +131,18 @@ struct Job {
 struct StagedSessionChanges {
     job: Option<Job>,
     map: Option<MapPresentation>,
+    plot: Option<PlotPresentation>,
 }
 
 impl StagedSessionChanges {
     fn queue_map(&mut self, presentation: MapPresentation) -> Reply {
         self.map = Some(presentation);
         Reply::MapPresentationQueued
+    }
+
+    fn queue_plot(&mut self, presentation: PlotPresentation) -> Reply {
+        self.plot = Some(presentation);
+        Reply::PlotPresentationQueued
     }
 }
 
@@ -284,6 +291,10 @@ impl App {
         if let Some(presentation) = staged.map {
             self.shared.borrow_mut().queue_session_map(presentation);
         }
+        if let Some(presentation) = staged.plot {
+            self.shared.borrow_mut().pending_session_plot = Some(presentation);
+            self.tiles_tree.tiles.set_visible(self.plot_tile_id, true);
+        }
     }
 
     fn execute_session_request(
@@ -322,6 +333,9 @@ impl App {
             Request::ShowOnMap(args) => self
                 .session_show_on_map(&mut queries, request.session, args)
                 .map(|presentation| staged.queue_map(presentation)),
+            Request::ShowOnPlot(args) => self
+                .session_show_on_plot(&mut queries, request.session, args)
+                .map(|presentation| staged.queue_plot(presentation)),
             _ => {
                 let shared = self.shared.borrow();
                 Ok(request.inspect(shared.loaded_files.view(), &shared.recording_name_template))

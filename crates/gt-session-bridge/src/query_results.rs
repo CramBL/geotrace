@@ -83,29 +83,42 @@ impl QueryResults {
     }
 }
 
-pub struct PointQueryMatch {
+pub struct QueryMatchRange<'a> {
     pub track: TrackRef,
-    pub points: Range<usize>,
+    pub extent: QueryMatchExtent<'a>,
 }
 
-impl PointQueryMatch {
+impl<'a> QueryMatchRange<'a> {
     pub fn resolve(
-        results: &RunResults,
-        files: LoadedFilesView<'_>,
+        results: &'a RunResults,
+        files: LoadedFilesView<'a>,
         query: usize,
         position: QueryMatchPosition,
     ) -> Result<Self, ErrorCode> {
         let query = ResultQuery::select(results, query)?;
         let track = query.track(files, position.track_ordinal)?;
         let matched = track.matched(position)?;
-        if matches!(track.source, MatchSource::Channel { .. }) {
-            return Err(ErrorCode::QueryMatchIsChannel);
-        }
+        let extent = match track.source {
+            MatchSource::Channel { channel, track } => QueryMatchExtent::Channel {
+                name: &channel.channel,
+                times: track
+                    .timeline
+                    .times
+                    .get(matched.rows.clone())
+                    .ok_or(ErrorCode::InvalidQueryCursor)?,
+            },
+            MatchSource::Points { .. } => QueryMatchExtent::Points(matched.rows.clone()),
+        };
         Ok(Self {
             track: track.track,
-            points: matched.rows.clone(),
+            extent,
         })
     }
+}
+
+pub enum QueryMatchExtent<'a> {
+    Channel { name: &'a str, times: &'a [f64] },
+    Points(Range<usize>),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

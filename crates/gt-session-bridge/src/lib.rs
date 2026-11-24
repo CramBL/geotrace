@@ -20,16 +20,16 @@ pub use crate::metrics::{
 };
 pub use crate::protocol::{
     CheckQuery, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
-    MapTarget, OpenPoint, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap,
-    TimeRange, TrackReference,
+    OpenPoint, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap,
+    ShowOnPlot, TimeRange, TrackReference,
 };
 pub use crate::query_job::{
     QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
 };
 pub use crate::query_results::{
-    GetQueryResults, PointQueryMatch, QueryMatch, QueryMatchPosition, QueryPageRequest,
-    QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
-    QueryResultValue, QueryResults,
+    GetQueryResults, QueryMatch, QueryMatchExtent, QueryMatchPosition, QueryMatchRange,
+    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
+    QueryResultTime, QueryResultValue, QueryResults,
 };
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
 

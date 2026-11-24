@@ -1,14 +1,15 @@
 use std::num::NonZeroUsize;
 
-use chrono::TimeDelta;
+use chrono::{DateTime, TimeDelta, Utc};
 use egui_kittest::Harness;
 use gt_loaded_files::FileHistory;
 use gt_query::Unit;
 use gt_session_bridge::{
-    CheckQuery, ErrorCode, GetQueryResults, MapTarget, QueryCounts, QueryJobId, QueryJobRequest,
-    QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest,
-    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResultValue,
-    QueryResults, QueryValidation, Reply, Request, SessionRequest, ShowOnMap,
+    CheckQuery, ErrorCode, GetQueryResults, GetRecording, ListRecordings, QueryCounts, QueryJobId,
+    QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition,
+    QueryPageRequest, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
+    QueryResultValue, QueryResults, QueryValidation, RangeTarget, Reply, Request, SessionRequest,
+    ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_test_utils::HarnessInteraction as _;
 use gt_test_utils::fixtures;
@@ -20,6 +21,7 @@ use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 
 mod map;
+mod plot;
 
 #[test]
 fn editor_and_session_results_refresh_when_enabled_tracks_change() {
@@ -362,19 +364,20 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         ))
     );
     self::assert_channel_rows(&mut harness, request, &matches[0]);
+    let target = RangeTarget::QueryMatch {
+        job,
+        query: 0,
+        matched: matches[0].position,
+    };
     assert_eq!(
-        self::execute(
-            &mut harness,
-            Request::ShowOnMap(ShowOnMap {
-                target: MapTarget::QueryMatch {
-                    job,
-                    query: 0,
-                    matched: matches[0].position,
-                },
-            }),
-        ),
+        self::execute(&mut harness, Request::ShowOnMap(ShowOnMap { target })),
         ErrorCode::QueryMatchIsChannel.into()
     );
+    let frame = ShowOnPlot {
+        target,
+        metrics: Vec::new(),
+    };
+    self::assert_channel_plot(&mut harness, &frame, time);
 
     harness
         .state_mut()
@@ -385,6 +388,31 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
     assert_eq!(
         self::execute(&mut harness, Request::GetQueryResults(request)),
         ErrorCode::StaleQueryResults.into()
+    );
+    assert_eq!(
+        self::execute(&mut harness, Request::ShowOnPlot(frame)),
+        ErrorCode::StaleQueryResults.into()
+    );
+}
+
+fn assert_channel_plot(harness: &mut Harness<'_, App>, frame: &ShowOnPlot, start: DateTime<Utc>) {
+    {
+        let mut shared = harness.state_mut().shared.borrow_mut();
+        shared.plot_state.sync_to_map = false;
+        shared.plot_state.channel_vis.set("accel", false);
+    }
+    assert_eq!(
+        self::execute(harness, Request::ShowOnPlot(frame.clone())),
+        Reply::PlotPresentationQueued
+    );
+    harness.run_steps(2);
+    let shared = harness.state().shared.borrow();
+    let start = start.timestamp() as f64;
+    assert!(shared.plot_state.show_channels);
+    assert!(shared.plot_state.channel_vis.is_visible("accel"));
+    assert_eq!(
+        shared.plot_state.visible_x_range(),
+        Some(start - 1.0..=start + 20.0)
     );
 }
 
@@ -517,6 +545,29 @@ fn execute(harness: &mut Harness<'_, App>, request: Request) -> Reply {
             request,
             session: Uuid::from_u128(1),
         })
+}
+
+fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {
+    let Reply::Recordings { page } = self::execute(
+        harness,
+        Request::ListRecordings(ListRecordings {
+            after: None,
+            limit: None,
+        }),
+    ) else {
+        panic!("expected recordings");
+    };
+    let Reply::Recording { details } = self::execute(
+        harness,
+        Request::GetRecording(GetRecording {
+            recording: page.recordings[0].id,
+            after: None,
+            limit: None,
+        }),
+    ) else {
+        panic!("expected recording details");
+    };
+    details.tracks[0]
 }
 
 fn completed(matches: usize) -> QueryJobState {

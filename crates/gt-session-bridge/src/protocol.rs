@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::ops::Range;
 
 use chrono::{DateTime, Utc};
 use gt_loaded_files::{
@@ -29,6 +30,7 @@ pub enum Request {
     OpenPoint(OpenPoint),
     RunQuery(CheckQuery),
     ShowOnMap(ShowOnMap),
+    ShowOnPlot(ShowOnPlot),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -43,13 +45,23 @@ pub struct OpenPoint {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ShowOnMap {
-    pub target: MapTarget,
+    pub target: RangeTarget,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ShowOnPlot {
+    pub target: RangeTarget,
+    /// Query metric identifiers to enable on the plot.
+    #[serde(default)]
+    pub metrics: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum MapTarget {
+pub enum RangeTarget {
     QueryMatch {
         job: QueryJobId,
         query: usize,
@@ -171,6 +183,21 @@ impl TrackReference {
             .resolve_track_at_revision(entry.id(), TrackIdx::new(self.index), self.revision)
             .ok_or(ErrorCode::StaleTrack)
     }
+
+    pub fn resolve_range(
+        self,
+        files: LoadedFilesView<'_>,
+        session: Uuid,
+        bounds: Range<Option<usize>>,
+    ) -> Result<(TrackRef, Range<usize>), ErrorCode> {
+        let track = self.resolve(files, session)?;
+        let loaded = track.resolve(files.files()).ok_or(ErrorCode::StaleTrack)?;
+        let points = bounds.start.unwrap_or_default()..bounds.end.unwrap_or(loaded.points.len());
+        if points.is_empty() || points.end > loaded.points.len() {
+            return Err(ErrorCode::InvalidRange);
+        }
+        Ok((track, points))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -179,6 +206,7 @@ pub enum Reply {
     Error { code: ErrorCode },
     MapPresentationQueued,
     Metrics { page: Metrics },
+    PlotPresentationQueued,
     QueryCheck { validation: QueryValidation },
     QueryJob { job: QueryJobStatus },
     QueryResults { results: QueryResults },
@@ -198,11 +226,13 @@ impl From<ErrorCode> for Reply {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Busy,
+    InvalidPlotMetric,
     InvalidPoint,
     InvalidQueryCursor,
     InvalidRange,
     InvalidRequest,
     NoVisibleMapGeometry,
+    NoVisiblePlotTime,
     QueryColumnsTooLarge,
     QueryJobNotFound,
     QueryMatchIsChannel,

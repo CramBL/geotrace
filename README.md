@@ -209,6 +209,15 @@ A later pin change supersedes a queued point request.
 Use Query highlights to hide or show an active range.
 GeoTrace clears a `show_on_map` match highlight when its job becomes stale or another job replaces it.
 
+Pass the same `target` to `show_on_plot` to open the plot and frame the selected timestamps.
+For a channel match, GeoTrace frames the retained sample times and enables the matched channel.
+Use the optional `metrics` array to enable plot metrics by their query identifiers, such as `velocity` and `eph`.
+GeoTrace reports an error for a query identifier with no corresponding plot metric.
+GeoTrace frames visible timestamps even when a selected metric has missing values.
+The `plot_presentation_queued` status acknowledges the request.
+GeoTrace applies a current request on the next frame with a visible plot area.
+With Sync to map enabled, the plot keeps that time range until the map's visible time range changes or the user changes the plot view.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

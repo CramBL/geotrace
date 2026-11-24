@@ -34,6 +34,7 @@ use panes::MainPane;
 use recording_name_template::TemplatePreviewRecording;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
+use session_plot::PlotPresentation;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use settings_ui::SettingsPage;
 use settings_ui::search::SettingsSearch;
@@ -92,6 +93,7 @@ mod recording_names_cache;
 mod recording_ui_state;
 mod reference_window;
 mod session_map;
+mod session_plot;
 mod session_query;
 mod settings_autosave;
 mod settings_ui;
@@ -143,6 +145,7 @@ struct SharedAppState {
     zoom_to_visible_request: bool,
     reveal_query_matches_request: Option<gt_ui_types::MatchRevealTarget>,
     pending_session_map: Option<QueuedMapPresentation>,
+    pending_session_plot: Option<PlotPresentation>,
     presented_session_map: Option<AppliedMapPresentation>,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
@@ -672,6 +675,7 @@ impl App {
                 zoom_to_visible_request: false,
                 reveal_query_matches_request: None,
                 pending_session_map: None,
+                pending_session_plot: None,
                 presented_session_map: None,
                 sky_trails_request: None,
                 reference_document_request: None,

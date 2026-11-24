@@ -5,11 +5,11 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    CheckQuery, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, MapTarget, Metrics,
-    OpenPoint, PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
-    QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow,
-    QueryResultSource, QueryResultTime, QueryResultValue, QueryResults, QueryValidation,
-    RangeDetails, Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap,
+    CheckQuery, GetQueryResults, GetRangeDetails, ListMetrics, ListRecordings, Metrics, OpenPoint,
+    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
+    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
+    QueryResultTime, QueryResultValue, QueryResults, QueryValidation, RangeDetails, RangeTarget,
+    Recording, RecordingReference, Recordings, Reply, Request, ShowOnMap, ShowOnPlot,
     TrackReference,
 };
 use gt_types::PointIdx;
@@ -91,7 +91,8 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "list_recordings",
             "open_point",
             "run_query",
-            "show_on_map"
+            "show_on_map",
+            "show_on_plot",
         ]
     );
     let tool = tools
@@ -257,7 +258,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             }]}
         }))
     );
-    self::assert_map_tools_queue_presentation(&mut client).await;
+    self::assert_presentation_tools_queue_requests(&mut client).await;
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -265,13 +266,18 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         .unwrap();
 }
 
-async fn assert_map_tools_queue_presentation(client: &mut Client) {
+async fn assert_presentation_tools_queue_requests(client: &mut Client) {
     let track = self::track_reference();
     let commands = [
-        ("open_point", json!({"track": track, "point": 1})),
+        (
+            "open_point",
+            json!({"track": track, "point": 1}),
+            "map_presentation_queued",
+        ),
         (
             "show_on_map",
             json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}}),
+            "map_presentation_queued",
         ),
         (
             "show_on_map",
@@ -279,9 +285,15 @@ async fn assert_map_tools_queue_presentation(client: &mut Client) {
                 "kind": "query_match", "job": self::query_job_id(), "query": 1,
                 "matched": {"track_ordinal": 2, "match_ordinal": 3}
             }}),
+            "map_presentation_queued",
+        ),
+        (
+            "show_on_plot",
+            json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}, "metrics": ["velocity"]}),
+            "plot_presentation_queued",
         ),
     ];
-    for (index, (name, arguments)) in commands.into_iter().enumerate() {
+    for (index, (name, arguments, status)) in commands.into_iter().enumerate() {
         let presented = client
             .exchange(json!({
                 "jsonrpc": "2.0", "id": 13 + index, "method": "tools/call",
@@ -290,7 +302,7 @@ async fn assert_map_tools_queue_presentation(client: &mut Client) {
             .await;
         assert_eq!(
             presented.pointer("/result/structuredContent"),
-            Some(&json!({"status": "map_presentation_queued"}))
+            Some(&json!({"status": status}))
         );
     }
 }
@@ -300,15 +312,26 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
         Request::OpenPoint(OpenPoint { track, point: 1 })
         | Request::ShowOnMap(ShowOnMap {
             target:
-                MapTarget::Track {
+                RangeTarget::Track {
                     track,
                     start: Some(1),
                     end: Some(2),
                 },
         }) if track == self::track_reference() => Ok(Reply::MapPresentationQueued),
+        Request::ShowOnPlot(ShowOnPlot {
+            target:
+                RangeTarget::Track {
+                    track,
+                    start: Some(1),
+                    end: Some(2),
+                },
+            metrics,
+        }) if track == self::track_reference() && metrics == ["velocity"] => {
+            Ok(Reply::PlotPresentationQueued)
+        }
         Request::ShowOnMap(ShowOnMap {
             target:
-                MapTarget::QueryMatch {
+                RangeTarget::QueryMatch {
                     job,
                     query: 1,
                     matched:
