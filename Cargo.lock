@@ -3084,6 +3084,7 @@ name = "gt-session-bridge"
 version = "0.19.0"
 dependencies = [
  "chrono",
+ "gt-history-types",
  "gt-loaded-files",
  "gt-query",
  "gt-query-run",
@@ -3104,6 +3105,7 @@ dependencies = [
  "widestring",
  "win-custody",
  "windows-sys 0.61.2",
+ "xxhash-rust",
 ]
 
 [[package]]

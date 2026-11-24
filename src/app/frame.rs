@@ -182,7 +182,7 @@ impl eframe::App for App {
 }
 
 impl App {
-    pub(in crate::app) fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
+    pub(super) fn apply_finished_recording_work(&mut self, ctx: &egui::Context) {
         // Adopt the databases first: what waited on them starts in the frame
         // they arrive.
         self.adopt_finished_archive_inspection();
@@ -191,7 +191,7 @@ impl App {
         // Drain background load results first so newly loaded data is
         // visible in the same frame that it arrives.
         let completed_loads: Vec<CompletedLoad> = self.loader.drain();
-        let frame_time = ui.ctx().input(|i| i.time);
+        let frame_time = ctx.input(|i| i.time);
         for completed in completed_loads {
             self.handle_completed_load(completed, frame_time);
         }
@@ -202,6 +202,10 @@ impl App {
         }
         self.resolve_initial_log_associations();
         self.warn_once_that_a_newer_version_stored_ui_state();
+    }
+
+    pub(in crate::app) fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
+        self.apply_finished_recording_work(ui.ctx());
         self.jamming.poll();
         self.geomagnetic_indices.poll();
         self.tec_maps.poll();

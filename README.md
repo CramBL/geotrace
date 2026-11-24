@@ -248,6 +248,16 @@ If a read times out, try it again when GeoTrace responds.
 Use `get_recording` to obtain fresh track references and rerun queries against the rebuilt tracks.
 History keeps its stored track layout.
 
+Use `list_history_recordings` to discover stored recordings, including recordings that are closed in the app.
+Filter by UTC dates with `dates.from` and `dates.through`, both inclusive.
+A recording matches when its navigation time range overlaps the date filter.
+Recordings without navigation timestamps appear in unfiltered pages.
+The bounds in `time_range` are microseconds since the UTC epoch.
+Pass `next_cursor` as `cursor` with the same dates to continue, or start again after History refreshes or the app restarts.
+Recording IDs remain stable across app restarts with the same History database contents and path.
+GeoTrace returns up to 32 recordings per page and sets `metadata_truncated` when it shortens a title or identity.
+If GeoTrace is preparing History, retry the listing.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

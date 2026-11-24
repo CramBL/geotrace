@@ -9,6 +9,7 @@ use gt_types::{TimeRange as LoadedTimeRange, TrackIdx, TrackRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::history::{HistoryRecordings, ListHistoryRecordings};
 use crate::inspection::{RangeDetails, RecordingDetails, TrackDetails};
 use crate::metrics::Metrics;
 use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
@@ -29,6 +30,7 @@ pub enum Request {
     GetRecording(GetRecording),
     GetSettings,
     GetTrack(GetTrack),
+    ListHistoryRecordings(ListHistoryRecordings),
     ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
     OpenPoint(OpenPoint),
@@ -211,6 +213,7 @@ impl TrackReference {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Reply {
     Error { code: ErrorCode },
+    HistoryRecordings { page: HistoryRecordings },
     MapPresentationQueued,
     Metrics { page: Metrics },
     PlotPresentationQueued,
@@ -238,7 +241,12 @@ impl From<ErrorCode> for Reply {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Busy,
+    HistoryListingFailed,
+    HistoryNotReady,
+    HistoryUnavailable,
     InactiveSetting,
+    InvalidHistoryCursor,
+    InvalidHistoryDateRange,
     InvalidPlotMetric,
     InvalidPoint,
     InvalidQueryCursor,

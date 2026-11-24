@@ -619,8 +619,7 @@ pub(super) struct HistoryTable<'a> {
     /// Every stored recording, whether the filters left it in `visible` or not.
     /// Filtering moves no column: the floors are measured from all of them.
     pub entries: &'a [RecordingEntry],
-    /// Bumped by [`super::HistoryWindow::set_entries`], which is what makes the
-    /// measured column widths stale.
+    /// A new listing revision invalidates the measured column widths.
     pub entries_revision: u64,
     /// The recordings already in the window, whose rows cannot be opened
     /// again.

@@ -30,6 +30,7 @@ impl<'a> Inspection<'a> {
             | Request::GetQueryResults(_)
             | Request::GetQueryStatus(_)
             | Request::GetSettings
+            | Request::ListHistoryRecordings(_)
             | Request::OpenPoint(_)
             | Request::OpenQuery(_)
             | Request::OpenSetting(_)

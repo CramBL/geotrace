@@ -57,10 +57,10 @@ struct HistoryHarness {
 impl HistoryHarness {
     fn load_recordings_before_first_frame(&mut self) {
         self.window.request_recording_list_if_missing(&self.worker);
-        let Response::Listed(Ok(entries)) = recordings::next_response(&self.worker) else {
+        let Response::Listed { request, entries } = recordings::next_response(&self.worker) else {
             panic!("expected the recording list");
         };
-        self.window.set_entries(entries);
+        self.window.accept_recording_list(request, entries);
     }
 }
 
@@ -165,9 +165,13 @@ fn stored_log_text(name: &str) -> String {
 /// render it.
 fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
     for resp in s.worker.poll() {
+        if resp.invalidates_recording_list() {
+            s.window.invalidate();
+        }
         match resp {
-            Response::Listed(Ok(entries)) => s.window.set_entries(entries),
-            Response::Mutated { result: Ok(()), .. } => s.window.invalidate(),
+            Response::Listed { request, entries } => {
+                s.window.accept_recording_list(request, entries)
+            }
             Response::AttachedLogLoaded { log: Ok(log), .. } => s.opened_log = Some(log),
             Response::StoredTrackTableLoaded { db_ref, tracks } => {
                 s.window.set_shelf_track_table(&db_ref, tracks);
@@ -564,10 +568,9 @@ fn open_shelf_opens_the_window_on_the_recordings_shelved_tracks() {
         .state()
         .window
         .entries
-        .iter()
-        .flatten()
+        .as_deref()
+        .and_then(<[_]>::first)
         .map(|entry| entry.db_ref.clone())
-        .next()
         .expect("the listed recording");
     h.state_mut().window.open = false;
     h.state_mut().window.filter_text = "another recording".to_owned();

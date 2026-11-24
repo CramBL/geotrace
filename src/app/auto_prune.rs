@@ -3,12 +3,12 @@ use gt_store::{
 };
 
 pub enum AutoPruneOutcome {
+    /// A failed batch can leave some recordings deleted.
+    DeleteAttempt(Result<usize, DbError>),
     /// Caller must present the user with a confirmation dialog before deleting.
     NeedsConfirmation(Vec<DatabaseRef>),
     /// Total stored size is within the limit, nothing to delete.
     NotNeeded,
-    /// Pruning was performed, this many recordings were deleted.
-    PrunedSilently(usize),
 }
 
 /// Check whether the database exceeds `max_bytes` and prune the oldest
@@ -16,6 +16,7 @@ pub enum AutoPruneOutcome {
 ///
 /// When `confirm` is `true` the database is not touched - candidates are
 /// returned so the caller can prompt for confirmation first.
+/// Returns `Err` if reading deletion candidates fails.
 pub fn run(
     db: &mut Recordings,
     max_bytes: u64,
@@ -29,8 +30,9 @@ pub fn run(
         return Ok(AutoPruneOutcome::NeedsConfirmation(candidates));
     }
     let n = candidates.len();
-    db.delete_batch(&candidates)?;
-    Ok(AutoPruneOutcome::PrunedSilently(n))
+    Ok(AutoPruneOutcome::DeleteAttempt(
+        db.delete_batch(&candidates).map(|()| n),
+    ))
 }
 
 #[cfg(test)]
@@ -95,8 +97,8 @@ mod tests {
         // Limit just under total - should remove the oldest recording.
         let outcome = run(&mut db, total - 1, false).expect("run");
         assert!(
-            matches!(outcome, AutoPruneOutcome::PrunedSilently(1)),
-            "expected PrunedSilently(1)"
+            matches!(outcome, AutoPruneOutcome::DeleteAttempt(Ok(1))),
+            "expected one deleted recording"
         );
         assert_eq!(
             db.list_recordings().expect("list").len(),
@@ -139,8 +141,8 @@ mod tests {
 
         let outcome = run(&mut db, 0, false).expect("run");
         assert!(
-            matches!(outcome, AutoPruneOutcome::PrunedSilently(2)),
-            "expected PrunedSilently(2)"
+            matches!(outcome, AutoPruneOutcome::DeleteAttempt(Ok(2))),
+            "expected two deleted recordings"
         );
         assert_eq!(db.list_recordings().expect("list").len(), 0);
     }

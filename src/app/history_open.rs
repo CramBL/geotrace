@@ -9,10 +9,11 @@ use gt_ui_components::HeldBodyLines;
 
 use super::anchored_dialog::AnchoredDialogKind;
 use super::association_batches::RecordingOperationOrigin;
+use super::auto_prune::AutoPruneOutcome;
 use super::history_db::OpenedRecording;
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
 use super::loader::LoadedRecordingPlacement;
-use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
+use super::{App, ResegmentPrompt, history, history_db, loader, modals, storage};
 
 fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
     match stored.debug_tag {
@@ -388,8 +389,6 @@ impl App {
         }
     }
 
-    /// Refresh the history list and toast a finished mutation, or report the
-    /// failure it came back with.
     fn apply_mutation_outcome(&mut self, op: &history_db::DbOp, result: &Result<(), DbError>) {
         match result {
             Ok(()) => {
@@ -411,7 +410,6 @@ impl App {
                     | history_db::DbOp::TracksDeleted { .. }
                     | history_db::DbOp::RecordingsDeleted { .. } => {}
                 }
-                self.history_window.invalidate();
                 self.toasts
                     .info(mutation_toast(op, loading_the_recording_again));
             }
@@ -485,11 +483,12 @@ impl App {
     /// Apply a result delivered by the history worker thread.
     pub(super) fn handle_history_response(&mut self, resp: history_db::Response) {
         use history_db::Response;
+        if resp.invalidates_recording_list() {
+            self.history_window.invalidate();
+        }
         match resp {
-            Response::Listed(Ok(entries)) => self.history_window.set_entries(entries),
-            Response::Listed(Err(e)) => {
-                self.history_window
-                    .set_error(format!("Failed to load history: {e}"));
+            Response::Listed { request, entries } => {
+                self.history_window.accept_recording_list(request, entries);
             }
             Response::Opened {
                 origin,
@@ -500,20 +499,19 @@ impl App {
             Response::Mutated { op, result } => self.apply_mutation_outcome(&op, &result),
             Response::PrunePreview(Ok(refs)) => self.history_window.set_prune_preview(refs),
             Response::PrunePreview(Err(e)) => log::error!("Prune preview failed: {e}"),
-            Response::AutoPruned(Ok(auto_prune::AutoPruneOutcome::NotNeeded)) => {}
-            Response::AutoPruned(Ok(auto_prune::AutoPruneOutcome::PrunedSilently(n))) => {
-                self.history_window.invalidate();
+            Response::AutoPruned(Ok(AutoPruneOutcome::NotNeeded)) => {}
+            Response::AutoPruned(Ok(AutoPruneOutcome::DeleteAttempt(Ok(n)))) => {
                 let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                 self.toasts
                     .info(format!("Auto-pruned {n} {rec_label}"))
                     .duration(Some(std::time::Duration::from_secs(4)));
             }
-            Response::AutoPruned(Ok(auto_prune::AutoPruneOutcome::NeedsConfirmation(
-                candidates,
-            ))) => {
+            Response::AutoPruned(Ok(AutoPruneOutcome::NeedsConfirmation(candidates))) => {
                 self.pending_auto_prune = Some(candidates);
             }
-            Response::AutoPruned(Err(e)) => log::error!("Auto-prune failed: {e}"),
+            Response::AutoPruned(Ok(AutoPruneOutcome::DeleteAttempt(Err(e))) | Err(e)) => {
+                log::error!("Auto-prune failed: {e}");
+            }
             // A failed cache write costs only the persisted copy - the
             // session stores keep working - so this logs the failure.
             Response::SnapRunsStored(result) => {
@@ -881,7 +879,6 @@ impl App {
                     }),
                     prompt.origin,
                 );
-                self.history_window.invalidate();
             }
             Some(ResegmentChoice::UseStoredTracks) => {
                 let config =

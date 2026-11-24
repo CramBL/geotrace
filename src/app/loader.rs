@@ -12,7 +12,9 @@ use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog, YearResolution};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
-use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogSettings, StoredTrackSplitRule};
+use gt_store::{
+    AttachedLog, DatabaseRef, StoredFixPlacementRule, StoredLogSettings, StoredTrackSplitRule,
+};
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
 };
@@ -57,6 +59,7 @@ pub(super) struct LoadedRecordingResult {
     pub file: LoadedFile,
     pub series: PreparedSeries,
     pub history: FileHistory,
+    pub history_write_attempted: bool,
     pub applied_current_marker_settings: bool,
     pub placement: LoadedRecordingPlacement,
 }
@@ -1131,8 +1134,8 @@ fn apply_stored_track_table(
 }
 
 /// Overwrite a recording's stored track table and segmentation settings with a
-/// fresh segmentation of `file` under `config` (the recalculation path). Logs and
-/// continues on failure - the recording is still loaded into the view.
+/// fresh segmentation of `file` under `config`. Returns whether GeoTrace
+/// attempted a writable open of History.
 fn recalculate_stored_tracks(
     db_path: &std::path::Path,
     db_ref: &gt_store::DatabaseRef,
@@ -1140,7 +1143,7 @@ fn recalculate_stored_tracks(
     config: &SegmentationConfig,
     filename: &str,
     pending_writes: &PendingWrites,
-) {
+) -> bool {
     use gt_store::HistoryDatabase;
     let _write = match pending_writes.try_begin(
         format!("Recalculating the stored tracks of {filename}"),
@@ -1149,7 +1152,7 @@ fn recalculate_stored_tracks(
         Ok(write) => write,
         Err(rejection) => {
             log::debug!("Not recalculating the stored tracks of '{filename}': {rejection}");
-            return;
+            return false;
         }
     };
     let tracks = track_ranges_from_file(file);
@@ -1170,6 +1173,7 @@ fn recalculate_stored_tracks(
         },
         Err(e) => log::warn!("Could not open history database to recalculate tracks: {e}"),
     }
+    true
 }
 
 /// One parsed recording on its load thread, with everything the thread needs
@@ -1223,7 +1227,7 @@ impl ParsedRecording<'_> {
         // Store first (de-duplicates against the existing recording, keeping
         // its stored track table) while the freshly segmented tracks are still
         // in stored order.
-        let stored_db_ref = HistoryInsert {
+        let insertion = HistoryInsert {
             db_path,
             file: &file,
             identity: &loaded.identity,
@@ -1234,12 +1238,16 @@ impl ParsedRecording<'_> {
             pending_writes,
         }
         .store();
+        let (stored_db_ref, mut history_write_attempted) = match insertion {
+            HistoryInsertOutcome::Attempted(db_ref) => (db_ref, true),
+            HistoryInsertOutcome::Skipped => (None, false),
+        };
         let db_ref = stored_db_ref.or_else(|| open.as_ref().map(HistoryOpen::db_ref).cloned());
         let mut shelved_tracks = 0;
         match &open {
             Some(HistoryOpen::Recalculate { db_ref, .. }) => {
                 if let Some(path) = db_path {
-                    recalculate_stored_tracks(
+                    history_write_attempted |= recalculate_stored_tracks(
                         path,
                         db_ref,
                         &file,
@@ -1270,6 +1278,7 @@ impl ParsedRecording<'_> {
             file,
             series,
             history,
+            history_write_attempted,
             applied_current_marker_settings: open
                 .as_ref()
                 .is_some_and(HistoryOpen::applied_current_marker_settings),
@@ -1294,12 +1303,14 @@ struct HistoryInsert<'a> {
     pending_writes: &'a PendingWrites,
 }
 
+enum HistoryInsertOutcome {
+    /// The backend can repair recordings during a writable open.
+    Attempted(Option<DatabaseRef>),
+    Skipped,
+}
+
 impl HistoryInsert<'_> {
-    /// Insert the recording into the history database, logging the outcome at
-    /// each branch. Returns the stored reference, or `None` when storage is
-    /// disabled, metadata is missing, the write registry turned the insert
-    /// away, or the insert failed.
-    fn store(self) -> Option<gt_store::DatabaseRef> {
+    fn store(self) -> HistoryInsertOutcome {
         use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase};
 
         let Self {
@@ -1315,11 +1326,11 @@ impl HistoryInsert<'_> {
 
         let Some(path) = db_path else {
             log::debug!("Storage disabled; not storing '{filename}' in history");
-            return None;
+            return HistoryInsertOutcome::Skipped;
         };
         let (Some(meta), Some(bytes)) = (meta, bytes) else {
             log::warn!("No recording metadata for '{filename}'; not storing in history");
-            return None;
+            return HistoryInsertOutcome::Skipped;
         };
         let _write = match pending_writes.try_begin(
             format!("Storing {filename} in recording history"),
@@ -1328,7 +1339,7 @@ impl HistoryInsert<'_> {
             Ok(write) => write,
             Err(rejection) => {
                 log::debug!("Not storing '{filename}' in history: {rejection}");
-                return None;
+                return HistoryInsertOutcome::Skipped;
             }
         };
 
@@ -1346,7 +1357,7 @@ impl HistoryInsert<'_> {
             Ok(db) => db,
             Err(e) => {
                 log::warn!("Could not open history database at {}: {e}", path.display());
-                return None;
+                return HistoryInsertOutcome::Attempted(None);
             }
         };
         log::debug!(
@@ -1356,7 +1367,7 @@ impl HistoryInsert<'_> {
             meta.nav_point_count,
             tracks.len()
         );
-        match db.insert(identity, meta, &tracks, settings, bytes) {
+        let db_ref = match db.insert(identity, meta, &tracks, settings, bytes) {
             Ok(db_ref) => {
                 match db.contains(&db_ref) {
                     Ok(true) => {
@@ -1391,7 +1402,8 @@ impl HistoryInsert<'_> {
                 );
                 None
             }
-        }
+        };
+        HistoryInsertOutcome::Attempted(db_ref)
     }
 }
 
@@ -2014,12 +2026,18 @@ mod tests {
 
         let completed = drain_until_complete(&mut jobs);
         let LoadCompletion::Recording {
-            result: Ok(LoadedRecordingResult { history, .. }),
+            result:
+                Ok(LoadedRecordingResult {
+                    history,
+                    history_write_attempted,
+                    ..
+                }),
             ..
         } = completed.completion
         else {
             panic!("expected a GtdFile outcome");
         };
+        assert!(history_write_attempted);
         assert!(
             history.is_stored(),
             "loading with storage enabled must produce a history db_ref"
@@ -2102,12 +2120,18 @@ mod tests {
 
         let completed = drain_until_complete(&mut jobs);
         let LoadCompletion::Recording {
-            result: Ok(LoadedRecordingResult { history, .. }),
+            result:
+                Ok(LoadedRecordingResult {
+                    history,
+                    history_write_attempted,
+                    ..
+                }),
             ..
         } = completed.completion
         else {
             panic!("expected a GtdFile outcome");
         };
+        assert!(!history_write_attempted);
         assert!(
             history.db_ref().is_none(),
             "no db_ref without a database path"
@@ -2136,12 +2160,19 @@ mod tests {
 
         let completed = drain_until_complete(&mut jobs);
         let LoadCompletion::Recording {
-            result: Ok(LoadedRecordingResult { file, history, .. }),
+            result:
+                Ok(LoadedRecordingResult {
+                    file,
+                    history,
+                    history_write_attempted,
+                    ..
+                }),
             ..
         } = completed.completion
         else {
             panic!("expected a GtdFile outcome");
         };
+        assert!(!history_write_attempted);
         assert!(!file.tracks.is_empty(), "the recording still loads");
         assert!(history.db_ref().is_none());
         assert!(!db_path.exists(), "the database was never opened");

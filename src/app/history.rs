@@ -5,6 +5,7 @@ use chrono::NaiveDate;
 use egui::{Button, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
+use gt_session_bridge::HistoryEntries;
 use gt_store::{
     DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta, TrackRange,
 };
@@ -15,7 +16,9 @@ use gt_ui_theme::labels::LabelWithHover;
 use strum::{EnumCount, EnumIter};
 
 use crate::app::history::delete_shelved_prompt::DeleteShelvedTracksPrompt;
-use crate::app::history_db::{DeleteReason, DeleteShelvedTracksScope, HistoryWorker};
+use crate::app::history_db::{
+    DeleteReason, DeleteShelvedTracksScope, HistoryWorker, ListRequestId,
+};
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls;
@@ -412,8 +415,7 @@ fn compare_identities(a: &str, b: &str) -> Ordering {
 
 pub struct HistoryWindow {
     pub open: bool,
-    /// Cached recording list - `None` until the window is first shown.
-    entries: Option<Vec<RecordingEntry>>,
+    entries: Option<HistoryEntries>,
     /// Identity substring filter (case-insensitive).
     filter_text: String,
     /// Minimum nav-point count filter (empty = no filter).
@@ -428,9 +430,8 @@ pub struct HistoryWindow {
     error: Option<String>,
     prune: PruneDialog,
     delete_shelved_prompt: DeleteShelvedTracksPrompt,
-    /// Whether a recording-list request is in flight (drives the spinner and
-    /// prevents re-requesting every frame while waiting).
-    list_pending: bool,
+    list_pending: Option<ListRequestId>,
+    list_failed: bool,
     /// In-progress inline identity rename, if any.
     rename: Option<RenameEdit>,
     /// The recording whose shelf is open in the listing, if any.
@@ -448,13 +449,20 @@ pub struct HistoryWindow {
     entries_revision: u64,
 }
 
+pub(super) enum RecordingListing<'a> {
+    Failed,
+    Pending,
+    Ready {
+        revision: u64,
+        entries: &'a HistoryEntries,
+    },
+}
+
 /// What the app hands the History window on the frame it draws.
 pub struct HistoryWindowFrame<'a> {
     /// The frame's instant, which the delete-shelved confirmation counts its
     /// own close down against.
     pub now: Instant,
-    /// Every database operation goes here, and its result arrives
-    /// asynchronously through [`HistoryWindow::set_entries`] and friends.
     pub worker: &'a HistoryWorker,
     /// The content fingerprints of the files loaded in the app, which is what
     /// disables re-opening a recording that is already open.
@@ -508,7 +516,8 @@ impl HistoryWindow {
             error: None,
             prune: PruneDialog::new(),
             delete_shelved_prompt: DeleteShelvedTracksPrompt::default(),
-            list_pending: false,
+            list_pending: None,
+            list_failed: false,
             rename: None,
             shelf: None,
             sort: HistorySort::default(),
@@ -525,13 +534,25 @@ impl HistoryWindow {
             || !self.filter_date_to.is_empty()
     }
 
-    /// Request the recording list from `worker` unless it is already cached or
-    /// a request is in flight. The reply arrives via
-    /// [`HistoryWindow::set_entries`].
     pub fn request_recording_list_if_missing(&mut self, worker: &HistoryWorker) {
-        if self.entries.is_none() && !self.list_pending && worker.available() {
-            worker.list();
-            self.list_pending = true;
+        if self.entries.is_none() && self.list_pending.is_none() && worker.available() {
+            self.list_pending = worker.list();
+            if self.list_pending.is_none() {
+                self.list_failed = true;
+            }
+        }
+    }
+
+    pub(super) fn recording_listing(&self) -> RecordingListing<'_> {
+        if let Some(entries) = &self.entries {
+            RecordingListing::Ready {
+                revision: self.entries_revision,
+                entries,
+            }
+        } else if self.list_failed {
+            RecordingListing::Failed
+        } else {
+            RecordingListing::Pending
         }
     }
 
@@ -556,7 +577,8 @@ impl HistoryWindow {
     /// it again, with the states the mutation wrote.
     pub fn invalidate(&mut self) {
         self.entries = None;
-        self.list_pending = false;
+        self.list_pending = None;
+        self.list_failed = false;
         if let Some(shelf) = &mut self.shelf {
             shelf.tracks = ShelfTracks::Unrequested;
         }
@@ -582,12 +604,15 @@ impl HistoryWindow {
         });
     }
 
-    /// Apply a recording list that arrived from the worker.
-    ///
+    #[cfg(test)]
+    pub fn set_entries(&mut self, entries: Vec<RecordingEntry>) {
+        self.set_recording_list(HistoryEntries::new(entries));
+    }
+
     /// An open shelf closes when its recording no longer has a shelved track to
     /// list: the recording was deleted, its identity renamed, or its last
     /// shelved track unshelved.
-    pub fn set_entries(&mut self, entries: Vec<RecordingEntry>) {
+    fn set_recording_list(&mut self, entries: HistoryEntries) {
         if let Some(shelf) = &self.shelf
             && !entries
                 .iter()
@@ -597,8 +622,27 @@ impl HistoryWindow {
         }
         self.entries = Some(entries);
         self.entries_revision = self.entries_revision.wrapping_add(1);
-        self.list_pending = false;
+        self.list_pending = None;
+        self.list_failed = false;
         self.error = None;
+    }
+
+    pub fn accept_recording_list(
+        &mut self,
+        request: ListRequestId,
+        entries: Result<HistoryEntries, DbError>,
+    ) {
+        if self.list_pending != Some(request) {
+            return;
+        }
+        match entries {
+            Ok(entries) => self.set_recording_list(entries),
+            Err(error) => {
+                self.list_pending = None;
+                self.list_failed = true;
+                self.error = Some(format!("Failed to load history: {error}"));
+            }
+        }
     }
 
     /// Apply a stored track table that arrived from the worker.
@@ -625,12 +669,6 @@ impl HistoryWindow {
                 self.error = Some(format!("Failed to read the recording's tracks: {e}"));
             }
         }
-    }
-
-    /// Record an error from a failed list request.
-    pub fn set_error(&mut self, message: String) {
-        self.error = Some(message);
-        self.list_pending = false;
     }
 
     /// Apply a prune-preview result that arrived from the worker.

@@ -165,11 +165,15 @@ pub fn next_response(worker: &HistoryWorker) -> Response {
 /// The recordings the worker's database holds, as the History window lists
 /// them.
 pub fn listed_recordings(worker: &HistoryWorker) -> Vec<RecordingEntry> {
-    worker.list();
-    let Response::Listed(Ok(entries)) = next_response(worker) else {
+    let _ = worker.list();
+    let Response::Listed {
+        entries: Ok(entries),
+        ..
+    } = next_response(worker)
+    else {
         panic!("expected a Listed response");
     };
-    entries
+    entries.into_entries()
 }
 
 /// The one recording the worker's database holds, as the History window lists

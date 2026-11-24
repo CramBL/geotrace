@@ -15,19 +15,21 @@ schema = ["dep:schemars"]
 
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
+gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-query = { path = "../gt-query" }
 gt-query-run = { path = "../gt-query-run" }
 gt-types = { path = "../gt-types" }
 interprocess = { version = "2.4.9", features = ["tokio"] }
 log.workspace = true
-schemars = { version = "1", features = ["uuid1"], optional = true }
+schemars = { version = "1", features = ["chrono04", "uuid1"], optional = true }
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 strum.workspace = true
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 uom.workspace = true
 uuid = { workspace = true, features = ["serde"] }
+xxhash-rust.workspace = true
 
 [dev-dependencies]
 gt-test-utils = { path = "../gt-test-utils" }
