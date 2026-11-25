@@ -1,22 +1,17 @@
 use egui::TextEdit;
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 
 use egui_kittest::{Harness, Node, kittest::Queryable as _};
 use geotrace_sdk::{Channel, DateTime, Duration, Unit, Utc};
 use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
 use gt_log_view::{FilterEffect, FilterGroupId, LoadedLog};
-use gt_pending_writes::{PendingWrites, WriteAccess};
-use gt_store::{
-    FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, RecordingsHandle,
-    SolarStore,
-};
+use gt_pending_writes::PendingWrites;
+use gt_store::JamStore;
+use gt_test_utils::recording_fixtures::RECORDING_FIXTURE_START_SECS;
 use gt_test_utils::{By, HarnessInteraction as _, SyntheticGtdSpec, TestHarness};
 
 use super::App;
-use super::archive_recovery::UnavailableArchives;
-use super::storage::OpenStorage;
 use crate::app::log_viewer::filters;
 use crate::app::test_util;
 use crate::app::test_util::harness::{QUERY_WINDOW_TITLE, TestDroppedFile};
@@ -74,7 +69,7 @@ fn node_outside_the_side_panel<'h>(harness: &'h Harness<'_, App>, label: &'h str
 }
 
 fn base_time() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_748_000_000, 0).expect("fixed timestamp is valid")
+    DateTime::from_timestamp(RECORDING_FIXTURE_START_SECS, 0).expect("fixed timestamp is valid")
 }
 
 fn minimal_gtd_bytes() -> Vec<u8> {
@@ -298,93 +293,6 @@ fn focus_query_editor_at_end(harness: &Harness<App>, text: &str) {
     TextEdit::store_state(&harness.ctx, editor_id, state);
 }
 
-/// The app as it starts with its databases still opening, and the sender the
-/// test lands them through. `paths` are the ones a command line named.
-///
-/// The open is taken over before the harness's first frame, so nothing is
-/// adopted until the test says so.
-fn app_with_the_databases_still_opening<'a>(
-    paths: &[PathBuf],
-) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
-    app_with_the_databases_still_opening_for(paths, WriteAccess::Owner)
-}
-
-/// [`app_with_the_databases_still_opening`] for a session with `write_access`,
-/// which controls whether anything it loads is stored.
-fn app_with_the_databases_still_opening_for<'a>(
-    paths: &[PathBuf],
-    write_access: WriteAccess,
-) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
-    let paths = paths.to_vec();
-    app_with_the_databases_still_opening_built_by(move |cc| {
-        test_util::harness::transient_app_with_the_instance_lock(
-            cc,
-            &paths,
-            DataDirectoryLock::marking_nothing(),
-            PendingWrites::new(write_access),
-        )
-    })
-}
-
-/// The app `build` returns, holding back the databases it opens: the returned
-/// sender lands them, as [`land_the_databases`] does.
-fn app_with_the_databases_still_opening_built_by<'a, F>(
-    build: F,
-) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>)
-where
-    F: FnOnce(&eframe::CreationContext<'_>) -> App + 'a,
-{
-    let (sender_tx, sender_rx) = mpsc::channel();
-    let harness = Harness::builder()
-        .with_context_setup(gt_ui_theme::install_app_style)
-        .with_size(egui::vec2(1280.0, 800.0))
-        .with_wait_for_pending_images(false)
-        .build_eframe(|cc| {
-            let mut app = build(cc);
-            sender_tx.send(app.storage_open.take_over_for_test()).ok();
-            app
-        });
-    let databases = sender_rx.recv().expect("the app was built");
-    (harness, databases)
-}
-
-/// Every database under `store`, as a finished open hands them over.
-fn storage_opened_in(
-    store: &gt_store::Store,
-    ctx: &egui::Context,
-    pending_writes: &gt_pending_writes::PendingWrites,
-) -> OpenStorage {
-    OpenStorage {
-        history: crate::app::history_db::HistoryWorker::spawn(
-            RecordingsHandle::Owner(
-                store
-                    .open_recordings()
-                    .expect("open the recordings database"),
-            ),
-            ctx.clone(),
-            pending_writes.clone(),
-        ),
-        history_failure: None,
-        archive: store.open_or_create_archive::<JamStore>().ok(),
-        geomagnetic_indices: store.open_or_create_archive::<SolarStore>().ok(),
-        tec_maps: store.open_or_create_archive::<IonexStore>().ok(),
-        solar_flares: store.open_or_create_archive::<FlareStore>().ok(),
-        unavailable_archives: UnavailableArchives::default(),
-    }
-}
-
-/// Lands `store` behind the app, as the open thread does when it finishes.
-fn land_the_databases(
-    harness: &mut Harness<'_, App>,
-    databases: &mpsc::Sender<OpenStorage>,
-    store: &gt_store::Store,
-) {
-    let pending_writes = harness.state().pending_writes.clone();
-    let opened = storage_opened_in(store, &harness.ctx, &pending_writes);
-    databases.send(opened).expect("the app holds the receiver");
-    harness.step();
-}
-
 /// The app started on `data_directory`, which the caller's own
 /// [`DataDirectoryLock`] holds, with the files a command line named.
 ///
@@ -421,32 +329,7 @@ fn app_waiting_for_the_data_directory<'a>(
         })
 }
 
-/// A recording that segments into two tracks under the default split gap: ten
-/// fixes a second apart, an hour of nothing, then ten more.
-fn two_track_gtd_bytes() -> Vec<u8> {
-    use geotrace_sdk::{Angle, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime};
-
-    let mut recorder = NavFileBuilder::new().open();
-    for fix in 0..20i64 {
-        let seconds = if fix < 10 { fix } else { fix + 3_600 };
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .time(NavFixTime::Receiver(
-                    base_time() + SdkDuration::seconds(seconds),
-                ))
-                .lat(Angle::degrees(51.5 + 0.0002 * fix as f64))
-                .lon(Angle::degrees(-0.1))
-                .heading(Angle::degrees(270.0))
-                .build(),
-        );
-    }
-    let nav_file = recorder.finish().expect("valid nav file");
-    let mut bytes = Vec::new();
-    nav_file.write(&mut bytes).expect("write bytes");
-    bytes
-}
-
-/// The stored track table of [`two_track_gtd_bytes`], both tracks live.
+/// The row bounds match the two-track `.gtd` fixture.
 fn two_live_track_ranges() -> [gt_store::TrackRange; 2] {
     use gt_store::{TrackRange, TrackState};
 
@@ -462,21 +345,6 @@ fn two_live_track_ranges() -> [gt_store::TrackRange; 2] {
             state: TrackState::Live,
         },
     ]
-}
-
-/// Store `bytes` in the history database under `store`, cut into `tracks` and
-/// segmented under `settings`, and return the reference it is stored under.
-fn insert_recording_into(
-    store: &gt_store::Store,
-    bytes: &[u8],
-    tracks: &[gt_store::TrackRange],
-    settings: gt_store::StoredSegmentation,
-) -> gt_store::DatabaseRef {
-    let mut db =
-        Recordings::open_or_create(&store.recordings_path()).expect("open the history database");
-    let meta = gt_store::extract_meta(bytes).expect("the recording has metadata");
-    db.insert("dev", &meta, tracks, settings, bytes)
-        .expect("store the recording")
 }
 
 /// Installs an interference scheduler whose archive holds `days`, and hands

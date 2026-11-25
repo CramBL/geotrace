@@ -9,7 +9,7 @@ use gt_session_bridge::{
     SettingSelection, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_store::{ReadOnlyHistoryDatabase as _, Store};
-use gt_test_utils::HarnessInteraction as _;
+use gt_test_utils::{HarnessInteraction as _, recording_fixtures};
 use gt_types::{FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::MapElementRef;
 
@@ -19,7 +19,7 @@ use crate::app::{App, ui_tests};
 
 #[test]
 fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests() {
-    let mut harness = ui_tests::app_with_recording_bytes(ui_tests::two_track_gtd_bytes());
+    let mut harness = ui_tests::app_with_recording_bytes(recording_fixtures::two_track_gtd_bytes());
     let old_track = session::first_track_reference(&mut harness);
     let job = session::start_query(&mut harness, "points");
     assert!(matches!(
@@ -190,7 +190,7 @@ fn reprocessing_dismisses_a_gui_pin_before_the_track_index_addresses_another_fix
 
 #[test]
 fn a_later_settings_input_takes_effect_on_the_next_apply() {
-    let mut harness = ui_tests::app_with_recording_bytes(ui_tests::two_track_gtd_bytes());
+    let mut harness = ui_tests::app_with_recording_bytes(recording_fixtures::two_track_gtd_bytes());
     let key = self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
@@ -266,7 +266,7 @@ fn applying_processing_requires_nav_points_and_preserves_empty_tracks() {
 
 #[test]
 fn an_apply_without_a_reply_handoff_preserves_loaded_tracks() {
-    let mut harness = ui_tests::app_with_recording_bytes(ui_tests::two_track_gtd_bytes());
+    let mut harness = ui_tests::app_with_recording_bytes(recording_fixtures::two_track_gtd_bytes());
     self::set_track_split_gap(&mut harness, Duration::hours(2));
     let app = harness.state_mut();
     let generation = app.shared.borrow().loaded_files.data_generation();
@@ -324,9 +324,9 @@ fn a_window_close_request_takes_precedence_over_applying_processing() {
 fn applying_processing_to_a_stored_recording_keeps_its_history_track_table() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
-    let bytes = ui_tests::two_track_gtd_bytes();
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    let bytes = recording_fixtures::two_track_gtd_bytes();
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
     harness::drop_file_and_wait_for_load(&mut harness, TestDroppedFile::bytes(bytes, "ride.gtd"));
     let db_ref = harness
         .state()

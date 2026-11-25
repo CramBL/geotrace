@@ -21,7 +21,7 @@ use crate::app::settings_ui::SettingsPage;
 use crate::app::storage::{DatabasesPending, OPENING_DATABASES};
 use crate::app::storage_controls::AUTO_STORE_LABEL;
 use crate::app::test_util;
-use crate::app::test_util::harness::TestDroppedFile;
+use crate::app::test_util::harness::{self, TestDroppedFile};
 use crate::app::ui_tests;
 
 /// The window is painted and takes input from the first frame, with the
@@ -30,7 +30,7 @@ use crate::app::ui_tests;
 fn the_window_takes_input_while_the_databases_open_and_adopts_them_when_they_land() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     harness.step();
 
     assert_eq!(
@@ -45,7 +45,7 @@ fn the_window_takes_input_while_the_databases_open_and_adopts_them_when_they_lan
         "the window took a click while the databases were opening"
     );
 
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     assert_eq!(harness.state().storage_open.databases_pending(), None);
     assert_eq!(
@@ -68,7 +68,7 @@ fn a_file_named_before_the_databases_land_is_loaded_and_stored_once_they_do() {
     let gtd_path = dir.path().join("queued.gtd");
     std::fs::write(&gtd_path, ui_tests::minimal_gtd_bytes()).expect("write the recording");
 
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[gtd_path]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[gtd_path]);
     harness.run_steps(3);
 
     assert!(
@@ -77,7 +77,7 @@ fn a_file_named_before_the_databases_land_is_loaded_and_stored_once_they_do() {
     );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
 
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     let stored = harness
@@ -99,10 +99,10 @@ fn a_recording_loaded_in_a_read_only_session_is_not_stored() {
     let gtd_path = dir.path().join("read-only.gtd");
     std::fs::write(&gtd_path, ui_tests::minimal_gtd_bytes()).expect("write the recording");
     let (mut harness, databases) =
-        ui_tests::app_with_the_databases_still_opening_for(&[gtd_path], WriteAccess::ReadOnly);
+        harness::app_with_the_databases_still_opening_for(&[gtd_path], WriteAccess::ReadOnly);
     harness.run_steps(3);
 
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     let recordings =
@@ -125,7 +125,7 @@ fn a_recording_loaded_in_a_read_only_session_is_not_stored() {
 fn a_file_dropped_before_the_databases_land_loads_once_they_do() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
 
     harness
         .input_mut()
@@ -141,7 +141,7 @@ fn a_file_dropped_before_the_databases_land_loads_once_they_do() {
     );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
 
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     test_util::harness::step_until_a_recording_is_loaded(&mut harness);
 }
@@ -152,7 +152,7 @@ fn a_file_dropped_before_the_databases_land_loads_once_they_do() {
 fn log_text_pasted_before_the_databases_land_loads_once_they_do() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
 
     harness.input_mut().events.push(egui::Event::Paste(
         "2026-01-01 14:02:11 navsyncd: queue empty\n".to_owned(),
@@ -163,7 +163,7 @@ fn log_text_pasted_before_the_databases_land_loads_once_they_do() {
         "the paste loaded before the databases landed"
     );
 
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
 }
@@ -172,7 +172,7 @@ fn log_text_pasted_before_the_databases_land_loads_once_they_do() {
 /// and says so.
 #[test]
 fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
 
     harness
         .input_mut()
@@ -200,10 +200,10 @@ fn the_environment_auto_prune_runs_when_the_archives_land() {
         .expect("the interference archive");
     test_util::day_archive::archive_an_empty_interference_day(&archive, old);
 
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     ui_tests::enable_environment_auto_prune(&mut harness, 12);
 
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     assert!(
         harness.step_until(|harness| !harness.state().environment_prune_running()),
@@ -219,11 +219,11 @@ fn the_environment_auto_prune_runs_when_the_archives_land() {
 fn a_storage_landing_after_the_close_began_installs_no_worker() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     harness.step();
 
     harness.state_mut().begin_shutdown();
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     assert!(
         harness.state().history.path().is_none(),

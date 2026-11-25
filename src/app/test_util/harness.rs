@@ -2,17 +2,21 @@
 //! until a background job has landed.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{AccessKitNode, NodeT as _, Queryable as _};
 use gt_instance_lock::DataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteAccess};
+use gt_store::{FlareStore, IonexStore, JamStore, RecordingsHandle, SolarStore, Store};
 use gt_test_utils::{By, HarnessInteraction as _};
 
+use crate::app::archive_recovery::UnavailableArchives;
+use crate::app::history_db::HistoryWorker;
 use crate::app::query::results::MATCH_LIST_WINDOW_TITLE;
 use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
+use crate::app::storage::OpenStorage;
 use crate::app::{App, StartupOptions, Storage};
 
 mod tests {
@@ -159,6 +163,80 @@ pub fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
         DataDirectoryLock::marking_nothing(),
         PendingWrites::default(),
     )
+}
+
+pub fn app_with_the_databases_still_opening<'a>(
+    paths: &[PathBuf],
+) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
+    app_with_the_databases_still_opening_for(paths, WriteAccess::Owner)
+}
+
+pub fn app_with_the_databases_still_opening_for<'a>(
+    paths: &[PathBuf],
+    write_access: WriteAccess,
+) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
+    let paths = paths.to_vec();
+    app_with_the_databases_still_opening_built_by(move |cc| {
+        transient_app_with_the_instance_lock(
+            cc,
+            &paths,
+            DataDirectoryLock::marking_nothing(),
+            PendingWrites::new(write_access),
+        )
+    })
+}
+
+/// The harness replaces the app's storage channel before its first frame.
+pub fn app_with_the_databases_still_opening_built_by<'a>(
+    build: impl FnOnce(&eframe::CreationContext<'_>) -> App + 'a,
+) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
+    let (sender_tx, sender_rx) = mpsc::channel();
+    let harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_wait_for_pending_images(false)
+        .build_eframe(|cc| {
+            let mut app = build(cc);
+            sender_tx.send(app.storage_open.take_over_for_test()).ok();
+            app
+        });
+    let databases = sender_rx.recv().expect("the app was built");
+    (harness, databases)
+}
+
+pub fn send_open_storage_and_step(
+    harness: &mut Harness<'_, App>,
+    databases: &mpsc::Sender<OpenStorage>,
+    store: &Store,
+) {
+    let pending_writes = harness.state().pending_writes.clone();
+    let opened = storage_opened_in(store, &harness.ctx, &pending_writes);
+    databases.send(opened).expect("the app holds the receiver");
+    harness.step();
+}
+
+pub fn storage_opened_in(
+    store: &Store,
+    ctx: &egui::Context,
+    pending_writes: &PendingWrites,
+) -> OpenStorage {
+    OpenStorage {
+        history: HistoryWorker::spawn(
+            RecordingsHandle::Owner(
+                store
+                    .open_recordings()
+                    .expect("open the recordings database"),
+            ),
+            ctx.clone(),
+            pending_writes.clone(),
+        ),
+        history_failure: None,
+        archive: store.open_or_create_archive::<JamStore>().ok(),
+        geomagnetic_indices: store.open_or_create_archive::<SolarStore>().ok(),
+        tec_maps: store.open_or_create_archive::<IonexStore>().ok(),
+        solar_flares: store.open_or_create_archive::<FlareStore>().ok(),
+        unavailable_archives: UnavailableArchives::default(),
+    }
 }
 
 pub fn step_minimized_logic(harness: &mut Harness<'_, App>) {

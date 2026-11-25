@@ -5,18 +5,40 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use chrono::DateTime;
+use egui_kittest::Harness;
 use gt_pending_writes::PendingWrites;
 use gt_store::{
     DatabaseRef, HistoryAccess, HistoryDatabase as _, ReadOnlyRecordings, RecordingEntry,
-    RecordingUiState, Recordings, RecordingsHandle, StoredFixPlacementRule, StoredRecording,
+    RecordingUiState, Recordings, RecordingsHandle, Store, StoredFixPlacementRule, StoredRecording,
     StoredSegmentation, StoredTrackSnapshot, StoredTrackSplitRule, TrackRange, TrackState,
 };
-use gt_test_utils::SyntheticGtdSpec;
 use gt_test_utils::history_fixtures::StoredTrackTableFixture;
+use gt_test_utils::{SyntheticGtdSpec, recording_fixtures};
+use gt_track_builder::SegmentationConfig;
+use tempfile::TempDir;
 
 use crate::app::App;
 use crate::app::association_batches::AssociationSubmission;
 use crate::app::history_db::{HistoryWorker, OpenedRecording, Response};
+use crate::app::loader;
+use crate::app::test_util::harness;
+
+pub fn app_with_stored_tracks<'a>(
+    tracks: &[TrackRange],
+) -> (Harness<'a, App>, TempDir, DatabaseRef) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = Store::open_in(dir.path());
+    let db_ref = store_recording_with_segmentation(
+        &store.recordings_path(),
+        &recording_fixtures::two_track_gtd_bytes(),
+        tracks,
+        loader::stored_segmentation_from_config(&SegmentationConfig::default()),
+    );
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
+    harness.step();
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
+    (harness, dir, db_ref)
+}
 
 pub fn track_snapshot(path: &Path, recording: &DatabaseRef) -> StoredTrackSnapshot {
     let access = HistoryAccess::lock();
@@ -99,10 +121,19 @@ pub fn segmentation() -> StoredSegmentation {
 }
 
 pub fn store_recording(path: &Path, bytes: &[u8], tracks: &[TrackRange]) -> DatabaseRef {
-    let mut db = Recordings::open_or_create(path).expect("open");
-    let meta = gt_store::extract_meta(bytes).expect("meta");
-    db.insert("dev", &meta, tracks, segmentation(), bytes)
-        .expect("insert")
+    store_recording_with_segmentation(path, bytes, tracks, segmentation())
+}
+
+pub fn store_recording_with_segmentation(
+    path: &Path,
+    bytes: &[u8],
+    tracks: &[TrackRange],
+    segmentation: StoredSegmentation,
+) -> DatabaseRef {
+    let mut db = Recordings::open_or_create(path).expect("open the history database");
+    let meta = gt_store::extract_meta(bytes).expect("the recording has metadata");
+    db.insert("dev", &meta, tracks, segmentation, bytes)
+        .expect("store the recording")
 }
 
 /// Store `bytes` under `identity` with a track table of one live track
