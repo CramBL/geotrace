@@ -98,8 +98,9 @@ fn the_filtered_range_agrees_with_the_point_predicate_on_time_ordered_fixes() {
 fn the_enclosing_range_includes_the_gap_between_accepted_fix_runs() {
     let track = track_over(fixes_at(&[at(4), at(10), at(1)]));
     let filter = window(None, Some(at(5)));
-    let runs =
-        gt_filter::time_filtered_fix_ranges(&track, 0..track.points.len(), filter.time_window());
+    let runs = filter
+        .time_window()
+        .fix_ranges(&track, 0..track.points.len());
 
     assert_eq!(gt_filter::time_filtered_range(&track.points, &filter), 0..3);
     assert_eq!(runs.collect::<Vec<_>>(), [0..1, 2..3]);
@@ -118,7 +119,7 @@ fn an_accepted_fix_run_crosses_adjacent_point_chunks() {
     let boundary = second.slots().start;
     assert_eq!(first.slots().end, boundary);
     let window = TimeWindow::Until(track.points[boundary + 1].tpv.time().utc());
-    let mut runs = gt_filter::time_filtered_fix_ranges(track, boundary - 2..boundary + 3, window);
+    let mut runs = window.fix_ranges(track, boundary - 2..boundary + 3);
 
     assert_eq!(runs.next(), Some(boundary - 2..boundary + 2));
     assert_eq!(runs.next(), None);
@@ -130,10 +131,7 @@ fn an_accepted_fix_run_crosses_adjacent_point_chunks() {
 fn an_invalid_selection_has_no_accepted_fix_runs(#[case] selection: Range<usize>) {
     let track = track_over(fixes_at(&[at(0), at(1), at(2)]));
 
-    assert_eq!(
-        gt_filter::time_filtered_fix_ranges(&track, selection, TimeWindow::All).next(),
-        None
-    );
+    assert_eq!(TimeWindow::All.fix_ranges(&track, selection).next(), None);
 }
 
 #[test]
