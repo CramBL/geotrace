@@ -3,11 +3,13 @@ use std::sync::mpsc as startup;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use futures_util::StreamExt as _;
+use futures_util::stream::FuturesUnordered;
 use tokio::io::AsyncReadExt as _;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use crate::endpoint::{BoundListener, Endpoint};
+use crate::endpoint::{BoundListener, Connection, Endpoint};
 use crate::framing::{Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 pub use crate::history::{
     GetHistoryOpenStatus, HistoryCursor, HistoryDates, HistoryListing, HistoryOpenId,
@@ -89,9 +91,9 @@ impl Server {
                                 tokio::select! {
                                     biased;
                                     _ = stop_rx => {}
-                                    result = self::accept_requests(listener, &pending_tx, wake) => {
+                                    result = self::accept_connections(listener, &pending_tx, &wake) => {
                                         if let Err(error) = result {
-                                        log::warn!("Local session bridge stopped ({error})");
+                                            log::warn!("Local session bridge stopped ({error})");
                                         }
                                     }
                                 }
@@ -160,29 +162,46 @@ async fn request_at(endpoint: &Endpoint, request: &Request) -> io::Result<Reply>
     .map_err(|error| io::Error::new(ErrorKind::TimedOut, error))?
 }
 
-async fn accept_requests(
+async fn accept_connections(
     listener: BoundListener,
     pending: &mpsc::Sender<Pending>,
-    wake: impl Fn(),
+    wake: &impl Fn(),
 ) -> io::Result<()> {
+    let accept = listener.accept();
+    tokio::pin!(accept);
+    let mut exchanges = FuturesUnordered::new();
     loop {
-        if let Some(mut connection) = listener.accept().await? {
-            match tokio::time::timeout(
-                EXCHANGE_TIMEOUT,
-                self::exchange(&mut connection.0, pending, &wake),
-            )
-            .await
-            {
-                Ok(Ok(())) | Err(_) => {}
-                Ok(Err(error)) => match error.kind() {
-                    ErrorKind::BrokenPipe
-                    | ErrorKind::ConnectionAborted
-                    | ErrorKind::ConnectionReset
-                    | ErrorKind::NotConnected
-                    | ErrorKind::UnexpectedEof => {}
-                    kind => log::warn!("Local session bridge exchange failed ({kind:?})"),
-                },
+        tokio::select! {
+            biased;
+            Some(()) = exchanges.next() => {}
+            accepted = &mut accept => {
+                accept.set(listener.accept());
+                let Some(connection) = accepted? else {
+                    continue;
+                };
+                if exchanges.len() == MAX_ACTIVE_CONNECTIONS {
+                    continue;
+                }
+                exchanges.push(self::serve_connection(connection, pending, wake));
             }
+        }
+    }
+}
+
+async fn serve_connection(
+    mut connection: Connection,
+    pending: &mpsc::Sender<Pending>,
+    wake: &impl Fn(),
+) {
+    let exchange = self::exchange(&mut connection.0, pending, wake);
+    if let Ok(Err(error)) = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange).await {
+        match error.kind() {
+            ErrorKind::BrokenPipe
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::ConnectionReset
+            | ErrorKind::NotConnected
+            | ErrorKind::UnexpectedEof => {}
+            kind => log::warn!("Local session bridge exchange failed ({kind:?})"),
         }
     }
 }
@@ -244,6 +263,7 @@ struct Pending {
 }
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_ACTIVE_CONNECTIONS: usize = 8;
 
 #[cfg(test)]
 mod tests;

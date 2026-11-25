@@ -15,6 +15,7 @@ schema = ["dep:schemars"]
 
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-query = { path = "../gt-query" }
