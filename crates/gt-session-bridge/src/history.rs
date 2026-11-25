@@ -6,7 +6,7 @@ use std::path::Path;
 use chrono::{NaiveDate, NaiveTime};
 use gt_history_types::{DatabaseRef, NavPointTimeRange, RecordingEntry};
 use serde::{Deserialize, Serialize};
-use uuid::{Builder, Uuid, Version};
+use uuid::{Builder, Uuid};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::protocol::ErrorCode;
@@ -67,15 +67,9 @@ impl HistoryRecordingId {
         let mut hash = Xxh3::new();
         hash.update(&(path_bytes.len() as u64).to_le_bytes());
         hash.update(path_bytes);
-        let has_group_uuid = reference
-            .group_name
-            .rsplit_once('_')
-            .is_some_and(|(_, suffix)| {
-                Uuid::parse_str(suffix).is_ok_and(|id| id.get_version() == Some(Version::Random))
-            });
         // An interrupted identity rename can leave a copy of a group under both identities.
-        let include_identity =
-            !has_group_uuid || recordings.repeated_groups.contains(&reference.group_name);
+        let include_identity = !reference.has_generated_group_id()
+            || recordings.repeated_groups.contains(&reference.group_name);
         hash.update(&[u8::from(include_identity)]);
         if include_identity {
             hash.update(&(reference.identity.len() as u64).to_le_bytes());

@@ -7,7 +7,7 @@ use std::{
 
 use chrono::{DateTime, Duration, Utc};
 use egui::Context;
-use gt_loaded_files::FileHistory;
+use gt_loaded_files::{FileHistory, RecordingLoadOrigin};
 use gt_loader::StoredGtdBytes;
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog, YearResolution};
@@ -1255,18 +1255,22 @@ impl ParsedRecording<'_> {
             }
         };
         log::debug!("Parsed '{filename}': {} track(s)", file.tracks.len());
-        // Store first (de-duplicates against the existing recording, keeping
-        // its stored track table) while the freshly segmented tracks are still
-        // in stored order.
-        let insertion = match &open {
+        let load_origin = match &open {
             Some(
                 HistoryOpen::Recalculate { .. }
                 | HistoryOpen::ApplyShelved {
                     track_table: OpenTrackTable::Stored(_),
                     ..
                 },
-            ) => HistoryInsertOutcome::Skipped,
-            _ => HistoryInsert {
+            ) => RecordingLoadOrigin::History,
+            _ => RecordingLoadOrigin::Import,
+        };
+        // Store first (de-duplicates against the existing recording, keeping
+        // its stored track table) while the freshly segmented tracks are still
+        // in stored order.
+        let insertion = match load_origin {
+            RecordingLoadOrigin::History => HistoryInsertOutcome::Skipped,
+            RecordingLoadOrigin::Import => HistoryInsert {
                 db_path,
                 file: &file,
                 identity: &loaded.identity,
@@ -1349,6 +1353,7 @@ impl ParsedRecording<'_> {
                 db_ref,
                 shelved_tracks,
             )
+            .with_load_origin(load_origin)
             .with_track_snapshot(track_snapshot)
         });
         LoadedRecordingResult {

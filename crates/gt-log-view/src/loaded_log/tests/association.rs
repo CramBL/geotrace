@@ -4,7 +4,6 @@ use gt_loaded_files::LoadedFiles;
 use gt_logfile::{ClockEligibility, YearResolution};
 use gt_types::{AssociationWindow, TimeRange};
 
-use crate::anchor::RecordingKey;
 use crate::loaded_log::tests::fixtures;
 use crate::loaded_log::{LoadedLog, LoadedLogs};
 use crate::test_util;
@@ -136,17 +135,15 @@ fn unloading_the_anchored_recording_leaves_the_log_anchored_without_positions() 
     assert_eq!(log.entry_placement(0), None);
 }
 
-/// A recording in history is the same recording every time it is opened,
-/// however many session identities it goes through.
 #[test]
-fn a_log_anchored_to_a_stored_recording_associates_again_when_it_is_opened_again() {
+fn a_log_stays_unassociated_with_an_unverified_history_copy() {
     let db_ref = test_util::stored_recording_ref();
     let mut files = LoadedFiles::new();
     files.push(
         test_util::recording_at(55.0, 10),
         test_util::stored_in_history(&db_ref),
     );
-    let first_load = test_util::id_of(&files, 0);
+    let anchor = test_util::key_of(&files, 0);
     let mut log = test_util::log_of(10);
     test_util::anchor_to(&mut log, &files, 0);
     assert_eq!(log.associated_entry_count(), 10);
@@ -156,25 +153,14 @@ fn a_log_anchored_to_a_stored_recording_associates_again_when_it_is_opened_again
     assert_eq!(log.associated_entry_count(), 0);
 
     files.push(
-        test_util::recording_at(55.0, 10),
+        test_util::recording_at(60.0, 10),
         test_util::stored_in_history(&db_ref),
     );
     log.reassociate(&files.view());
 
-    assert_eq!(
-        log.anchor_key().as_ref(),
-        Some(&RecordingKey::Stored(db_ref))
-    );
-    assert_eq!(log.associated_entry_count(), 10);
-    assert_eq!(
-        log.associated_recording(),
-        Some(test_util::id_of(&files, 0))
-    );
-    assert_ne!(
-        log.associated_recording(),
-        Some(first_load),
-        "the recording came back under a session identity of its own"
-    );
+    assert_eq!(log.anchor_key(), Some(anchor));
+    assert_eq!(log.associated_recording(), None);
+    assert_eq!(log.entry_placement(0), None);
 }
 
 /// The recording an attached log is stored with is the recording it takes
@@ -195,7 +181,7 @@ fn an_attached_log_keeps_its_anchor() {
 
     assert_eq!(log.anchor_key().as_ref(), anchored.as_ref());
 
-    log.forget_attachment();
+    log.forget_attachment(&files.view());
     log.remove_anchor();
 
     assert_eq!(log.anchor_key(), None);

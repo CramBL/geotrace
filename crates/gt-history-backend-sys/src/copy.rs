@@ -1309,7 +1309,10 @@ pub(crate) fn load_recording(
             .ok()
             .and_then(|value| RecordingDebugTag::from_attribute_value(Some(value)));
 
-        let out = hdf5::File::create(tmp.path())?;
+        // The log viewer compares GTD bytes from separate History reads.
+        let out = hdf5::File::with_options()
+            .with_fcpl(|properties| properties.obj_track_times(false))
+            .create(tmp.path())?;
         let root = out.group("/")?;
 
         // Copy the data groups/datasets back to the root (the track table is

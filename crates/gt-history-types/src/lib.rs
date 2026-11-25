@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use thiserror::Error;
+use uuid::{Uuid, Version};
 
 pub use log_attachment::{
     InvalidStoredLogFilterStack, LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment,
@@ -215,6 +216,14 @@ impl<'a> TrackStateColumn<'a> {
 pub struct DatabaseRef {
     pub identity: String,
     pub group_name: String,
+}
+
+impl DatabaseRef {
+    pub fn has_generated_group_id(&self) -> bool {
+        self.group_name.rsplit_once('_').is_some_and(|(_, suffix)| {
+            Uuid::parse_str(suffix).is_ok_and(|id| id.get_version() == Some(Version::Random))
+        })
+    }
 }
 
 pub enum RecordingInsert {

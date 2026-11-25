@@ -25,7 +25,7 @@ pub struct RecordingAssociationIndex<'a> {
 
 impl<'a> RecordingAssociationIndex<'a> {
     pub fn from_recording(recording: LoadedFileEntry<'a>) -> Self {
-        let mut fixes = recording.addressed_fixes();
+        let mut fixes: Vec<_> = recording.addressed_fixes().collect();
         fixes.sort_by_key(|fix| fix.placed.fix.tpv.time().utc());
         Self { fixes }
     }
@@ -190,7 +190,7 @@ mod tests {
         ];
         let files = test_util::loaded_recording(tracks);
         let recording = files.view().get(0).expect("loaded fixture");
-        let fixes = recording.addressed_fixes();
+        let fixes: Vec<_> = recording.addressed_fixes().collect();
         let index = RecordingAssociationIndex::from_recording(recording);
         let expected = expected_fix_index.map(|index| {
             let fix = fixes.get(index).expect("expected fixture fix exists");
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(
             recording
                 .addressed_fixes()
-                .first()
+                .next()
                 .expect("first stored fix")
                 .placed
                 .fix
@@ -428,7 +428,7 @@ mod tests {
         ) {
             let files = test_util::loaded_recording(vec![track_of(fix_count)]);
             let recording = files.view().get(0).expect("loaded fixture");
-            let fixes = recording.addressed_fixes();
+            let fixes: Vec<_> = recording.addressed_fixes().collect();
             let index = RecordingAssociationIndex::from_recording(recording);
             let window = Duration::seconds(window_secs);
             let timestamps: Vec<DateTime<Utc>> = entry_offsets_secs

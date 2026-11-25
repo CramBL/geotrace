@@ -2697,7 +2697,9 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
     assert_ne!(loose_id, first_id);
     assert_ne!(loose_id, second_id);
 
-    harness.state_mut().logs.forget_attachment(&second_ref);
+    let app = harness.state_mut();
+    app.logs
+        .forget_attachment(&second_ref, &app.shared.borrow().loaded_files.view());
     harness.state_mut().toasts.dismiss_all_toasts();
     open_the_stored_log(&harness, &second_recording, second_attachment);
     assert!(harness.step_until(|harness| harness.state().logs.any_loaded_log_holds(&second_ref)));

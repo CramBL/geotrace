@@ -361,7 +361,8 @@ impl App {
         match result {
             Ok(()) => {
                 self.log_attachments.remove_attachment(attachment);
-                self.logs.forget_attachment(attachment);
+                self.logs
+                    .forget_attachment(attachment, &self.shared.borrow().loaded_files.view());
                 self.toasts
                     .info(format!("Removed {name} from recording history"));
             }

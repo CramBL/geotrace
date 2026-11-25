@@ -331,7 +331,7 @@ fn detached_attachment_can_save_to_another_recording() {
             &files.view(),
         )
         .id();
-    logs.forget_attachment(&attachment);
+    logs.forget_attachment(&attachment, &files.view());
     let request = logs
         .prepare_save(id, target, &files.view(), WriteAccess::Owner)
         .unwrap();

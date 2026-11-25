@@ -37,6 +37,8 @@ pub(super) enum LogGroupHeading {
     /// The logs anchored to no recording.
     NotAnchored,
 
+    PositionSourceSelection(String),
+
     /// A recording that is not loaded, under the display form of its identity
     /// in the history database, with the logs anchored to it.
     RecordingNotLoaded(String),
@@ -47,6 +49,9 @@ impl LogGroupHeading {
     pub(super) fn text(&self) -> String {
         match self {
             Self::LoadedRecording(recording) => recording.clone(),
+            Self::PositionSourceSelection(recording) => {
+                format!("{recording} (choose position source)")
+            }
             Self::RecordingNotLoaded(recording) => {
                 format!("{recording} ({})", super::NOT_LOADED_MARKER)
             }
@@ -116,9 +121,10 @@ pub(super) fn group_logs_by_recording(
             .get(FileIdx::new(index))
             .unwrap_or(EM_DASH)
             .to_owned();
-        let key = RecordingKey::of_loaded_recording(entry);
-        let anchored: Vec<(LoadedLogId, &LoadedLog)> =
-            logs.anchored_to(std::slice::from_ref(&key)).collect();
+        let anchored: Vec<(LoadedLogId, &LoadedLog)> = logs
+            .iter_with_ids()
+            .filter(|(_, log)| log.associated_recording() == Some(entry.id()))
+            .collect();
         grouped.extend(anchored.iter().map(|(id, _)| *id));
         let mut rows: Vec<LogRow> = anchored
             .into_iter()
@@ -147,31 +153,39 @@ pub(super) fn group_logs_by_recording(
         }
     }
 
-    let mut not_loaded: Vec<(RecordingKey, String, Vec<LogRow>)> = Vec::new();
+    let mut unresolved: Vec<(RecordingKey, LogGroup)> = Vec::new();
     let mut anchorless: Vec<LogRow> = Vec::new();
     for (id, log) in logs.iter_with_ids().filter(|(id, _)| !grouped.contains(id)) {
         let Some(key) = log.anchor_key() else {
             anchorless.push(LogRow::of_loaded_log(id, log));
             continue;
         };
-        let recording = key.database_ref().map_or(EM_DASH, |db_ref| {
-            gt_loaded_files::display_identity(&db_ref.identity).0
-        });
         let row = LogRow::of_loaded_log(id, log);
-        match not_loaded
+        match unresolved
             .iter_mut()
             .find(|(anchored, ..)| anchored == &key)
         {
-            Some((.., rows)) => rows.push(row),
-            None => not_loaded.push((key.clone(), recording.to_owned(), vec![row])),
+            Some((_, group)) => group.rows.push(row),
+            None => {
+                let recording = key.database_ref().map_or(EM_DASH, |db_ref| {
+                    gt_loaded_files::display_identity(&db_ref.identity).0
+                });
+                let heading = if log.position_source_requires_selection() {
+                    LogGroupHeading::PositionSourceSelection(recording.to_owned())
+                } else {
+                    LogGroupHeading::RecordingNotLoaded(recording.to_owned())
+                };
+                unresolved.push((
+                    key,
+                    LogGroup {
+                        heading,
+                        rows: vec![row],
+                    },
+                ));
+            }
         }
     }
-    for (_, recording, rows) in not_loaded {
-        groups.push(LogGroup {
-            heading: LogGroupHeading::RecordingNotLoaded(recording),
-            rows,
-        });
-    }
+    groups.extend(unresolved.into_iter().map(|(_, group)| group));
     if !anchorless.is_empty() {
         groups.push(LogGroup {
             heading: LogGroupHeading::NotAnchored,

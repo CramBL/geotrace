@@ -675,16 +675,26 @@ impl LogViewerWindow {
 
             if let Some(db_ref) = unresolved_anchor {
                 let recording = gt_loaded_files::display_identity(&db_ref.identity).0;
-                ui.label(
-                    RichText::new(format!("Positions from {recording} ({NOT_LOADED_MARKER})"))
-                        .weak(),
+                let needs_selection = log.position_source_requires_selection();
+                let status = if needs_selection {
+                    CHOOSE_POSITION_SOURCE.to_owned()
+                } else {
+                    format!("Positions from {recording} ({NOT_LOADED_MARKER})")
+                };
+                ui.label(RichText::new(status).weak());
+                let load = ui.add_enabled(
+                    history_available && !needs_selection,
+                    Button::new(LOAD_RECORDING_LABEL),
                 );
-                let load = ui.add_enabled(history_available, Button::new(LOAD_RECORDING_LABEL));
                 if load.clicked() {
                     requests.open_recording = Some(db_ref.clone());
                 }
                 load.on_hover_text(LOAD_RECORDING_HOVER)
-                    .on_disabled_hover_text(LOAD_RECORDING_NO_DATABASE_HOVER);
+                    .on_disabled_hover_text(if needs_selection {
+                        CHOOSE_POSITION_SOURCE
+                    } else {
+                        LOAD_RECORDING_NO_DATABASE_HOVER
+                    });
             }
 
             ui.separator();
@@ -880,6 +890,8 @@ const NOTICE_DISMISS_HOVER: &str = "Dismiss this warning";
 pub(super) const NOT_LOADED_MARKER: &str = "not loaded";
 
 pub(in crate::app) const LOAD_RECORDING_LABEL: &str = "Load recording";
+
+const CHOOSE_POSITION_SOURCE: &str = "Choose the source in Positions from";
 
 const LOAD_RECORDING_HOVER: &str = "Open the position source from recording history";
 

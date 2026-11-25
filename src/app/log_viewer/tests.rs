@@ -9,7 +9,7 @@ use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
-use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
+use gt_loaded_files::{FileHistory, LoadedFiles, RecordingLoadOrigin, RecordingNames};
 use gt_log_view::{
     FilterEffect, FilterGroupId, FilterGroupOperator, FilterScope, LayerColorSlot, LiveFilterDraft,
     LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments,
@@ -2591,6 +2591,64 @@ fn the_footer_offers_the_recording_of_a_log_that_is_not_loaded() {
     assert_eq!(
         harness.state().requests.open_recording,
         Some(stored_recording_ref())
+    );
+}
+
+#[test]
+fn the_footer_offers_explicit_selection_for_a_loaded_legacy_source() {
+    let mut state = viewer_state(Vec::new(), &[]);
+    let stored = stored_attachment();
+    load_the_stored_log(&mut state, &stored);
+    state.logs.forget_attachment(
+        &LogAttachmentRef {
+            recording: stored_recording_ref(),
+            id: stored.id,
+        },
+        &state.recordings.view(),
+    );
+    state.recordings.push(
+        recording("walk.gtd", 55.0),
+        stored_in_history().with_load_origin(RecordingLoadOrigin::History),
+    );
+    state.logs.reassociate_all(&state.recordings.view());
+    let mut harness = harness_from(state);
+
+    harness.get_by_label(super::CHOOSE_POSITION_SOURCE);
+    assert_eq!(
+        listed_rows(harness.state()),
+        [(
+            "nav-devkit-mk2 (choose position source)".to_owned(),
+            vec!["navsyncd.log".to_owned()]
+        )]
+    );
+    let load = harness.get_by_label(super::LOAD_RECORDING_LABEL);
+    assert!(load.accesskit_node().is_disabled());
+    load.click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().requests.open_recording, None);
+
+    harness
+        .get(By::new().role(Role::ComboBox).value(EM_DASH))
+        .click();
+    harness.run_steps(2);
+    harness
+        .get_by_role(Role::ListBox)
+        .get_by_label("walk.gtd")
+        .click();
+    harness.run_steps(2);
+    let state = harness.state();
+    let selected = state
+        .recordings
+        .view()
+        .get(0)
+        .expect("loaded recording")
+        .id();
+    assert_eq!(
+        state
+            .shown_log()
+            .expect("detached log")
+            .associated_recording(),
+        Some(selected)
     );
 }
 

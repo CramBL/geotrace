@@ -10,7 +10,7 @@
 //! filter stack: the live filter the user is typing, and the chips added from
 //! it.
 
-pub use anchor::RecordingKey;
+pub use anchor::{LoadedHistoryAnchor, RecordingKey};
 pub use association::{AssociationCandidate, AssociationCandidates};
 pub use attachment::{
     LogAttachmentRef, SessionLogAttachments, stored_year_resolution, year_resolution_of_stored,
