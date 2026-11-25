@@ -1,8 +1,8 @@
 use gt_loaded_files::{LoadedFilesView, RecordingData};
 use gt_query_run::RunResults;
 use gt_session_bridge::{
-    ApplyProcessing, ErrorCode, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation,
-    QueryResults, Reply, Request, SessionRequest, SettingKey,
+    ApplyProcessing, ErrorCode, Inspection, InspectionRequest, QueryJobId, QueryJobState,
+    QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest, SettingKey,
 };
 use gt_types::Generation;
 use uuid::Uuid;
@@ -336,16 +336,10 @@ impl App {
 
     fn execute_session_request(
         &mut self,
-        request: SessionRequest,
+        SessionRequest { request, session }: SessionRequest,
         staged: &mut StagedSessionChanges,
     ) -> Reply {
-        if let Request::ListHistoryRecordings(args) = request.request {
-            return self
-                .list_history_recordings(request.session, args)
-                .unwrap_or_else(Reply::from);
-        }
-        let mut queries = std::mem::take(&mut self.session_query);
-        let result = match request.request {
+        match request {
             Request::ApplyProcessing(ApplyProcessing {}) => {
                 if self.shutdown_requested() {
                     Err(ErrorCode::ShuttingDown)
@@ -356,41 +350,59 @@ impl App {
                     Ok(Reply::ProcessingQueued)
                 }
             }
-            Request::CancelQuery(args) => queries.job_mut(request.session, args.job).map(|job| {
+            Request::CancelQuery(args) => self.execute_with_session_query(|app, queries| {
+                let job = queries.job_mut(session, args.job)?;
                 job.cancel();
-                job.refresh(self);
-                job.reply()
+                job.refresh(app);
+                Ok(job.reply())
             }),
+            Request::CheckQuery(args) => {
+                self.inspect_session_request(session, InspectionRequest::CheckQuery(args))
+            }
             Request::DescribeSetting(args) => Ok(Reply::Setting {
                 setting: self.describe_setting(args.key),
             }),
-            Request::GetHistoryOpenStatus(args) => self.history_open_status(request.session, args),
-            Request::GetQueryResults(args) => queries
-                .results(self, request.session, args.job)
-                .and_then(|results| {
-                    QueryResults::project(results, self.shared.borrow().loaded_files.view(), args)
-                        .map(|results| Reply::QueryResults { results })
-                }),
-            Request::GetQueryStatus(args) => {
-                queries.job_mut(request.session, args.job).map(|job| {
-                    job.refresh(self);
-                    job.reply()
-                })
+            Request::GetHistoryOpenStatus(args) => self.history_open_status(session, args),
+            Request::GetQueryResults(args) => self.execute_with_session_query(|app, queries| {
+                let results = queries.results(app, session, args.job)?;
+                QueryResults::project(results, app.shared.borrow().loaded_files.view(), args)
+                    .map(|results| Reply::QueryResults { results })
+            }),
+            Request::GetQueryStatus(args) => self.execute_with_session_query(|app, queries| {
+                let job = queries.job_mut(session, args.job)?;
+                job.refresh(app);
+                Ok(job.reply())
+            }),
+            Request::GetRangeDetails(args) => {
+                self.inspect_session_request(session, InspectionRequest::GetRangeDetails(args))
+            }
+            Request::GetRecording(args) => {
+                self.inspect_session_request(session, InspectionRequest::GetRecording(args))
             }
             Request::GetSettings => Ok(Reply::Settings {
                 settings: self.get_settings(),
             }),
+            Request::GetTrack(args) => {
+                self.inspect_session_request(session, InspectionRequest::GetTrack(args))
+            }
+            Request::ListHistoryRecordings(args) => self.list_history_recordings(session, args),
+            Request::ListMetrics(args) => {
+                self.inspect_session_request(session, InspectionRequest::ListMetrics(args))
+            }
+            Request::ListRecordings(args) => {
+                self.inspect_session_request(session, InspectionRequest::ListRecordings(args))
+            }
             Request::OpenHistoryRecording(args) => {
-                self.prepare_history_open(request.session, args, &mut staged.history_open)
+                self.prepare_history_open(session, args, &mut staged.history_open)
             }
             Request::OpenPoint(args) => self
-                .session_open_point(request.session, args)
+                .session_open_point(session, args)
                 .map(|presentation| staged.queue_map(presentation)),
             Request::OpenQuery(args) => Ok(staged.queue_query_draft(args.text)),
             Request::OpenSetting(args) => Ok(staged.queue_setting(args.key)),
-            Request::RunQuery(args) => queries.submit(
+            Request::RunQuery(args) => self.session_query.submit(
                 self.shared.borrow().loaded_files.view(),
-                request.session,
+                session,
                 args.text,
                 &mut staged.job,
             ),
@@ -400,18 +412,39 @@ impl App {
                     Reply::Setting { setting }
                 })
             }
-            Request::ShowOnMap(args) => self
-                .session_show_on_map(&mut queries, request.session, args)
-                .map(|presentation| staged.queue_map(presentation)),
-            Request::ShowOnPlot(args) => self
-                .session_show_on_plot(&mut queries, request.session, args)
-                .map(|presentation| staged.queue_plot(presentation)),
-            _ => {
-                let shared = self.shared.borrow();
-                Ok(request.inspect(shared.loaded_files.view(), &shared.recording_name_template))
-            }
-        };
+            Request::ShowOnMap(args) => self.execute_with_session_query(|app, queries| {
+                app.session_show_on_map(queries, session, args)
+                    .map(|presentation| staged.queue_map(presentation))
+            }),
+            Request::ShowOnPlot(args) => self.execute_with_session_query(|app, queries| {
+                app.session_show_on_plot(queries, session, args)
+                    .map(|presentation| staged.queue_plot(presentation))
+            }),
+        }
+        .unwrap_or_else(Reply::from)
+    }
+
+    fn execute_with_session_query(
+        &mut self,
+        execute: impl FnOnce(&mut Self, &mut SessionQuery) -> Result<Reply, ErrorCode>,
+    ) -> Result<Reply, ErrorCode> {
+        let mut queries = std::mem::take(&mut self.session_query);
+        let result = execute(self, &mut queries);
         self.session_query = queries;
-        result.unwrap_or_else(Reply::from)
+        result
+    }
+
+    fn inspect_session_request(
+        &self,
+        session: Uuid,
+        request: InspectionRequest,
+    ) -> Result<Reply, ErrorCode> {
+        let shared = self.shared.borrow();
+        Inspection::new(
+            shared.loaded_files.view(),
+            &shared.recording_name_template,
+            session,
+        )
+        .execute(request)
     }
 }

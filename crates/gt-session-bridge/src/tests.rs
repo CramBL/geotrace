@@ -18,11 +18,11 @@ use uuid::Uuid;
 
 use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
-use super::inspection::Inspection;
 use super::{
-    ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Pending, QueryText, QueryValidation,
-    Recording, RecordingReference, Recordings, Reply, Request, Server,
+    ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, Inspection,
+    InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE,
+    Pending, QueryText, QueryValidation, Recording, RecordingReference, Recordings, Reply, Request,
+    Server,
 };
 
 struct TestEndpoint {
@@ -70,7 +70,14 @@ async fn local_request_dispatches_on_the_calling_thread() {
                 .unwrap(),
             Some(())
         );
-        server.dispatch(|request| request.inspect(files.view(), "{title} ({filename})"));
+        server.dispatch(|request| {
+            let Request::ListRecordings(args) = request.request else {
+                panic!("expected a recording list request");
+            };
+            Inspection::new(files.view(), "{title} ({filename})", request.session)
+                .execute(InspectionRequest::ListRecordings(args))
+                .unwrap_or_else(Reply::from)
+        });
     });
     assert_eq!(
         reply.unwrap(),
@@ -109,19 +116,16 @@ fn dispatcher_reports_a_reply_receiver_closed_during_execution() {
     };
     assert!(!server.dispatch(|request| {
         drop(receiver);
-        request.inspect(LoadedFiles::new().view(), "{filename}")
+        assert_eq!(request.request, REQUEST);
+        Reply::from(ErrorCode::InvalidRequest)
     }));
 }
 
 #[test]
 fn metric_definitions_are_listed_without_recordings() {
     let files = LoadedFiles::new();
-    let view = Inspection {
-        files: files.view(),
-        name_template: "{filename}",
-        session: Uuid::nil(),
-    };
-    let Reply::Metrics { page } = view.execute(Request::ListMetrics(ListMetrics {
+    let view = Inspection::new(files.view(), "{filename}", Uuid::nil());
+    let Ok(Reply::Metrics { page }) = view.execute(InspectionRequest::ListMetrics(ListMetrics {
         channel_start: None,
         channel_limit: None,
     })) else {
@@ -192,16 +196,12 @@ fn metric_discovery_pages_channel_metadata_and_conflicts() {
             FileHistory::None,
         );
     }
-    let view = Inspection {
-        files: files.view(),
-        name_template: "{filename}",
-        session: Uuid::nil(),
-    };
+    let view = Inspection::new(files.view(), "{filename}", Uuid::nil());
     let mut args = ListMetrics {
         channel_start: None,
         channel_limit: Some(NonZeroUsize::MIN),
     };
-    let Reply::Metrics { page } = view.execute(Request::ListMetrics(args)) else {
+    let Ok(Reply::Metrics { page }) = view.execute(InspectionRequest::ListMetrics(args)) else {
         panic!("expected first channel page");
     };
     assert_eq!(
@@ -212,7 +212,7 @@ fn metric_discovery_pages_channel_metadata_and_conflicts() {
     );
     args.channel_start = page.next_channel_start;
     assert_eq!(args.channel_start, Some(1));
-    let Reply::Metrics { page } = view.execute(Request::ListMetrics(args)) else {
+    let Ok(Reply::Metrics { page }) = view.execute(InspectionRequest::ListMetrics(args)) else {
         panic!("expected next channel page");
     };
     let [ChannelEntry::Defined(accel)] = page.channels.as_slice() else {
@@ -245,7 +245,7 @@ fn metric_discovery_pages_channel_metadata_and_conflicts() {
     assert_eq!(accel.conflict_count, 2);
     args.channel_start = page.next_channel_start;
     assert_eq!(args.channel_start, Some(2));
-    let Reply::Metrics { page } = view.execute(Request::ListMetrics(args)) else {
+    let Ok(Reply::Metrics { page }) = view.execute(InspectionRequest::ListMetrics(args)) else {
         panic!("expected last channel page");
     };
     let [ChannelEntry::Defined(dotted_name)] = page.channels.as_slice() else {
@@ -272,21 +272,18 @@ fn inspection_pages_tracks_and_rejects_old_session_and_track_references() {
         after: None,
         limit: Some(NonZeroUsize::MAX),
     };
-    let view = Inspection {
-        files: files.view(),
-        name_template: "{filename}",
-        session: id.session,
-    };
-    let Reply::Recording { details } = view.execute(Request::GetRecording(args)) else {
+    let view = Inspection::new(files.view(), "{filename}", id.session);
+    let Ok(Reply::Recording { details }) = view.execute(InspectionRequest::GetRecording(args))
+    else {
         panic!("expected recording");
     };
     assert_eq!(details.recording.id, id);
     assert_eq!(details.tracks.len(), MAX_TRACKS_PER_PAGE);
     let track = *details.tracks.first().unwrap();
     let get_track = GetTrack { track };
-    let Reply::Track {
+    let Ok(Reply::Track {
         details: track_details,
-    } = view.execute(Request::GetTrack(get_track))
+    }) = view.execute(InspectionRequest::GetTrack(get_track))
     else {
         panic!("expected track");
     };
@@ -297,34 +294,29 @@ fn inspection_pages_tracks_and_rejects_old_session_and_track_references() {
     assert_eq!(track_details.fix_loss_count, Some(1));
     assert!(track_details.map_bounds.is_some());
     args.after = details.next_after;
-    let Reply::Recording { details: last } = view.execute(Request::GetRecording(args)) else {
+    let Ok(Reply::Recording { details: last }) =
+        view.execute(InspectionRequest::GetRecording(args))
+    else {
         panic!("expected next page");
     };
     assert_eq!(last.tracks.first().unwrap().index, MAX_TRACKS_PER_PAGE);
     assert_eq!(last.next_after, None);
 
-    let restarted = Inspection {
-        session: Uuid::from_u128(1),
-        ..view
-    };
+    let restarted = Inspection::new(files.view(), "{filename}", Uuid::from_u128(1));
     assert_eq!(
-        restarted.execute(Request::GetRecording(args)),
-        ErrorCode::StaleSession.into()
+        restarted.execute(InspectionRequest::GetRecording(args)),
+        Err(ErrorCode::StaleSession)
     );
-    let cursor = Request::ListRecordings(ListRecordings {
+    let cursor = InspectionRequest::ListRecordings(ListRecordings {
         after: Some(id),
         limit: None,
     });
-    assert_eq!(restarted.execute(cursor), ErrorCode::StaleSession.into());
+    assert_eq!(restarted.execute(cursor), Err(ErrorCode::StaleSession));
     files.replace_file(0, gt_test_utils::segmented_recording(1), FileHistory::None);
-    let updated = Inspection {
-        files: files.view(),
-        name_template: "{filename}",
-        session: id.session,
-    };
+    let updated = Inspection::new(files.view(), "{filename}", id.session);
     assert_eq!(
-        updated.execute(Request::GetTrack(get_track)),
-        ErrorCode::StaleTrack.into()
+        updated.execute(InspectionRequest::GetTrack(get_track)),
+        Err(ErrorCode::StaleTrack)
     );
 }
 
@@ -339,15 +331,12 @@ fn query_check_uses_loaded_channels_and_requires_a_standalone_channel_source() {
         gt_test_utils::loaded_file_with_tracks(vec![track]),
         FileHistory::None,
     );
-    let view = Inspection {
-        files: files.view(),
-        name_template: "{filename}",
-        session: Uuid::nil(),
-    };
+    let view = Inspection::new(files.view(), "{filename}", Uuid::nil());
     let check = |text: &str| {
-        view.execute(Request::CheckQuery(QueryText {
+        view.execute(InspectionRequest::CheckQuery(QueryText {
             text: text.to_owned(),
         }))
+        .unwrap()
     };
     let channel = "@accel | where @accel > 1 g";
     assert_eq!(
@@ -382,15 +371,12 @@ fn query_check_uses_loaded_channels_and_requires_a_standalone_channel_source() {
 #[test]
 fn query_check_reports_byte_spans_and_hints_in_submitted_text() {
     let files = LoadedFiles::new();
-    let view = Inspection {
-        files: files.view(),
-        name_template: "{filename}",
-        session: Uuid::nil(),
-    };
+    let view = Inspection::new(files.view(), "{filename}", Uuid::nil());
     let check = |text: &str| {
-        view.execute(Request::CheckQuery(QueryText {
+        view.execute(InspectionRequest::CheckQuery(QueryText {
             text: text.to_owned(),
         }))
+        .unwrap()
     };
     assert_eq!(
         check(" # Første\r\n\r\n# Sidste"),
@@ -461,7 +447,14 @@ async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
             .await
             .unwrap()
             .unwrap();
-        server.dispatch(|request| request.inspect(files.view(), "{filename}"));
+        server.dispatch(|request| {
+            let Request::CheckQuery(args) = request.request else {
+                panic!("expected a query check request");
+            };
+            Inspection::new(files.view(), "{filename}", request.session)
+                .execute(InspectionRequest::CheckQuery(args))
+                .unwrap_or_else(Reply::from)
+        });
     });
     assert_eq!(reply.unwrap(), ErrorCode::ReplyTooLarge.into());
 }
@@ -480,20 +473,19 @@ fn point_pages_keep_recorded_order_and_missing_values() {
         )]),
         FileHistory::None,
     );
-    let view = Inspection {
-        files: files.view(),
-        name_template: "{filename}",
-        session: Uuid::nil(),
-    };
+    let session = Uuid::nil();
+    let view = Inspection::new(files.view(), "{filename}", session);
     let recording = RecordingReference {
-        session: view.session,
+        session,
         number: files.view().get(0).unwrap().id().into(),
     };
-    let Reply::Recording { details } = view.execute(Request::GetRecording(GetRecording {
-        recording,
-        after: None,
-        limit: None,
-    })) else {
+    let Ok(Reply::Recording { details }) =
+        view.execute(InspectionRequest::GetRecording(GetRecording {
+            recording,
+            after: None,
+            limit: None,
+        }))
+    else {
         panic!("expected recording");
     };
     let track = *details.tracks.first().unwrap();
@@ -503,7 +495,8 @@ fn point_pages_keep_recorded_order_and_missing_values() {
         end: None,
         limit: Some(NonZeroUsize::MAX),
     };
-    let Reply::Range { details: page } = view.execute(Request::GetRangeDetails(args)) else {
+    let Ok(Reply::Range { details: page }) = view.execute(InspectionRequest::GetRangeDetails(args))
+    else {
         panic!("expected point page");
     };
     assert_eq!(page.points.len(), MAX_POINTS_PER_PAGE);
@@ -517,28 +510,31 @@ fn point_pages_keep_recorded_order_and_missing_values() {
     );
 
     args.start = page.next_start.map(PointIdx::as_usize);
-    let Reply::Range { details: page } = view.execute(Request::GetRangeDetails(args)) else {
+    let Ok(Reply::Range { details: page }) = view.execute(InspectionRequest::GetRangeDetails(args))
+    else {
         panic!("expected last point");
     };
     assert_eq!(page.points.first().unwrap().time, start);
     assert!(previous.time > start);
     assert_eq!(page.next_start, None);
     args.end = args.start;
-    let Reply::Range { details: empty } = view.execute(Request::GetRangeDetails(args)) else {
+    let Ok(Reply::Range { details: empty }) =
+        view.execute(InspectionRequest::GetRangeDetails(args))
+    else {
         panic!("expected empty interval");
     };
     assert!(empty.points.is_empty());
     args.end = Some(0);
     assert_eq!(
-        view.execute(Request::GetRangeDetails(args)),
-        ErrorCode::InvalidRange.into()
+        view.execute(InspectionRequest::GetRangeDetails(args)),
+        Err(ErrorCode::InvalidRange)
     );
     args.start = Some(0);
     args.end = Some(MAX_POINTS_PER_PAGE + 3);
     args.limit = Some(NonZeroUsize::MIN);
     assert_eq!(
-        view.execute(Request::GetRangeDetails(args)),
-        ErrorCode::InvalidRange.into()
+        view.execute(InspectionRequest::GetRangeDetails(args)),
+        Err(ErrorCode::InvalidRange)
     );
 }
 

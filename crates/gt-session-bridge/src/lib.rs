@@ -3,7 +3,6 @@ use std::sync::mpsc as startup;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use gt_loaded_files::LoadedFilesView;
 use tokio::io::AsyncReadExt as _;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -15,10 +14,9 @@ pub use crate::history::{
     HistoryOpenState, HistoryOpenStatus, HistoryRecording, HistoryRecordingId, HistoryRecordings,
     ListHistoryRecordings, OpenHistoryRecording,
 };
-use crate::inspection::Inspection;
 pub use crate::inspection::{
-    MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, MapBounds, PointDetails, Position, RangeDetails,
-    RecordingDetails, TrackDetails,
+    Inspection, InspectionRequest, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, MapBounds,
+    PointDetails, Position, RangeDetails, RecordingDetails, TrackDetails,
 };
 pub use crate::metrics::{
     ChannelComponent, ChannelDefinition, ChannelEntry, MetricDefinition, Metrics,
@@ -129,17 +127,6 @@ impl Server {
 pub struct SessionRequest {
     pub request: Request,
     pub session: Uuid,
-}
-
-impl SessionRequest {
-    pub fn inspect(self, files: LoadedFilesView<'_>, name_template: &str) -> Reply {
-        Inspection {
-            files,
-            name_template,
-            session: self.session,
-        }
-        .execute(self.request)
-    }
 }
 
 impl Drop for Server {

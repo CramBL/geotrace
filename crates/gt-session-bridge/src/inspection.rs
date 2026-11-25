@@ -10,55 +10,57 @@ use uuid::Uuid;
 
 use crate::metrics::Metrics;
 use crate::protocol::{
-    ErrorCode, GetRangeDetails, GetRecording, ListRecordings, Recording, Recordings, Reply,
-    Request, TimeRange, TrackReference,
+    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings, QueryText,
+    Recording, Recordings, Reply, TimeRange, TrackReference,
 };
 use crate::query_validation::QueryValidation;
 
-pub(crate) struct Inspection<'a> {
-    pub files: LoadedFilesView<'a>,
-    pub name_template: &'a str,
-    pub session: Uuid,
+pub enum InspectionRequest {
+    CheckQuery(QueryText),
+    GetRangeDetails(GetRangeDetails),
+    GetRecording(GetRecording),
+    GetTrack(GetTrack),
+    ListMetrics(ListMetrics),
+    ListRecordings(ListRecordings),
+}
+
+pub struct Inspection<'a> {
+    files: LoadedFilesView<'a>,
+    name_template: &'a str,
+    session: Uuid,
 }
 
 impl<'a> Inspection<'a> {
-    pub(crate) fn execute(&self, request: Request) -> Reply {
+    pub fn new(files: LoadedFilesView<'a>, name_template: &'a str, session: Uuid) -> Self {
+        Self {
+            files,
+            name_template,
+            session,
+        }
+    }
+
+    pub fn execute(&self, request: InspectionRequest) -> Result<Reply, ErrorCode> {
         match request {
-            Request::ApplyProcessing(_)
-            | Request::CancelQuery(_)
-            | Request::DescribeSetting(_)
-            | Request::GetHistoryOpenStatus(_)
-            | Request::GetQueryResults(_)
-            | Request::GetQueryStatus(_)
-            | Request::GetSettings
-            | Request::ListHistoryRecordings(_)
-            | Request::OpenHistoryRecording(_)
-            | Request::OpenPoint(_)
-            | Request::OpenQuery(_)
-            | Request::OpenSetting(_)
-            | Request::RunQuery(_)
-            | Request::SetSetting(_)
-            | Request::ShowOnMap(_)
-            | Request::ShowOnPlot(_) => Err(ErrorCode::InvalidRequest),
-            Request::CheckQuery(args) => QueryValidation::check(args.text, self.files.files())
-                .map(|validation| Reply::QueryCheck { validation }),
-            Request::GetRangeDetails(args) => {
+            InspectionRequest::CheckQuery(args) => {
+                QueryValidation::check(args.text, self.files.files())
+                    .map(|validation| Reply::QueryCheck { validation })
+            }
+            InspectionRequest::GetRangeDetails(args) => {
                 self.range(args).map(|details| Reply::Range { details })
             }
-            Request::GetRecording(args) => self
+            InspectionRequest::GetRecording(args) => self
                 .recording_details(args)
                 .map(|details| Reply::Recording { details }),
-            Request::GetTrack(args) => self.track(args.track).map(|track| Reply::Track {
+            InspectionRequest::GetTrack(args) => self.track(args.track).map(|track| Reply::Track {
                 details: TrackDetails::new(track),
             }),
-            Request::ListMetrics(args) => Ok(Reply::Metrics {
+            InspectionRequest::ListMetrics(args) => Ok(Reply::Metrics {
                 page: Metrics::from_files(self.files.files(), args),
             }),
-            Request::ListRecordings(args) => {
+            InspectionRequest::ListRecordings(args) => {
                 self.recordings(args).map(|page| Reply::Recordings { page })
             }
         }
-        .unwrap_or_else(Reply::from)
     }
 
     fn recordings(

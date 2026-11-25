@@ -7,13 +7,13 @@ use egui_kittest::kittest::Queryable as _;
 use gt_loaded_files::FileHistory;
 use gt_query::Unit;
 use gt_session_bridge::{
-    ErrorCode, GetQueryResults, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
-    QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultPage, QueryResultSource,
-    QueryResultTime, QueryResultValue, QueryText, QueryValidation, RangeTarget, Reply, Request,
-    ShowOnMap, ShowOnPlot,
+    ChannelEntry, ErrorCode, GetQueryResults, QueryJobId, QueryJobRequest, QueryJobState,
+    QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultPage,
+    QueryResultSource, QueryResultTime, QueryResultValue, QueryText, QueryValidation, RangeTarget,
+    Reply, Request, ShowOnMap, ShowOnPlot,
 };
 use gt_test_utils::fixtures;
-use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use uuid::Uuid;
 
 use crate::app::test_util;
@@ -27,6 +27,45 @@ mod map;
 mod plot;
 mod processing;
 mod settings;
+
+#[test]
+fn session_inspection_uses_the_loaded_recording() {
+    let mut harness = ui_tests::app_with_recording_bytes(ui_tests::accel_channel_gtd_bytes(28.0));
+    let check =
+        serde_json::from_str(r#"{"method":"check_query","text":"@accel | where @accel.x > 1 g"}"#)
+            .unwrap();
+    assert_eq!(
+        session::execute(&mut harness, check),
+        Reply::QueryCheck {
+            validation: QueryValidation::Valid,
+        }
+    );
+
+    let metrics = serde_json::from_str(r#"{"method":"list_metrics"}"#).unwrap();
+    let Reply::Metrics { page } = session::execute(&mut harness, metrics) else {
+        panic!("expected metrics");
+    };
+    let [ChannelEntry::Defined(channel)] = page.channels.as_slice() else {
+        panic!("expected one channel");
+    };
+    assert_eq!(channel.name, "accel");
+
+    let request = serde_json::from_value(serde_json::json!({
+        "method": "get_range_details",
+        "track": session::first_track_reference(&mut harness),
+        "limit": 1,
+    }))
+    .unwrap();
+    let Reply::Range { details } = session::execute(&mut harness, request) else {
+        panic!("expected a point page");
+    };
+    let [point] = details.points.as_slice() else {
+        panic!("expected one point");
+    };
+    assert_eq!(point.index, PointIdx::new(0));
+    assert_eq!(point.time, ui_tests::base_time());
+    assert_eq!(details.next_start, Some(PointIdx::new(1)));
+}
 
 #[test]
 fn pending_run_input_leaves_a_session_draft_unrun() {
