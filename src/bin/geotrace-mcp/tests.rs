@@ -22,37 +22,16 @@ use serde_json::{Value, json};
 use tokio::io::{
     AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, DuplexStream, Lines, ReadHalf, WriteHalf,
 };
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
 
 #[tokio::test]
 async fn the_companion_lists_tools_and_returns_structured_results() {
-    let (server, stream) = tokio::io::duplex(8192);
-    let worker = tokio::spawn(async move {
-        Companion {
-            bridge: Bridge::Fixture(self::inspection_fixture),
-        }
-        .serve(server)
-        .await
-        .unwrap()
-        .waiting()
-        .await
-        .unwrap();
-    });
-    let mut client = Client::new(stream);
-    let initialized = client
-        .exchange(json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1"}
-            }
-        }))
-        .await;
+    let (mut client, worker) = Client::start(Bridge::Fixture(self::inspection_fixture));
+    let initialized = client.initialize().await;
     assert_eq!(
         initialized.pointer("/result/protocolVersion"),
         Some(&json!("2025-11-25"))
@@ -65,10 +44,6 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         initialized.pointer("/result/serverInfo/version"),
         Some(&json!(VERSION))
     );
-    client
-        .send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
-        .await;
-
     let listed = client
         .exchange(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
         .await;
@@ -336,6 +311,53 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         checked.pointer("/result/structuredContent").unwrap(),
     )
     .await;
+    drop(client);
+    tokio::time::timeout(Duration::from_secs(2), worker)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn mcp_cancellation_drops_only_the_targeted_bridge_request() {
+    let (queued, mut replies) = mpsc::channel(1);
+    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+    client.initialize().await;
+    client
+        .send(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "open_query", "arguments": {"text": "points | draw"}}
+        }))
+        .await;
+    let mut cancelled = tokio::time::timeout(Duration::from_secs(2), replies.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    client
+        .send(json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "open_query", "arguments": {"text": "points | draw"}}
+        }))
+        .await;
+    let control = tokio::time::timeout(Duration::from_secs(2), replies.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    client
+        .send(json!({
+            "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 2}
+        }))
+        .await;
+    tokio::time::timeout(Duration::from_secs(2), cancelled.closed())
+        .await
+        .expect("MCP cancellation did not close the outstanding bridge response");
+    control.send(Reply::QueryDraftQueued).unwrap();
+    let response = client.receive().await;
+    assert_eq!(response.get("id"), Some(&json!(3)));
+    assert_eq!(
+        response.pointer("/result/structuredContent"),
+        Some(&json!({"status": "query_draft_queued"}))
+    );
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -800,16 +822,51 @@ struct Client {
 }
 
 impl Client {
-    fn new(stream: DuplexStream) -> Self {
+    fn start(bridge: Bridge) -> (Self, JoinHandle<()>) {
+        let (server, stream) = tokio::io::duplex(8192);
+        let worker = tokio::spawn(async move {
+            Companion { bridge }
+                .serve(server)
+                .await
+                .unwrap()
+                .waiting()
+                .await
+                .unwrap();
+        });
         let (input, output) = tokio::io::split(stream);
-        Self {
-            input: BufReader::new(input).lines(),
-            output,
-        }
+        (
+            Self {
+                input: BufReader::new(input).lines(),
+                output,
+            },
+            worker,
+        )
+    }
+
+    async fn initialize(&mut self) -> Value {
+        let result = self
+            .exchange(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"}
+                }
+            }))
+            .await;
+        self.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .await;
+        result
     }
 
     async fn exchange(&mut self, message: Value) -> Value {
         self.send(message).await;
+        self.receive().await
+    }
+
+    async fn receive(&mut self) -> Value {
         let line = tokio::time::timeout(Duration::from_secs(2), self.input.next_line())
             .await
             .unwrap()
@@ -821,6 +878,16 @@ impl Client {
     async fn send(&mut self, message: Value) {
         let line = format!("{message}\n");
         self.output.write_all(line.as_bytes()).await.unwrap();
+    }
+}
+
+pub(super) struct PendingBridge(mpsc::Sender<oneshot::Sender<Reply>>);
+
+impl PendingBridge {
+    pub(super) async fn request(&self) -> io::Result<Reply> {
+        let (reply, response) = oneshot::channel();
+        self.0.send(reply).await.map_err(io::Error::other)?;
+        response.await.map_err(io::Error::other)
     }
 }
 

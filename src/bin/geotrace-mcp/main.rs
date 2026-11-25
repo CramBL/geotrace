@@ -9,10 +9,17 @@ use gt_session_bridge::{
     OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
     SettingSelection, ShowOnMap, ShowOnPlot,
 };
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
-use rmcp::service::QuitReason;
-use rmcp::{ServerHandler, ServiceExt as _, tool, tool_handler, tool_router, transport};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    ServerCapabilities, ServerConfig,
+};
+use rmcp::service::{QuitReason, RequestContext};
+use rmcp::{
+    ErrorData, RoleServer, ServerHandler, ServiceExt as _, tool, tool_handler, tool_router,
+    transport,
+};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -34,7 +41,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-#[derive(Clone, Copy)]
 struct Companion {
     bridge: Bridge,
 }
@@ -461,25 +467,46 @@ impl Companion {
 
 #[tool_handler]
 impl ServerHandler for Companion {
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let cancellation = context.ct.clone();
+        let router = Self::tool_router();
+        let call = ToolCallContext::new(self, request, context);
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => {
+                // `rmcp` suppresses responses for cancelled requests.
+                Ok(Self::tool_error("The MCP request was cancelled.").into())
+            }
+            result = router.call(call) => result,
+        }
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(COMPANION_NAME, VERSION))
     }
 }
 
-#[derive(Clone, Copy)]
 enum Bridge {
     Desktop,
     #[cfg(test)]
     Fixture(fn(&Request) -> io::Result<Reply>),
+    #[cfg(test)]
+    Pending(tests::PendingBridge),
 }
 
 impl Bridge {
-    async fn request(self, request: &Request) -> io::Result<Reply> {
+    async fn request(&self, request: &Request) -> io::Result<Reply> {
         match self {
             Self::Desktop => gt_session_bridge::request(request).await,
             #[cfg(test)]
             Self::Fixture(query) => query(request),
+            #[cfg(test)]
+            Self::Pending(bridge) => bridge.request().await,
         }
     }
 }

@@ -129,6 +129,46 @@ fn dispatcher_discards_the_effect_when_the_reply_receiver_closes_during_preparat
     assert_eq!(effect, None);
 }
 
+#[tokio::test]
+async fn dropping_the_client_exchange_discards_the_queued_effect() {
+    let fixture = TestEndpoint::new();
+    let listener = fixture.endpoint.bind().unwrap();
+    let (sender, pending) = mpsc::channel(1);
+    let mut server = Server {
+        session: Uuid::nil(),
+        pending,
+        stop: None,
+        worker: None,
+    };
+    let (wake, mut wakes) = mpsc::channel(1);
+    let accept = async {
+        let mut connection = listener.accept().await.unwrap().unwrap();
+        super::exchange(&mut connection.0, &sender, &|| wake.try_send(()).unwrap()).await
+    };
+    let abandon = async {
+        let request = Request::OpenQuery(QueryText {
+            text: "points | draw".to_owned(),
+        });
+        tokio::select! {
+            reply = super::request_at(&fixture.endpoint, &request) => {
+                panic!("The exchange completed before dispatch ({reply:?})");
+            }
+            queued = wakes.recv() => assert_eq!(queued, Some(())),
+        }
+    };
+    let (disconnected, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(accept, abandon)
+    })
+    .await
+    .unwrap();
+    assert!(disconnected.is_err());
+    assert!(
+        server
+            .dispatch::<()>(|_| panic!("The bridge dispatched a disconnected request"))
+            .is_none()
+    );
+}
+
 #[test]
 fn metric_definitions_are_listed_without_recordings() {
     let files = LoadedFiles::new();
