@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use super::App;
 use super::query_run::{BackgroundQuery, CapturedQueryInputs, QuerySeries};
+use super::session_history::StagedHistoryOpen;
 use super::session_map::MapPresentation;
 use super::session_plot::PlotPresentation;
 use super::settings_ui::SettingChange;
@@ -131,6 +132,7 @@ struct Job {
 #[derive(Default)]
 struct StagedSessionChanges {
     apply_processing: bool,
+    history_open: Option<StagedHistoryOpen>,
     job: Option<Job>,
     map: Option<MapPresentation>,
     plot: Option<PlotPresentation>,
@@ -308,6 +310,9 @@ impl App {
         if staged.apply_processing {
             self.apply_resegmentation();
         }
+        if let Some(history_open) = staged.history_open {
+            self.accept_history_open(history_open);
+        }
         if let Some(job) = staged.job {
             self.session_query.job = Some(job);
         }
@@ -357,6 +362,7 @@ impl App {
             Request::DescribeSetting(args) => Ok(Reply::Setting {
                 setting: self.describe_setting(args.key),
             }),
+            Request::GetHistoryOpenStatus(args) => self.history_open_status(request.session, args),
             Request::GetQueryResults(args) => queries
                 .results(self, request.session, args.job)
                 .and_then(|results| {
@@ -372,6 +378,9 @@ impl App {
             Request::GetSettings => Ok(Reply::Settings {
                 settings: self.get_settings(),
             }),
+            Request::OpenHistoryRecording(args) => {
+                self.prepare_history_open(request.session, args, &mut staged.history_open)
+            }
             Request::OpenPoint(args) => self
                 .session_open_point(request.session, args)
                 .map(|presentation| staged.queue_map(presentation)),

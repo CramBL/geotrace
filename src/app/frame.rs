@@ -60,6 +60,7 @@ impl PendingTrackDataDetach {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_finished_session_recording_work(ctx);
         self.dispatch_session_request(ctx);
         self.drive_settings_autosave(ctx);
     }
@@ -182,6 +183,15 @@ impl eframe::App for App {
 }
 
 impl App {
+    pub(super) fn apply_finished_session_recording_work(&mut self, ctx: &egui::Context) {
+        if self.session_history.pending()
+            || self.history.restoring_session_recordings()
+            || self.loader.restoring_session_attachments()
+        {
+            self.apply_finished_recording_work(ctx);
+        }
+    }
+
     pub(super) fn apply_finished_recording_work(&mut self, ctx: &egui::Context) {
         // Adopt the databases first: what waited on them starts in the frame
         // they arrive.
@@ -200,6 +210,7 @@ impl App {
         for resp in self.history.poll() {
             self.handle_history_response(resp);
         }
+        self.expire_stale_history_settings();
         self.resolve_initial_log_associations();
         self.warn_once_that_a_newer_version_stored_ui_state();
     }

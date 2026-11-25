@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 
-use gt_history_types::DatabaseRef;
-use gt_loaded_files::{LoadedFileId, LoadedFilesView};
+use gt_history_types::{DatabaseRef, StoredLayoutRevision};
+use gt_loaded_files::{LoadedFileEntry, LoadedFileId, LoadedFilesView};
 use gt_types::{
     DataCategory, DataCategorySet, FileIdx, GeneratedMarkerKindTag, Generation, LoadedTrack,
     TrackIdx, TrackRef, Versioned,
@@ -213,26 +213,45 @@ pub struct FileNode {
     /// Session id of the recording this node is built from. A rebuild moves
     /// the node's state, and the state of every track under it, by this id.
     id: LoadedFileId,
-    /// The recording's entry in the history database, `Some` for a recording
-    /// the database has one for. The hidden tracks of that recording are kept
-    /// under this reference across a restart.
-    db_ref: Option<DatabaseRef>,
+    visibility_layout: Option<StoredLayoutRevision>,
 }
 
 impl FileNode {
-    fn new(id: LoadedFileId, db_ref: Option<DatabaseRef>) -> Self {
+    fn from_loaded(entry: LoadedFileEntry<'_>) -> Self {
         Self {
-            id,
-            db_ref,
+            id: entry.id(),
+            visibility_layout: entry
+                .history()
+                .track_snapshot()
+                .map(|observation| observation.layout().clone()),
             expanded: false,
             check: CheckState::On,
             tracks: Vec::new(),
         }
     }
 
+    fn current_visibility_layout(&self) -> Option<&StoredLayoutRevision> {
+        self.visibility_layout
+            .as_ref()
+            .filter(|layout| layout.is_current())
+    }
+
     fn recompute_check(&mut self) {
         self.check =
             aggregate_check_states(self.tracks.iter().map(|t| t.check)).unwrap_or(CheckState::On);
+    }
+}
+
+struct StoredHiddenTracks {
+    numbers: Option<BTreeSet<usize>>,
+    layout: StoredLayoutRevision,
+}
+
+impl StoredHiddenTracks {
+    fn numbers_for_layout(&self, layout: &StoredLayoutRevision) -> Option<&BTreeSet<usize>> {
+        (layout.is_current() && self.layout.same_observation(layout))
+            .then_some(self.numbers.as_ref())
+            .flatten()
     }
 }
 
@@ -268,9 +287,9 @@ pub struct TreeState {
     /// recording's stored UI state, and is rewritten from the tree's checks.
     /// A recording with no entry is one whose UI state this session has not
     /// read.
-    hidden_tracks_by_recording: BTreeMap<DatabaseRef, BTreeSet<usize>>,
+    hidden_tracks_by_recording: BTreeMap<DatabaseRef, StoredHiddenTracks>,
     /// The recordings whose hidden tracks differ from what the history
-    /// database holds, until [`TreeState::take_hidden_tracks_to_store`] takes
+    /// database holds, until [`TreeState::take_observed_hidden_tracks_to_store`] takes
     /// them.
     recordings_with_hidden_tracks_to_store: BTreeSet<DatabaseRef>,
 }
@@ -302,8 +321,14 @@ impl TreeState {
 
     /// The numbers of the hidden tracks of `db_ref`, and [`None`] for a
     /// recording whose stored UI state this session has not read.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn hidden_track_numbers(&self, db_ref: &DatabaseRef) -> Option<&BTreeSet<usize>> {
-        self.hidden_tracks_by_recording.get(db_ref)
+        let stored = self.hidden_tracks_by_recording.get(db_ref)?;
+        stored
+            .layout
+            .is_current()
+            .then_some(stored.numbers.as_ref())
+            .flatten()
     }
 
     pub fn cancel_shelve_confirmation_for_file(&mut self, file: FileIdx) {
@@ -316,16 +341,39 @@ impl TreeState {
         }
     }
 
-    /// Take the hidden tracks the history database holds for `db_ref`: the
-    /// tracks of that recording already in the view turn unchecked, and the
-    /// ones loaded afterwards start unchecked.
-    pub fn set_hidden_tracks_of_recording(
+    pub fn hidden_track_numbers_for_layout(
+        &self,
+        layout: &StoredLayoutRevision,
+    ) -> Option<&BTreeSet<usize>> {
+        self.hidden_tracks_by_recording
+            .get(layout.recording())?
+            .numbers_for_layout(layout)
+    }
+
+    pub fn apply_stored_hidden_tracks(
         &mut self,
-        db_ref: DatabaseRef,
+        layout: StoredLayoutRevision,
         track_numbers: BTreeSet<usize>,
     ) {
+        if !layout.is_current() {
+            return;
+        }
+        let recording = layout.recording().clone();
+        let pending_on_this_layout = self
+            .recordings_with_hidden_tracks_to_store
+            .contains(&recording)
+            && self
+                .hidden_tracks_by_recording
+                .get(&recording)
+                .is_some_and(|stored| stored.layout.same_observation(&layout));
+        if pending_on_this_layout {
+            return;
+        }
         for file_node in &mut self.files {
-            if file_node.db_ref.as_ref() != Some(&db_ref) {
+            if !file_node
+                .current_visibility_layout()
+                .is_some_and(|source| source.same_observation(&layout))
+            {
                 continue;
             }
             for track_node in &mut file_node.tracks {
@@ -335,23 +383,31 @@ impl TreeState {
             }
             file_node.recompute_check();
         }
-        self.hidden_tracks_by_recording
-            .insert(db_ref, track_numbers);
+        self.recordings_with_hidden_tracks_to_store
+            .remove(&recording);
+        self.hidden_tracks_by_recording.insert(
+            recording,
+            StoredHiddenTracks {
+                numbers: Some(track_numbers),
+                layout,
+            },
+        );
         self.rebuild_visibility();
     }
 
-    /// The recordings whose hidden tracks changed since this last ran, each
-    /// with the hidden tracks to store with it.
-    pub fn take_hidden_tracks_to_store(&mut self) -> Vec<(DatabaseRef, BTreeSet<usize>)> {
+    pub fn take_observed_hidden_tracks_to_store(
+        &mut self,
+    ) -> Vec<(StoredLayoutRevision, BTreeSet<usize>)> {
         mem::take(&mut self.recordings_with_hidden_tracks_to_store)
             .into_iter()
-            .map(|db_ref| {
-                let track_numbers = self
-                    .hidden_tracks_by_recording
-                    .get(&db_ref)
-                    .cloned()
-                    .unwrap_or_default();
-                (db_ref, track_numbers)
+            .filter_map(|recording| {
+                let stored = self.hidden_tracks_by_recording.get(&recording)?;
+                stored.layout.is_current().then(|| {
+                    (
+                        stored.layout.clone(),
+                        stored.numbers.clone().unwrap_or_default(),
+                    )
+                })
             })
             .collect()
     }
@@ -369,14 +425,11 @@ impl TreeState {
         }
     }
 
-    /// Rebuild the nodes for `files`, keeping the state of every track that is
-    /// still loaded.
+    /// The tree preserves expansion, event paths and marker toggles by loaded file ID and track number.
+    /// Tracks on the same layout keep their checkboxes.
+    /// Tracks on a different stored layout use that layout's saved visibility.
+    /// New rows start collapsed.
     ///
-    /// A node's check, expansion, event paths and marker toggles are kept
-    /// under the session id of its recording and its track number. Loading a
-    /// file and removing one both change the positions that [`FileNode`]s and
-    /// [`TrackNode`]s sit at, and leave those two keys alone. A track loaded
-    /// since the last call starts at its defaults: checked on and collapsed.
     /// Each [`NodeKey`] the state holds - the selection, its anchor, the
     /// reveal request, the items of an open shelve confirmation and those of a
     /// pending unload - moves to the position of the row it refers to, and is
@@ -385,17 +438,17 @@ impl TreeState {
         let key_at_previous_position: BTreeMap<NodeKey, NodeStateKey> =
             self.node_state_keys_by_position().into_iter().collect();
 
-        let mut previous_expanded: BTreeMap<LoadedFileId, bool> = BTreeMap::new();
+        let mut previous_files = BTreeMap::new();
         let mut previous_tracks: BTreeMap<TrackStateKey, TrackNode> = BTreeMap::new();
         for FileNode {
             id,
-            db_ref: _,
             expanded,
-            check: _,
             tracks,
+            visibility_layout,
+            ..
         } in mem::take(&mut self.files)
         {
-            previous_expanded.insert(id, expanded);
+            previous_files.insert(id, (expanded, visibility_layout));
             for track_node in tracks {
                 let key = TrackStateKey {
                     file: id,
@@ -409,26 +462,39 @@ impl TreeState {
         self.files = files
             .entries()
             .map(|entry| {
-                let db_ref = entry.history().db_ref();
-                let mut file_node = FileNode::new(entry.id(), db_ref.cloned());
-                file_node.expanded = previous_expanded.remove(&entry.id()).unwrap_or(false);
+                let mut file_node = FileNode::from_loaded(entry);
+                let (expanded, previous_layout) =
+                    previous_files.remove(&entry.id()).unwrap_or_default();
+                file_node.expanded = expanded;
+                let current_layout = file_node.current_visibility_layout();
+                let reset_checks = current_layout.is_some_and(|current| {
+                    previous_layout
+                        .as_ref()
+                        .is_none_or(|previous| !previous.same_observation(current))
+                });
+                let hidden_tracks = current_layout.and_then(|layout| {
+                    hidden_tracks_by_recording
+                        .get(layout.recording())?
+                        .numbers_for_layout(layout)
+                });
                 for loaded_track in &entry.file().tracks {
                     let track_number = loaded_track.metadata.index;
                     let key = TrackStateKey {
                         file: entry.id(),
                         track_number,
                     };
-                    let mut track_node = previous_tracks.remove(&key).unwrap_or_else(|| {
-                        let mut track_node = TrackNode::new(track_number);
-                        if db_ref.is_some_and(|db_ref| {
-                            hidden_tracks_by_recording
-                                .get(db_ref)
-                                .is_some_and(|track_numbers| track_numbers.contains(&track_number))
-                        }) {
-                            track_node.check = CheckState::Off;
-                        }
-                        track_node
-                    });
+                    let previous = previous_tracks.remove(&key);
+                    let new_track = previous.is_none();
+                    let mut track_node = previous.unwrap_or_else(|| TrackNode::new(track_number));
+                    if reset_checks || new_track {
+                        track_node.check = if hidden_tracks
+                            .is_some_and(|numbers| numbers.contains(&track_number))
+                        {
+                            CheckState::Off
+                        } else {
+                            CheckState::On
+                        };
+                    }
                     track_node.sync_event_paths_from(loaded_track);
                     file_node.tracks.push(track_node);
                 }
@@ -443,6 +509,26 @@ impl TreeState {
         self.rebuild_generated_marker_visibility();
     }
 
+    pub fn sync_after_recording_load(
+        &mut self,
+        files: LoadedFilesView<'_>,
+        reset_visibility: Option<StoredLayoutRevision>,
+    ) {
+        if let Some(observation) = reset_visibility {
+            let recording = observation.recording().clone();
+            self.recordings_with_hidden_tracks_to_store
+                .remove(&recording);
+            self.hidden_tracks_by_recording.insert(
+                recording,
+                StoredHiddenTracks {
+                    numbers: Some(BTreeSet::new()),
+                    layout: observation,
+                },
+            );
+        }
+        self.sync_from_loaded_files(files);
+    }
+
     /// Rebuild every node at its defaults: checked on, collapsed, and nothing
     /// selected.
     ///
@@ -451,10 +537,11 @@ impl TreeState {
     /// number from the previous segmentation addresses another stretch of the
     /// recording.
     pub fn reset_for_resegmented_files(&mut self, files: LoadedFilesView<'_>) {
+        self.drop_hidden_tracks_of_the_loaded_recordings();
         self.files = files
             .entries()
             .map(|entry| {
-                let mut file_node = FileNode::new(entry.id(), entry.history().db_ref().cloned());
+                let mut file_node = FileNode::from_loaded(entry);
                 for loaded_track in &entry.file().tracks {
                     let mut track_node = TrackNode::new(loaded_track.metadata.index);
                     track_node.sync_event_paths_from(loaded_track);
@@ -466,32 +553,28 @@ impl TreeState {
         self.selection.clear();
         self.selection_anchor = None;
         self.shelve_confirm = None;
-        self.drop_hidden_tracks_of_the_loaded_recordings();
         self.rebuild_visibility();
         self.rebuild_event_marker_visibility();
         self.rebuild_generated_marker_visibility();
     }
 
-    /// Take the hidden tracks of every loaded recording the history database
-    /// holds from the tree's checks, and list the recordings whose hidden
-    /// tracks changed.
-    ///
-    /// A track number the recording no longer holds - a shelved track, one
-    /// deleted permanently - stays in its entry. Two loaded files of one
-    /// recording leave one entry, from the later of the two in tree order.
-    /// A recording whose stored UI state this session has not read, and none
-    /// of whose tracks the user hid, keeps the state the database holds.
+    /// Collect the hidden track numbers of loaded files with a current stored layout.
+    /// Preserve the numbers of shelved or deleted tracks absent from the view.
     fn record_hidden_tracks_of_the_loaded_recordings(&mut self) {
         for file_node in &self.files {
-            let Some(db_ref) = &file_node.db_ref else {
+            let Some(layout) = file_node.current_visibility_layout() else {
                 continue;
             };
+            let db_ref = layout.recording();
             let numbers_in_view: BTreeSet<usize> = file_node
                 .tracks
                 .iter()
                 .map(|track_node| track_node.track_number)
                 .collect();
-            let stored = self.hidden_tracks_by_recording.get(db_ref);
+            let stored = self
+                .hidden_tracks_by_recording
+                .get(db_ref)
+                .and_then(|state| state.numbers_for_layout(layout));
             let mut hidden_track_numbers: BTreeSet<usize> = stored
                 .into_iter()
                 .flatten()
@@ -512,8 +595,13 @@ impl TreeState {
             if unchanged {
                 continue;
             }
-            self.hidden_tracks_by_recording
-                .insert(db_ref.clone(), hidden_track_numbers);
+            self.hidden_tracks_by_recording.insert(
+                db_ref.clone(),
+                StoredHiddenTracks {
+                    numbers: Some(hidden_track_numbers),
+                    layout: layout.clone(),
+                },
+            );
             self.recordings_with_hidden_tracks_to_store
                 .insert(db_ref.clone());
         }
@@ -524,12 +612,15 @@ impl TreeState {
     /// then rewritten without one.
     fn drop_hidden_tracks_of_the_loaded_recordings(&mut self) {
         for file_node in &self.files {
-            let Some(db_ref) = &file_node.db_ref else {
+            let Some(layout) = file_node.current_visibility_layout() else {
                 continue;
             };
+            let db_ref = layout.recording();
             if self
                 .hidden_tracks_by_recording
-                .remove(db_ref)
+                .get_mut(db_ref)
+                .filter(|stored| stored.layout.same_observation(layout))
+                .and_then(|stored| stored.numbers.take())
                 .is_some_and(|track_numbers| !track_numbers.is_empty())
             {
                 self.recordings_with_hidden_tracks_to_store

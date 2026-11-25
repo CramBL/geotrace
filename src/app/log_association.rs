@@ -20,7 +20,7 @@ use crate::settings::InitialPositionSourcePolicy;
 use super::App;
 use super::history_db::{ExistingLogAttachment, RestoredLogAttachment};
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
-use super::loader;
+use super::loader::AttachedLogRequester;
 use super::log_viewer::association_dialog::{
     LogAssociationChoice, LogAssociationDialog, LogAssociationRequest,
 };
@@ -277,6 +277,7 @@ impl App {
         &mut self,
         recording: &DatabaseRef,
         attachments: Result<Vec<RestoredLogAttachment>, DbError>,
+        requested_by: AttachedLogRequester,
     ) {
         let attachments = match attachments {
             Ok(attachments) => attachments,
@@ -300,7 +301,7 @@ impl App {
                 },
                 &entry.display_name(),
                 log,
-                loader::AttachedLogRequester::RecordingLoad,
+                requested_by,
             );
         }
     }
@@ -317,7 +318,7 @@ impl App {
             attachment,
             name,
             log,
-            loader::AttachedLogRequester::UserOpenedTheAttachment,
+            AttachedLogRequester::UserOpenedTheAttachment,
         );
     }
 
@@ -326,7 +327,7 @@ impl App {
         attachment: LogAttachmentRef,
         name: &str,
         log: Result<AttachedLog, LogAttachmentError>,
-        requested_by: loader::AttachedLogRequester,
+        requested_by: AttachedLogRequester,
     ) {
         match log {
             Ok(attached) => {

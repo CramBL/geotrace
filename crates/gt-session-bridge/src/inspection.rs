@@ -27,10 +27,12 @@ impl<'a> Inspection<'a> {
             Request::ApplyProcessing
             | Request::CancelQuery(_)
             | Request::DescribeSetting(_)
+            | Request::GetHistoryOpenStatus(_)
             | Request::GetQueryResults(_)
             | Request::GetQueryStatus(_)
             | Request::GetSettings
             | Request::ListHistoryRecordings(_)
+            | Request::OpenHistoryRecording(_)
             | Request::OpenPoint(_)
             | Request::OpenQuery(_)
             | Request::OpenSetting(_)

@@ -108,6 +108,17 @@ fn current_group_ids_survive_identity_renames_and_legacy_groups_use_identity() {
     let entries = HistoryEntries::new(Vec::new());
     let mut reference = self::entry("first").db_ref;
     let legacy = HistoryRecordingId::of(database, &entries, &reference);
+    let legacy_entries = HistoryEntries::new(vec![self::entry("first")]);
+    let listing = HistoryListing {
+        database,
+        entries: &legacy_entries,
+        revision: 0,
+        session: Uuid::from_u128(1),
+    };
+    assert_eq!(
+        listing.select_for_open(legacy).err(),
+        Some(ErrorCode::HistorySelectionRequiresDesktop)
+    );
     reference.identity = "second".to_owned();
     assert_ne!(
         HistoryRecordingId::of(database, &entries, &reference),

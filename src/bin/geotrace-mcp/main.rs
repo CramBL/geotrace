@@ -4,9 +4,10 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    ErrorCode, GetQueryResults, GetRangeDetails, GetRecording, GetTrack, ListHistoryRecordings,
-    ListMetrics, ListRecordings, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
-    SettingSelection, ShowOnMap, ShowOnPlot,
+    ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails, GetRecording, GetTrack,
+    ListHistoryRecordings, ListMetrics, ListRecordings, OpenHistoryRecording, OpenPoint,
+    QueryJobRequest, QueryText, Reply, Request, SetSetting, SettingSelection, ShowOnMap,
+    ShowOnPlot,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -81,6 +82,17 @@ impl Companion {
         Parameters(args): Parameters<SettingSelection>,
     ) -> CallToolResult {
         self.inspect(Request::DescribeSetting(args)).await
+    }
+
+    #[tool(
+        description = "Read the status of a History open. A ready result includes the loaded recording ID.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_history_open_status(
+        &self,
+        Parameters(args): Parameters<GetHistoryOpenStatus>,
+    ) -> CallToolResult {
+        self.inspect(Request::GetHistoryOpenStatus(args)).await
     }
 
     #[tool(
@@ -168,6 +180,21 @@ impl Companion {
         Parameters(args): Parameters<ListRecordings>,
     ) -> CallToolResult {
         self.inspect(Request::ListRecordings(args)).await
+    }
+
+    #[tool(
+        description = "Open a recording from list_history_recordings. Poll get_history_open_status and make any track settings choice in GeoTrace.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn open_history_recording(
+        &self,
+        Parameters(args): Parameters<OpenHistoryRecording>,
+    ) -> CallToolResult {
+        self.inspect(Request::OpenHistoryRecording(args)).await
     }
 
     #[tool(
@@ -261,6 +288,7 @@ impl Companion {
                 | Reply::SettingOpenQueued
                 | Reply::Settings { .. }),
             ) => serde_json::to_value(reply),
+            Ok(Reply::HistoryOpen { operation }) => serde_json::to_value(operation),
             Ok(Reply::HistoryRecordings { page }) => serde_json::to_value(page),
             Ok(Reply::Metrics { page }) => serde_json::to_value(page),
             Ok(Reply::QueryCheck { validation }) => serde_json::to_value(validation),
@@ -296,6 +324,17 @@ impl Companion {
                 "GeoTrace could not list recording History. Check the History window for details."
             }
             ErrorCode::HistoryNotReady => "GeoTrace is preparing recording History. Try again.",
+            ErrorCode::HistoryOpenFailed => "GeoTrace could not open the History recording.",
+            ErrorCode::HistoryOpenNotFound => "This History open operation is no longer available.",
+            ErrorCode::HistorySelectionExpired => {
+                "List History again and choose a current recording."
+            }
+            ErrorCode::HistorySelectionRequiresDesktop => {
+                "Open this older History recording in the GeoTrace History window."
+            }
+            ErrorCode::HistoryTrackLayoutUnavailable => {
+                "GeoTrace could not reproduce the stored track layout."
+            }
             ErrorCode::HistoryUnavailable => "GeoTrace has no open recording History database.",
             ErrorCode::InactiveSetting => {
                 "This setting is disabled. Use describe_setting for the prerequisite."

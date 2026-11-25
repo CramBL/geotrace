@@ -10,7 +10,7 @@ use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
 use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
-use gt_loaded_files::LoadedFiles;
+use gt_loaded_files::{LoadedFileId, LoadedFiles};
 use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome, RecordingKey, SessionLogAttachments};
 use gt_logfile::ParsedLog;
 use gt_map::NavMap;
@@ -25,7 +25,7 @@ use gt_types::{AssociationConfig, LoadWarning, TrackRef, Versioned};
 use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
 use load_failures::LoadFailures;
 use loader::{
-    AttachedLogRestore, CompletedLoad, FinishedJob, LoadCompletion, LoadJobs,
+    AttachedLogRequester, AttachedLogRestore, CompletedLoad, FinishedJob, LoadCompletion, LoadJobs,
     LoadedRecordingResult, LooseLogResult, SavedLogResult,
 };
 use log_viewer::LogViewerRequests;
@@ -33,6 +33,7 @@ use log_viewer::association_dialog::LogAssociationDialog;
 use panes::MainPane;
 use recording_name_template::TemplatePreviewRecording;
 use rustc_hash::{FxHashMap, FxHashSet};
+use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use session_plot::PlotPresentation;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
@@ -170,6 +171,7 @@ struct SharedAppState {
 }
 
 impl SharedAppState {
+    #[cfg(test)]
     fn sync_tree_from_loaded_files(&mut self) {
         self.tree.sync_from_loaded_files(self.loaded_files.view());
     }
@@ -188,7 +190,6 @@ enum ParsedLogOrigin<'a> {
 /// with.
 struct ResegmentPrompt {
     origin: RecordingOperationOrigin,
-    db_ref: gt_store::DatabaseRef,
     filename: String,
     bytes: std::sync::Arc<[u8]>,
     /// Settings the stored tracks were built with.
@@ -395,6 +396,7 @@ pub struct App {
     offline: bool,
     session_bridge: Option<SessionBridge>,
     session_query: session_query::SessionQuery,
+    session_history: SessionHistory,
     pending_session_query_draft: Option<String>,
     pending_session_setting: Option<SettingKey>,
     /// The registry every background write registers itself in, shared with
@@ -647,6 +649,7 @@ impl App {
             offline: options.offline,
             session_bridge: None,
             session_query: session_query::SessionQuery::default(),
+            session_history: SessionHistory::default(),
             pending_session_query_draft: None,
             pending_session_setting: None,
             pending_writes: options.pending_writes,
@@ -1004,6 +1007,11 @@ impl App {
         let Some(completed) = self.complete_load_retry(completed) else {
             return;
         };
+        let reset_visibility = match self.history_load_adoption(&completed.completion) {
+            HistoryLoadAdoption::Accept => None,
+            HistoryLoadAdoption::ResetVisibility(observation) => Some(observation),
+            HistoryLoadAdoption::Skip => return,
+        };
         match completed.completion {
             LoadCompletion::Recording {
                 origin,
@@ -1025,10 +1033,14 @@ impl App {
                 );
                 // Stored recordings may have cached snap runs. The response
                 // restores them into the session stores.
-                if let Some(db_ref) = history.db_ref() {
+                if let Some(db_ref) = history.db_ref()
+                    && origin.session_history().is_none()
+                {
                     self.history.load_snap_runs(db_ref.clone());
                     self.history.load_attached_logs(db_ref.clone());
-                    self.read_the_ui_state_stored_with_a_loaded_recording(db_ref);
+                    self.read_the_ui_state_stored_with_a_loaded_recording(
+                        history.track_snapshot().map(|snapshot| snapshot.layout()),
+                    );
                 }
                 let track_ranges: Vec<gt_types::TimeRange> = file
                     .tracks
@@ -1064,14 +1076,17 @@ impl App {
                         fi
                     }
                 };
-                s.sync_tree_from_loaded_files();
+                {
+                    let shared = &mut *s;
+                    shared
+                        .tree
+                        .sync_after_recording_load(shared.loaded_files.view(), reset_visibility);
+                }
                 s.plot_state.integrate_file(fi, series);
                 let loaded_id = s.loaded_files.view().get(fi).map(|entry| entry.id());
                 drop(s);
-                if let Some(id) = loaded_id
-                    && let RecordingOperationOrigin::Arrival(arrival) = &origin
-                {
-                    self.association_batches.register_recording(arrival, id);
+                if let Some(id) = loaded_id {
+                    self.register_loaded_recording(id, &origin);
                 }
                 if replaced.is_some() {
                     // The replaced entry holds other tracks than the one it
@@ -1118,21 +1133,14 @@ impl App {
                     completed_at: now,
                 });
             }
-            LoadCompletion::SavedLog {
-                result:
-                    Ok(SavedLogResult {
-                        filename,
-                        parsed,
-                        restored,
-                    }),
-            } => {
-                self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Saved(restored));
-                self.loader.finishing_jobs.push(FinishedJob {
+            LoadCompletion::SavedLog { result: Ok(saved) } => self.integrate_completed_saved_log(
+                saved,
+                FinishedJob {
                     filename: completed.filename,
                     elapsed_secs: completed.elapsed_secs,
                     completed_at: now,
-                });
-            }
+                },
+            ),
             LoadCompletion::Recording {
                 result: Err(failure),
                 ..
@@ -1151,6 +1159,43 @@ impl App {
                 );
                 self.load_failures.push(failure);
             }
+        }
+    }
+
+    fn integrate_completed_saved_log(
+        &mut self,
+        SavedLogResult {
+            filename,
+            parsed,
+            restored,
+        }: SavedLogResult,
+        job: FinishedJob,
+    ) {
+        if let AttachedLogRequester::SessionHistoryRecording(file) = restored.requested_by
+            && !self.session_attachment_target_is_unambiguous(file, &restored.attachment.recording)
+        {
+            return;
+        }
+        self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Saved(restored));
+        self.loader.finishing_jobs.push(job);
+    }
+
+    fn register_loaded_recording(&mut self, id: LoadedFileId, origin: &RecordingOperationOrigin) {
+        match origin {
+            RecordingOperationOrigin::Arrival(arrival) => {
+                self.association_batches.register_recording(arrival, id);
+            }
+            RecordingOperationOrigin::SessionHistory(operation) => {
+                let observation = self.session_history.loaded(
+                    *operation,
+                    self.shared.borrow().loaded_files.view(),
+                    id,
+                );
+                if let Some(observation) = observation {
+                    self.history.restore_session_recording(id, observation);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1197,9 +1242,16 @@ impl App {
         let log = LoadedLog::new(filename, parsed, window);
         let requested_by = match &origin {
             ParsedLogOrigin::Loose(_) => None,
-            ParsedLogOrigin::RecoverLoose(_) => Some(loader::AttachedLogRequester::RecordingLoad),
+            ParsedLogOrigin::RecoverLoose(_) => Some(AttachedLogRequester::RecordingLoad),
             ParsedLogOrigin::Saved(restore) => Some(restore.requested_by),
         };
+        let restored_with_recording = matches!(
+            requested_by,
+            Some(
+                AttachedLogRequester::RecordingLoad
+                    | AttachedLogRequester::SessionHistoryRecording(_)
+            )
+        );
         let entry_count = log.parsed().entries().len();
         let name = log.name().to_owned();
         let shared = self.shared.borrow();
@@ -1228,18 +1280,16 @@ impl App {
                 log::info!(
                     "Loaded log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
                 );
-                match requested_by {
-                    Some(loader::AttachedLogRequester::RecordingLoad) => self
-                        .log_viewer
+                if restored_with_recording {
+                    self.log_viewer
                         .restored_logs
-                        .note_log_loaded_with_a_recording(id),
-                    Some(loader::AttachedLogRequester::UserOpenedTheAttachment) | None => {
-                        self.log_viewer.open_on_log(id);
-                    }
+                        .note_log_loaded_with_a_recording(id);
+                } else {
+                    self.log_viewer.open_on_log(id);
                 }
             }
             LogPushOutcome::AlreadyLoaded(id) => {
-                if requested_by != Some(loader::AttachedLogRequester::RecordingLoad) {
+                if !restored_with_recording {
                     self.show_the_log_this_content_is_already_loaded_as(id, &name);
                 }
             }

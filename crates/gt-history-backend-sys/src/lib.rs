@@ -5,8 +5,8 @@ use gt_history_types::{
     CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HISTORY_LOCK as DB_LOCK, HistoryAccess,
     HistoryDatabase, LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
     ReadOnlyHistoryDatabase, RecordingEntry, RecordingInsert, RecordingMeta, RecordingUiState,
-    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, UiStateVersionReporter,
-    log_attachment,
+    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackLayoutVisibility, TrackRange,
+    UiStateVersionReporter, log_attachment,
 };
 
 pub mod copy;
@@ -338,11 +338,12 @@ impl HistoryDatabase for SysDb {
             .map_err(Into::into)
     }
 
-    fn set_tracks(
+    fn set_track_layout(
         &mut self,
         db_ref: &DatabaseRef,
         tracks: &[TrackRange],
         settings: StoredSegmentation,
+        visibility: TrackLayoutVisibility,
     ) -> Result<(), DbError> {
         let access = HistoryAccess::lock();
         access.invalidate_track_snapshots(self, db_ref)?;
@@ -352,6 +353,7 @@ impl HistoryDatabase for SysDb {
             &db_ref.group_name,
             tracks,
             settings,
+            visibility,
         )
         .map_err(Into::into)
     }
@@ -362,7 +364,8 @@ impl HistoryDatabase for SysDb {
         rows: &[usize],
         shelved: bool,
     ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_track_membership(self, db_ref)?;
         crate::copy::set_tracks_shelved(
             &self.path,
             &db_ref.identity,

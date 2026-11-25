@@ -10,7 +10,8 @@ use gt_side_panel::NodeKey;
 use gt_store::{
     DatabaseRef, HistoryAccess, HistoryDatabase as _, LogAttachmentId,
     ReadOnlyHistoryDatabase as _, ReadOnlyRecordings, Recordings, StoredFixPlacementRule,
-    StoredLogFilterStack, StoredLogSettings, StoredYearResolution, TrackRange, TrackState,
+    StoredLogFilterStack, StoredLogSettings, StoredRecording, StoredSegmentation, StoredTrackTable,
+    StoredYearResolution, TrackRange, TrackState,
 };
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use gt_track_builder::SegmentationConfig;
@@ -813,8 +814,8 @@ fn stored_segmentation_from_app_with_rules(
     app: &App,
     track_split_rule: gt_store::StoredTrackSplitRule,
     fix_placement_rule: gt_store::StoredFixPlacementRule,
-) -> gt_store::StoredSegmentation {
-    gt_store::StoredSegmentation {
+) -> StoredSegmentation {
+    StoredSegmentation {
         track_split_rule,
         fix_placement_rule,
         ..crate::app::loader::stored_segmentation_from_config(&app.processing_config)
@@ -832,7 +833,6 @@ fn resegment_prompt_for(
     };
     crate::app::ResegmentPrompt {
         origin: RecordingOperationOrigin::Independent,
-        db_ref: db_ref.clone(),
         filename: "ride.gtd".to_owned(),
         bytes: std::sync::Arc::from(ui_tests::minimal_gtd_bytes()),
         stored: stored_segmentation_from_app_with_rules(app, track_split_rule, fix_placement_rule),
@@ -898,20 +898,21 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
-    let stored = gt_store::StoredRecording {
+    let stored = StoredRecording {
+        meta: None,
         bytes: ui_tests::minimal_gtd_bytes(),
-        tracks: vec![
-            gt_store::TrackRange {
+        track_table: StoredTrackTable::Present(vec![
+            TrackRange {
                 start: 0,
                 end: 30,
-                state: gt_store::TrackState::Live,
+                state: TrackState::Live,
             },
-            gt_store::TrackRange {
+            TrackRange {
                 start: 30,
                 end: 61,
-                state: gt_store::TrackState::Shelved,
+                state: TrackState::Shelved,
             },
-        ],
+        ]),
         segmentation: Some(stored_segmentation_from_app_with_rules(
             harness.state(),
             stored_split_rule,
@@ -990,7 +991,7 @@ fn history_reopening_reproduces_geometry_and_navigation_evidence(
     let mut bytes = Vec::new();
     file.write(&mut bytes).unwrap();
     let current = SegmentationConfig::default();
-    let settings = gt_store::StoredSegmentation {
+    let settings = StoredSegmentation {
         fix_placement_rule: rule,
         ..crate::app::loader::stored_segmentation_from_config(&current)
     };

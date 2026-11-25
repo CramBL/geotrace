@@ -101,7 +101,6 @@ impl OversizedAppWindow {
                 };
                 app.pending_resegment = Some(crate::app::ResegmentPrompt {
                     origin: RecordingOperationOrigin::Independent,
-                    db_ref: db_ref.clone(),
                     filename: long,
                     bytes: std::sync::Arc::from(Vec::<u8>::new()),
                     stored: gt_store::StoredSegmentation {
