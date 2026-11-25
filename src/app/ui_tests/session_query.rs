@@ -7,9 +7,9 @@ use egui_kittest::kittest::Queryable as _;
 use gt_loaded_files::FileHistory;
 use gt_query::Unit;
 use gt_session_bridge::{
-    ChannelEntry, ErrorCode, GetQueryResults, QueryJobId, QueryJobRequest, QueryJobState,
-    QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultPage,
-    QueryResultSource, QueryResultTime, QueryResultValue, QueryText, QueryValidation, RangeTarget,
+    ChannelEntry, ErrorCode, GetQueryResults, NumericObservation, QueryJobId, QueryJobRequest,
+    QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest,
+    QueryResultPage, QueryResultSource, QueryResultTime, QueryText, QueryValidation, RangeTarget,
     Reply, Request, SessionRequest, ShowOnMap, ShowOnPlot,
 };
 use gt_test_utils::fixtures;
@@ -487,8 +487,8 @@ fn assert_point_rows(
     assert_eq!(rows.len(), 100);
     assert_eq!(rows[0].index, 20);
     assert_eq!(rows[0].time, matched.first_time);
-    assert_eq!(rows[0].values[1], QueryResultValue::Missing);
-    assert_eq!(rows[1].values[1], QueryResultValue::Finite { value: 0.0 });
+    assert_eq!(rows[0].values[1], NumericObservation::Missing);
+    assert_eq!(rows[1].values[1], NumericObservation::Finite { value: 0.0 });
     assert_eq!(rows[0].values[2], matched.aggregates[0]);
     assert_eq!(next_start, Some(120));
 
@@ -551,7 +551,7 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
     );
     assert_eq!(
         matches[0].aggregates,
-        [QueryResultValue::Finite {
+        [NumericObservation::Finite {
             value: 1.5 * Unit::G.to_base()
         }]
     );
@@ -650,7 +650,7 @@ fn assert_channel_rows(
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].index, 19);
     assert_eq!(rows[0].time, matched.last_time);
-    assert_eq!(rows[0].values[0], QueryResultValue::Finite { value: 1.5 });
+    assert_eq!(rows[0].values[0], NumericObservation::Finite { value: 1.5 });
 }
 
 #[test]

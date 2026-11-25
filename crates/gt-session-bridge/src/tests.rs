@@ -4,16 +4,16 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta};
-use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
+use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime, Velocity};
 use gt_history_types::RecordingMeta;
 use gt_loaded_files::{FileHistory, LoadedFiles, MAX_RECORDINGS_PER_PAGE};
 use gt_loader::LoadedGtd;
 use gt_query::{ConstructKind, MetricSource, Span};
 use gt_test_utils::fixtures;
-use gt_types::PointIdx;
+use gt_types::{FileIdx, PointIdx, TrackIdx, TrackRef};
 use proptest::strategy::Strategy as _;
 use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
@@ -24,8 +24,8 @@ use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 use super::{
     ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, Inspection,
     InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE,
-    Pending, QueryText, QueryValidation, Recording, RecordingReference, Recordings, Reply, Request,
-    Server,
+    NumericObservation, Pending, QueryText, QueryValidation, Recording, RecordingReference,
+    Recordings, Reply, Request, Server, TrackReference,
 };
 
 struct TestEndpoint {
@@ -909,7 +909,7 @@ fn point_pages_keep_recorded_order_and_missing_values() {
     assert_eq!(page.points.len(), MAX_POINTS_PER_PAGE);
     let previous = page.points.last().unwrap();
     assert_eq!(previous.position, None);
-    assert_eq!(previous.eph_m, None);
+    assert_eq!(previous.eph_m, NumericObservation::Missing);
     assert_eq!(previous.system_time, None);
     assert_eq!(
         page.next_start,
@@ -942,6 +942,81 @@ fn point_pages_keep_recorded_order_and_missing_values() {
     assert_eq!(
         view.execute(InspectionRequest::GetRangeDetails(args)),
         Err(ErrorCode::InvalidRange)
+    );
+}
+
+#[tokio::test]
+async fn framed_point_measurements_distinguish_missing_finite_and_infinite_values() {
+    let finite_eph = f64::from(2.4_f32);
+    let finite_speed = 51.248178375505404;
+    let mut recorder = NavFileBuilder::new().open();
+    for (seconds, eph, speed) in [
+        (0, None, None),
+        (1, Some(f64::INFINITY), Some(f64::NEG_INFINITY)),
+        (2, Some(f64::NEG_INFINITY), Some(f64::INFINITY)),
+        (3, Some(finite_eph), Some(finite_speed)),
+    ] {
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(NavFixTime::Receiver(
+                    DateTime::UNIX_EPOCH + TimeDelta::seconds(seconds),
+                ))
+                .lat(Angle::degrees(55.7))
+                .lon(Angle::degrees(12.6))
+                .maybe_eph_m(eph)
+                .maybe_speed(speed.map(Velocity::meter_per_second))
+                .build(),
+        );
+    }
+    let mut bytes = Vec::new();
+    recorder.finish().unwrap().write(&mut bytes).unwrap();
+    let mut files = LoadedFiles::new();
+    files.push(
+        gt_loader::load_bytes(&bytes, "measurements.gtd".to_owned()).unwrap(),
+        FileHistory::None,
+    );
+    let track = files
+        .view()
+        .session_track_ref(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)))
+        .unwrap();
+    let session = Uuid::nil();
+    let view = Inspection::new(files.view(), "{filename}", session);
+    let reply = self::framed_inspection_reply(
+        &view,
+        InspectionRequest::GetRangeDetails(GetRangeDetails {
+            track: TrackReference::new(session, track),
+            start: None,
+            end: None,
+            limit: None,
+        }),
+    )
+    .await;
+    let json = serde_json::to_value(reply).unwrap();
+    let observations: Vec<_> = json
+        .pointer("/details/points")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|point| {
+            (
+                point.get("eph_m").unwrap(),
+                point.get("velocity_mps").unwrap(),
+            )
+        })
+        .collect();
+    let missing = json!({"status": "missing"});
+    let non_finite = json!({"status": "non_finite"});
+    assert_eq!(
+        observations,
+        [
+            (&missing, &missing),
+            (&non_finite, &non_finite),
+            (&non_finite, &non_finite),
+            (
+                &json!({"status": "finite", "value": finite_eph}),
+                &json!({"status": "finite", "value": finite_speed}),
+            ),
+        ]
     );
 }
 

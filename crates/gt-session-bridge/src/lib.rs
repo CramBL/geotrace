@@ -25,8 +25,9 @@ pub use crate::metrics::{
 };
 pub use crate::protocol::{
     ApplyProcessing, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, OpenPoint, QueryText, RangeTarget, Recording, RecordingReference, Recordings,
-    Reply, Request, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
+    ListRecordings, NumericObservation, OpenPoint, QueryText, RangeTarget, Recording,
+    RecordingReference, Recordings, Reply, Request, ShowOnMap, ShowOnPlot, TimeRange,
+    TrackReference,
 };
 pub use crate::query_job::{
     QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
@@ -34,7 +35,7 @@ pub use crate::query_job::{
 pub use crate::query_results::{
     GetQueryResults, QueryMatch, QueryMatchExtent, QueryMatchPosition, QueryMatchRange,
     QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResultValue, QueryResults,
+    QueryResultTime, QueryResults,
 };
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
 pub use crate::settings::{

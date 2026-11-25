@@ -8,12 +8,12 @@ use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
     AnalysisSettingKey, ApplyProcessing, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
     HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus, HistoryRecordings,
-    ListHistoryRecordings, ListMetrics, ListRecordings, Metrics, OpenHistoryRecording, OpenPoint,
-    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
-    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation, RangeDetails,
-    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, SetSetting,
-    SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
+    ListHistoryRecordings, ListMetrics, ListRecordings, Metrics, NumericObservation,
+    OpenHistoryRecording, OpenPoint, PointDetails, QueryJobId, QueryJobRequest, QueryJobState,
+    QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage,
+    QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText, QueryValidation,
+    RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request,
+    SetSetting, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
     SettingValue, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_types::PointIdx;
@@ -192,8 +192,16 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         .await;
     assert_eq!(points.pointer("/result/isError"), Some(&json!(false)));
     assert_eq!(
-        points.pointer("/result/structuredContent/points/0/time"),
-        Some(&json!("1970-01-01T00:00:00.000000021Z"))
+        points.pointer("/result/structuredContent"),
+        Some(&json!({
+            "points": [{
+                "index": 0, "time": "1970-01-01T00:00:00.000000021Z", "gps_time": null,
+                "system_time": null, "position": null,
+                "eph_m": {"status": "finite", "value": 2.375},
+                "velocity_mps": {"status": "missing"}
+            }],
+            "next_start": null
+        }))
     );
     let metrics = client
         .exchange(json!({
@@ -623,7 +631,7 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                         rows: vec![QueryResultRow {
                             index: 3,
                             time: Some(QueryResultTime::UnixSeconds(0.000000021)),
-                            values: vec![QueryResultValue::from(Some(f64::NAN))],
+                            values: vec![NumericObservation::from(Some(f64::NAN))],
                         }],
                     },
                 },
@@ -716,8 +724,8 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                     gps_time: None,
                     system_time: None,
                     position: None,
-                    eph_m: None,
-                    velocity_mps: None,
+                    eph_m: NumericObservation::Finite { value: 2.375 },
+                    velocity_mps: NumericObservation::Missing,
                 }],
                 next_start: None,
             },

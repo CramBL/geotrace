@@ -138,7 +138,10 @@ Longitude bounds extend east from `longitude_start_deg` by `longitude_span_deg`,
 Use `next_start` as `start` with the same `end` to continue through pages of up to 100 points.
 The tool reports exact UTC timestamps in recorded order, including across clock reversals.
 The source for `time` is the receiver clock when available and the host clock otherwise.
-Missing recorded coordinates and measurements appear as null.
+Missing recorded coordinates appear as null.
+The `eph_m` and `velocity_mps` fields use status objects such as `{"status":"finite","value":2.5}`.
+An unreported measurement has status `missing` and a non-finite measurement has status `non_finite`.
+Only a finite measurement includes `value`.
 
 Use recording IDs and cursors from the current desktop session.
 Start again with `list_recordings` after restarting GeoTrace.

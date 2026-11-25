@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::metrics::Metrics;
 use crate::protocol::{
-    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings, QueryText,
-    Recording, Recordings, Reply, TimeRange, TrackReference,
+    ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
+    NumericObservation, QueryText, Recording, Recordings, Reply, TimeRange, TrackReference,
 };
 use crate::query_validation::QueryValidation;
 
@@ -232,8 +232,8 @@ pub struct PointDetails {
     pub gps_time: Option<DateTime<Utc>>,
     pub system_time: Option<DateTime<Utc>>,
     pub position: Option<Position>,
-    pub eph_m: Option<f32>,
-    pub velocity_mps: Option<f64>,
+    pub eph_m: NumericObservation,
+    pub velocity_mps: NumericObservation,
 }
 
 impl PointDetails {
@@ -248,10 +248,11 @@ impl PointDetails {
                 latitude_deg: latitude.as_degrees(),
                 longitude_deg: longitude.as_degrees(),
             }),
-            eph_m: tpv.eph_m(),
+            eph_m: tpv.eph_m().map(f64::from).into(),
             velocity_mps: tpv
                 .velocity()
-                .map(|velocity| velocity.get::<meter_per_second>()),
+                .map(|velocity| velocity.get::<meter_per_second>())
+                .into(),
         }
     }
 }
