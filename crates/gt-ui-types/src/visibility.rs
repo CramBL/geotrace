@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use chrono::{DateTime, Utc};
-use gt_filter::{GlobalFilter, TimeWindow};
+use gt_filter::GlobalFilter;
 use gt_types::satellites::Satellites;
 use gt_types::{
     CustomMarker, DataCategory, DataCategorySet, EventMarker, FileIdx, GeneratedMarker, LoadedFile,
@@ -441,14 +441,12 @@ impl<'a> PreparedTrackEligibility<'a> {
         self,
         points: Range<usize>,
     ) -> impl Iterator<Item = Range<usize>> + 'a {
-        let track = self.track().filter(|track| {
-            self.is_in_scope() && !points.is_empty() && points.end <= track.points.len()
-        });
-        track
+        self.track()
+            .filter(move |_| self.is_in_scope())
             .into_iter()
             .flat_map(move |track| {
                 let window = self.eligibility.filter.time_window();
-                self::time_filtered_fix_ranges(track, points.clone(), window)
+                gt_filter::time_filtered_fix_ranges(track, points.clone(), window)
             })
             .flat_map(move |range| self::exclude_hidden_fix_ranges(range, self.hidden_ranges))
     }
@@ -602,61 +600,6 @@ impl<'a> PreparedTrackEligibility<'a> {
             })
         }
     }
-}
-
-fn time_filtered_fix_ranges(
-    track: &LoadedTrack,
-    selection: Range<usize>,
-    window: TimeWindow,
-) -> impl Iterator<Item = Range<usize>> {
-    let chunks = match window {
-        TimeWindow::All | TimeWindow::Empty => &[],
-        _ => track.lod.full_point_chunks(),
-    };
-    let first_chunk = chunks.partition_point(|chunk| chunk.slots().end <= selection.start);
-    let unchunked = chunks.is_empty().then(|| (selection.clone(), None));
-    let chunks = chunks
-        .iter()
-        .skip(first_chunk)
-        .map(|chunk| (chunk.slots(), Some(chunk.extent().time())))
-        .take_while(move |(slots, _)| slots.start < selection.end)
-        .map(move |(slots, time)| {
-            (
-                slots.start.max(selection.start)..slots.end.min(selection.end),
-                time,
-            )
-        });
-    let mut ranges = unchunked
-        .into_iter()
-        .chain(chunks)
-        .flat_map(move |(slots, time)| {
-            let covered = window == TimeWindow::All || time.is_some_and(|time| window.covers(time));
-            let scan = !covered
-                && window != TimeWindow::Empty
-                && time.is_none_or(|time| window.overlaps(time));
-            let whole = covered.then(|| slots.clone());
-            let mut pending = if scan { slots } else { Range::default() };
-            let partial = std::iter::from_fn(move || {
-                let inside = |index: usize| {
-                    track
-                        .points
-                        .get(index)
-                        .is_some_and(|point| window.contains(point.tpv.time().utc()))
-                };
-                let first = pending.find(|&index| inside(index))?;
-                let next_outside = pending.find(|&index| !inside(index));
-                Some(first..next_outside.unwrap_or(pending.end))
-            });
-            whole.into_iter().chain(partial)
-        })
-        .peekable();
-    std::iter::from_fn(move || {
-        let mut run = ranges.next()?;
-        while let Some(next) = ranges.next_if(|next| next.start == run.end) {
-            run.end = next.end;
-        }
-        Some(run)
-    })
 }
 
 fn exclude_hidden_fix_ranges(
@@ -1050,6 +993,29 @@ mod tests {
         let files = test_util::one_track_file();
         let filter = GlobalFilter::default().with_minimum_duration(Some(TimeDelta::hours(1)));
         assert!(track_in_scope(&files, &vis_all(), &filter, test_util::track0()).is_none());
+    }
+
+    #[test]
+    fn available_fix_ranges_apply_track_scope_and_query_hiding() {
+        let mut fixture = ScopeFixture::all_drawn();
+        fixture
+            .filter
+            .set_time_bounds(Some(test_util::start() + TimeDelta::seconds(1)), None);
+        fixture.hide_point(2);
+        let track = test_util::track0();
+        let points = 0..test_util::POINT_COUNT;
+
+        let eligible = fixture.scope().eligibility().prepare_track(track);
+        assert_eq!(
+            eligible
+                .available_fix_ranges(points.clone())
+                .collect::<Vec<_>>(),
+            [1..2, 3..test_util::POINT_COUNT]
+        );
+
+        fixture.visibility.files[0].tracks[0].enabled = false;
+        let ineligible = fixture.scope().eligibility().prepare_track(track);
+        assert_eq!(ineligible.available_fix_ranges(points).next(), None);
     }
 
     /// A [`TrackRef`] left over from before a file shrank addresses nothing and

@@ -1,14 +1,15 @@
-//! The global filter's time window, as the three readers of it must agree on
-//! it: the per-point predicate, the range form the query and the map evaluate
-//! over, and the track-level clause the side panel and the map gate a whole
-//! track with.
+//! Per-fix checks, enclosing ranges, accepted runs and track-level time filtering.
+
+use std::ops::Range;
 
 use chrono::{DateTime, Duration, Utc};
-use gt_filter::GlobalFilter;
+use gt_filter::{GlobalFilter, TimeWindow};
+use gt_test_utils::{FileParts, fixtures};
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{LoadedTrack, NavPoint, TimeRange};
+use rstest::rstest;
 
 /// The instant every fix and every window below is placed relative to.
 fn epoch() -> DateTime<Utc> {
@@ -93,25 +94,48 @@ fn the_filtered_range_agrees_with_the_point_predicate_on_time_ordered_fixes() {
     }
 }
 
-/// A fix stamped before its predecessor reaches the filter: nothing sorts the
-/// fixes a recording is read from, and a backward time step smaller than the
-/// track split gap keeps its fixes in one track. The query must still evaluate
-/// the fix at 1 s, which is inside the window that ends at 5 s.
 #[test]
-fn a_fix_after_a_backward_time_step_stays_inside_the_filtered_range() {
-    let fixes = fixes_at(&[at(0), at(10), at(1)]);
+fn the_enclosing_range_includes_the_gap_between_accepted_fix_runs() {
+    let track = track_over(fixes_at(&[at(4), at(10), at(1)]));
     let filter = window(None, Some(at(5)));
+    let runs =
+        gt_filter::time_filtered_fix_ranges(&track, 0..track.points.len(), filter.time_window());
 
-    let range = gt_filter::time_filtered_range(&fixes, &filter);
+    assert_eq!(gt_filter::time_filtered_range(&track.points, &filter), 0..3);
+    assert_eq!(runs.collect::<Vec<_>>(), [0..1, 2..3]);
+}
 
-    assert!(
-        range.contains(&2),
-        "the fix at 1 s passes the window, and the range {range:?} drops it"
+#[test]
+fn an_accepted_fix_run_crosses_adjacent_point_chunks() {
+    let points = fixtures::nav_points_from(epoch(), 192, 1);
+    let file = gt_test_utils::build_file("recording.gtd", &points, FileParts::default());
+    let [track] = file.tracks.as_slice() else {
+        panic!("expected one track");
+    };
+    let [first, second, ..] = track.lod.full_point_chunks() else {
+        panic!("expected at least two point chunks");
+    };
+    let boundary = second.slots().start;
+    assert_eq!(first.slots().end, boundary);
+    let window = TimeWindow::Until(track.points[boundary + 1].tpv.time().utc());
+    let mut runs = gt_filter::time_filtered_fix_ranges(track, boundary - 2..boundary + 3, window);
+
+    assert_eq!(runs.next(), Some(boundary - 2..boundary + 2));
+    assert_eq!(runs.next(), None);
+}
+
+#[rstest]
+#[case::empty(1..1)]
+#[case::past_track(1..4)]
+fn an_invalid_selection_has_no_accepted_fix_runs(#[case] selection: Range<usize>) {
+    let track = track_over(fixes_at(&[at(0), at(1), at(2)]));
+
+    assert_eq!(
+        gt_filter::time_filtered_fix_ranges(&track, selection, TimeWindow::All).next(),
+        None
     );
 }
 
-/// The mirror of the case above: the fix at 10 s is outside the window that
-/// ends at 5 s, so the query must not evaluate it.
 #[test]
 fn a_fix_before_a_backward_time_step_stays_outside_the_filtered_range() {
     let fixes = fixes_at(&[at(10), at(1)]);
