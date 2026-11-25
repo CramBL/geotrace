@@ -1,10 +1,12 @@
-use std::collections::HashSet;
 use std::num::NonZeroUsize;
-use std::ops::{Deref, RangeInclusive};
+use std::ops::RangeInclusive;
 use std::path::Path;
 
 use chrono::{NaiveDate, NaiveTime};
-use gt_history_types::{DatabaseRef, NavPointTimeRange, RecordingEntry, RecordingMeta};
+use gt_history_types::{
+    DatabaseRef, HistoryEntries, HistoryOpenSelection, HistoryOpenSelectionError,
+    NavPointTimeRange, RecordingEntry,
+};
 use serde::{Deserialize, Serialize};
 use uuid::{Builder, Uuid};
 use xxhash_rust::xxh3::Xxh3;
@@ -115,7 +117,7 @@ impl HistoryRecordingId {
         hash.update(path_bytes);
         // An interrupted identity rename can leave a copy of a group under both identities.
         let include_identity = !reference.has_generated_group_id()
-            || recordings.repeated_groups.contains(&reference.group_name);
+            || recordings.has_repeated_group(&reference.group_name);
         hash.update(&[u8::from(include_identity)]);
         if include_identity {
             hash.update(&(reference.identity.len() as u64).to_le_bytes());
@@ -123,40 +125,6 @@ impl HistoryRecordingId {
         }
         hash.update(reference.group_name.as_bytes());
         Self(Builder::from_custom_bytes(hash.digest128().to_be_bytes()).into_uuid())
-    }
-}
-
-pub struct HistoryEntries {
-    entries: Vec<RecordingEntry>,
-    repeated_groups: HashSet<String>,
-}
-
-impl HistoryEntries {
-    pub fn new(entries: Vec<RecordingEntry>) -> Self {
-        let mut seen_groups = HashSet::with_capacity(entries.len());
-        let mut repeated_groups = HashSet::new();
-        for entry in &entries {
-            let name = &entry.db_ref.group_name;
-            if !seen_groups.insert(name) && !repeated_groups.contains(name) {
-                repeated_groups.insert(name.clone());
-            }
-        }
-        Self {
-            entries,
-            repeated_groups,
-        }
-    }
-
-    pub fn into_entries(self) -> Vec<RecordingEntry> {
-        self.entries
-    }
-}
-
-impl Deref for HistoryEntries {
-    type Target = [RecordingEntry];
-
-    fn deref(&self) -> &Self::Target {
-        &self.entries
     }
 }
 
@@ -172,25 +140,22 @@ impl HistoryListing<'_> {
         &self,
         id: HistoryRecordingId,
     ) -> Result<HistoryOpenSelection, ErrorCode> {
-        let mut matches = self.entries.iter().filter(|entry| {
+        let mut matches = self.entries.iter().enumerate().filter(|(_, entry)| {
             HistoryRecordingId::of(self.database, self.entries, &entry.db_ref) == id
         });
-        let entry = matches.next().ok_or(ErrorCode::HistorySelectionExpired)?;
-        if matches.next().is_some()
-            || self
-                .entries
-                .repeated_groups
-                .contains(&entry.db_ref.group_name)
-        {
+        let (entry_index, _) = matches.next().ok_or(ErrorCode::HistorySelectionExpired)?;
+        if matches.next().is_some() {
             return Err(ErrorCode::HistorySelectionExpired);
         }
-        if !entry.db_ref.has_generated_group_id() {
-            return Err(ErrorCode::HistorySelectionRequiresDesktop);
-        }
-        Ok(HistoryOpenSelection {
-            recording: entry.db_ref.clone(),
-            meta: entry.meta,
-        })
+        self.entries
+            .select_for_open(entry_index)
+            .map_err(|error| match error {
+                HistoryOpenSelectionError::AmbiguousGroup
+                | HistoryOpenSelectionError::MissingEntry => ErrorCode::HistorySelectionExpired,
+                HistoryOpenSelectionError::LegacyGroup => {
+                    ErrorCode::HistorySelectionRequiresDesktop
+                }
+            })
     }
 
     pub fn page(&self, request: ListHistoryRecordings) -> Result<HistoryRecordings, ErrorCode> {
@@ -248,21 +213,6 @@ impl HistoryListing<'_> {
             recordings,
             next_cursor,
         })
-    }
-}
-
-pub struct HistoryOpenSelection {
-    recording: DatabaseRef,
-    meta: RecordingMeta,
-}
-
-impl HistoryOpenSelection {
-    pub fn recording(&self) -> &DatabaseRef {
-        &self.recording
-    }
-
-    pub fn matches_read_metadata(&self, meta: Option<RecordingMeta>) -> bool {
-        meta == Some(self.meta)
     }
 }
 

@@ -5,10 +5,9 @@ use chrono::NaiveDate;
 use egui::{Button, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
-use gt_session_bridge::HistoryEntries;
 use gt_store::{
-    DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta,
-    StoredTrackSnapshot,
+    DatabaseRef, DbError, HistoryEntries, NavPointTimeRange, PruneMode, RecordingEntry,
+    RecordingMeta, StoredTrackSnapshot,
 };
 use gt_types::TravelMode;
 use gt_ui_components::{ToolWindow, ToolWindowSizing};
