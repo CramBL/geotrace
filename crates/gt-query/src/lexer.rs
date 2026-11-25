@@ -178,7 +178,7 @@ pub fn channel_reference(name: &str, component: Option<&str>) -> Option<String> 
 
 /// Tokenize the whole input for parsing: comments are dropped, and the first
 /// offending character is an error.
-pub fn lex(src: &str) -> Result<Vec<Tok<'_>>, Diagnostic> {
+pub(crate) fn lex(src: &str) -> Result<Vec<Tok<'_>>, Diagnostic> {
     let mut lexer = Token::lexer(src);
     let mut toks = Vec::new();
     while let Some(result) = lexer.next() {

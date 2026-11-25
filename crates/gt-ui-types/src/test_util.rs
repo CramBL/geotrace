@@ -18,10 +18,10 @@ use gt_types::{
     PointIdx, TrackIdx, TrackRef,
 };
 
+use crate::MapElementRef;
 use crate::display_mask::DisplayMask;
 use crate::event_marker_visibility::EventMarkerVisibility;
 use crate::generated_marker_visibility::GeneratedMarkerVisibility;
-use crate::highlight::MapElementRef;
 use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::visibility::{MapEligibility, MapPresence, TrackDataVisibility};
 

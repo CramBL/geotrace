@@ -16,8 +16,9 @@ use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING_OCTAGON as ICON_WARNING_OCTAGON;
 use egui_phosphor::regular::X as ICON_X;
 use gt_loaded_files::LoadedFilesView;
-use gt_query::lexer::{self, TokenClass};
-use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
+use gt_query::{
+    ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span, TokenClass,
+};
 use gt_query_run::{CheckRefresh, MIXED_CHANNEL_MESSAGE, RunInputs, RunKind};
 use gt_side_panel::widgets::PointClickRequests;
 use gt_ui_types::{MapHighlight, MapPresence, MatchRevealTarget, QueryMatches, StaleRunNote};
@@ -999,7 +1000,7 @@ impl QueryWindow {
         let local = byte - chunk.start;
         let src = self.text().get(chunk.clone()).unwrap_or("");
         // Hit-test the token's actual span rectangle before documenting it.
-        let Some(token_span) = lexer::tokenize(src)
+        let Some(token_span) = gt_query::tokenize(src)
             .into_iter()
             .map(|t| t.span)
             .find(|span| span.start <= local && local < span.end)
@@ -1155,7 +1156,7 @@ fn format_history_age(age: chrono::Duration) -> String {
 fn query_one_line(text: &str) -> String {
     let mut kept = String::with_capacity(text.len());
     let mut cursor = 0;
-    for (span, class) in lexer::highlight_classes(text) {
+    for (span, class) in gt_query::highlight_classes(text) {
         if matches!(class, TokenClass::Comment) {
             kept.push_str(text.get(cursor..span.start).unwrap_or(""));
             cursor = span.end;
@@ -1391,7 +1392,7 @@ fn append_query_syntax(
 ) {
     let color = |class| syntax_color(class, default, dark_mode);
     let mut cursor = 0;
-    for (span, class) in lexer::highlight_classes(text) {
+    for (span, class) in gt_query::highlight_classes(text) {
         // Whitespace between tokens is not covered by a span.
         if let Some(gap) = text.get(cursor..span.start).filter(|g| !g.is_empty()) {
             job.append(gap, 0.0, text_format(font, default));
@@ -1480,7 +1481,7 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostics: &[Span]) -> LayoutJo
     // Cut at token boundaries and at the diagnostic edges so each underline
     // starts and ends exactly on its reported span.
     let mut cursor = 0;
-    for (span, class) in lexer::highlight_classes(text) {
+    for (span, class) in gt_query::highlight_classes(text) {
         for range in segments(cursor..span.start, &underlines) {
             append(range, default_color);
         }

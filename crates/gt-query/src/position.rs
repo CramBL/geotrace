@@ -1,10 +1,8 @@
 //! Position analysis for editor assistance: what is valid at the cursor
 //! (autocomplete) and what construct is under it (hover docs).
 //!
-//! Both tokenize with the lenient [`crate::lexer::tokenize`], which never
-//! fails, so they work on the incomplete text an editor holds mid-edit. The
-//! pipeline's stage structure makes the position tractable: split on `|`,
-//! find the stage the cursor is in, then the expected slot.
+//! Completion and hover analysis use [`crate::tokenize`] on incomplete text.
+//! The `|` tokens delimit the stages for cursor and slot lookup.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -282,10 +280,7 @@ fn channel_partial(src: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
     Some((at..cursor + after_len, src.get(at + 1..cursor)?))
 }
 
-/// Whether `b` is a channel-name character (`[a-z0-9_]`). Mirrors the lexer's
-/// `ident` subpattern (see [`crate::lexer`]). Keep the two in step if the
-/// SDK's channel-name rule changes. All such bytes are single-byte ASCII, so
-/// scanning by byte never splits a multi-byte character.
+/// The channel-name body characters in the `ident` subpattern in `lexer.rs`.
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
 }
@@ -297,9 +292,7 @@ fn is_body_byte(b: u8) -> bool {
     is_ident_byte(b) || b == b'.'
 }
 
-/// Whether `byte` falls inside a `# …` comment. [`lexer::tokenize`] drops
-/// comments, so this goes through the highlighter's classification, which
-/// covers them.
+/// [`crate::tokenize`] excludes comments from its output.
 fn in_comment(src: &str, byte: usize) -> bool {
     lexer::highlight_classes(src)
         .iter()

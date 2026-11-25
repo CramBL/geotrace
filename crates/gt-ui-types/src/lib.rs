@@ -50,7 +50,7 @@ pub mod drawn_position;
 pub mod event_marker_visibility;
 pub mod generated_marker_visibility;
 pub mod geomagnetic_series;
-pub mod highlight;
+mod highlight;
 pub mod jamming_series;
 pub mod log_hover;
 pub mod log_matches;

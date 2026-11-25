@@ -10,10 +10,10 @@ use gt_types::{
 use smallvec::SmallVec;
 use strum::EnumCount;
 
+use crate::MapElementRef;
 use crate::display_mask::{DisplayCategory, DisplayMask};
 use crate::event_marker_visibility::EventMarkerVisibility;
 use crate::generated_marker_visibility::GeneratedMarkerVisibility;
-use crate::highlight::MapElementRef;
 use crate::query_matches::QueryMatches;
 
 #[derive(Debug, Clone, PartialEq)]
