@@ -81,13 +81,11 @@ impl App {
             .apply_stored_hidden_tracks(observation, hidden_track_numbers);
     }
 
-    /// Read the UI state of a recording whose tracks reached the view without
-    /// it, which is one the user loaded from a file on disk.
-    pub(in crate::app) fn read_the_ui_state_stored_with_a_loaded_recording(
+    pub(in crate::app) fn read_recording_ui_state_if_unobserved(
         &self,
         layout: Option<&StoredLayoutRevision>,
     ) {
-        let Some(layout) = layout else {
+        let Some(layout) = layout.filter(|layout| layout.is_current()) else {
             return;
         };
         if self

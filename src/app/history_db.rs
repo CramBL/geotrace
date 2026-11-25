@@ -42,7 +42,7 @@ use super::association_batches::RecordingOperationOrigin;
 use super::load_failures::LoadRetryAttempt;
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
-use crate::app::loader::{self, GtdLoadMode, LoadedRecordingPlacement};
+use crate::app::loader::{self, GtdLoadMode, LoadedRecordingPlacement, StoredHistoryLoadSettings};
 use crate::app::recording_from_disk::{self, RecordingFromDisk, ScreenedRecordings};
 
 /// Why recordings are being deleted - selects the completion toast.
@@ -213,6 +213,7 @@ enum ReadRequest {
         origin: RecordingOperationOrigin,
         target: OpenTarget,
         placement: LoadedRecordingPlacement,
+        settings: Option<Box<StoredHistoryLoadSettings>>,
     },
     PrunePreview(PruneMode),
     RestoreSessionRecording {
@@ -406,6 +407,7 @@ pub enum Response {
         /// Where the app puts the recording once it is loaded, as the request
         /// set it.
         placement: LoadedRecordingPlacement,
+        settings: Option<Box<StoredHistoryLoadSettings>>,
         result: Result<OpenedRecording, DbError>,
     },
     PrunePreview(Result<Vec<DatabaseRef>, DbError>),
@@ -596,6 +598,7 @@ impl HistoryWorker {
             origin,
             target: OpenTarget::Address(db_ref),
             placement: LoadedRecordingPlacement::AddAnEntry,
+            settings: None,
         });
     }
 
@@ -613,6 +616,7 @@ impl HistoryWorker {
                     reuse_bytes,
                 }),
                 placement: LoadedRecordingPlacement::AddAnEntry,
+                settings: None,
             }))
             .is_ok()
         })
@@ -651,6 +655,22 @@ impl HistoryWorker {
             origin: RecordingOperationOrigin::Independent,
             target: OpenTarget::Address(db_ref),
             placement: LoadedRecordingPlacement::ReplaceTheLoadedEntry,
+            settings: None,
+        });
+    }
+
+    pub(super) fn refresh_stored_open(
+        &self,
+        recording: DatabaseRef,
+        origin: RecordingOperationOrigin,
+        placement: LoadedRecordingPlacement,
+        settings: StoredHistoryLoadSettings,
+    ) {
+        self.send_read(ReadRequest::Open {
+            origin,
+            target: OpenTarget::Address(recording),
+            placement,
+            settings: Some(Box::new(settings)),
         });
     }
 
@@ -782,6 +802,7 @@ impl HistoryWorker {
                 origin: RecordingOperationOrigin::Retry(attempt),
                 target: OpenTarget::Address(recording),
                 placement,
+                settings: None,
             }))
             .is_ok()
         })
@@ -942,6 +963,7 @@ fn handle_read_request(
             target,
             placement,
             origin,
+            settings,
         } => {
             let db_ref = target.recording().clone();
             let result = (|| {
@@ -988,6 +1010,7 @@ fn handle_read_request(
                 origin,
                 db_ref,
                 placement,
+                settings,
                 result,
             }
         }

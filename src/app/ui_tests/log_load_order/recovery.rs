@@ -386,6 +386,7 @@ fn a_recording_retry_settings_prompt_completes_or_cancels_its_attempt(
             origin: RecordingOperationOrigin::Retry(first),
             db_ref: recording.clone(),
             placement: LoadedRecordingPlacement::AddAnEntry,
+            settings: None,
             result: Err(DbError::Io(io::ErrorKind::Interrupted.into())),
         });
     assert!(!harness.state().load_failures.retry_is_pending(first));
@@ -401,6 +402,7 @@ fn a_recording_retry_settings_prompt_completes_or_cancels_its_attempt(
             origin: RecordingOperationOrigin::Retry(first),
             db_ref: recording.clone(),
             placement: LoadedRecordingPlacement::AddAnEntry,
+            settings: None,
             result: Err(DbError::SchemaTooNew {
                 found: 99,
                 supported: 1,
@@ -416,6 +418,7 @@ fn a_recording_retry_settings_prompt_completes_or_cancels_its_attempt(
             origin: RecordingOperationOrigin::Retry(attempt),
             db_ref: recording.clone(),
             placement: LoadedRecordingPlacement::AddAnEntry,
+            settings: None,
             result: Ok(test_util::recordings::opened_recording(
                 &recording,
                 StoredRecording {

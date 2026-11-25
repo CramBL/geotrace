@@ -18,9 +18,12 @@ use super::auto_prune::AutoPruneOutcome;
 use super::history::{self, HistoryWindowFrame};
 use super::history_db::{ListRequestId, OpenedRecording, SessionRestoration};
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
-use super::loader::{AttachedLogRequester, LoadedRecordingPlacement, RecalculationAuthority};
+use super::loader::{
+    AttachedLogRequester, CompletedLoad, LoadCompletion, LoadedRecordingPlacement,
+    RecalculationAuthority, StoredHistoryLoadSettings,
+};
 use super::session_history::OpenStop;
-use super::{App, ResegmentPrompt, history_db, loader, modals, storage};
+use super::{App, ResegmentPrompt, SharedAppState, history_db, loader, modals, storage};
 
 /// What the user chose in the prompt for a recordings database that would not
 /// open. Each failure offers one of the three remedies.
@@ -286,6 +289,7 @@ impl App {
         placement: loader::LoadedRecordingPlacement,
         mut opened: OpenedRecording,
         origin: RecordingOperationOrigin,
+        previous_settings: Option<StoredHistoryLoadSettings>,
     ) {
         // Reuse the original filename: the identity is the filename (with an
         // "auto:" prefix for auto-derived ones).
@@ -297,7 +301,14 @@ impl App {
             .to_owned();
 
         let mode = loader::GtdLoadMode::for_stored_recording(&opened.stored);
-        let settings_differ = !opened.track_snapshot.rows().is_empty()
+        let previous_settings = previous_settings.filter(|settings| {
+            opened
+                .stored
+                .segmentation
+                .is_none_or(|stored| loader::stored_tracks_match_config(&stored, &settings.config))
+        });
+        let settings_differ = previous_settings.is_none()
+            && !opened.track_snapshot.rows().is_empty()
             && opened.stored.segmentation.is_some_and(|settings| {
                 !loader::stored_tracks_match_config(&settings, &self.processing_config)
             });
@@ -325,11 +336,11 @@ impl App {
                 ui_state,
             );
         }
-        match stored.segmentation {
+        match (previous_settings, stored.segmentation) {
             // A stored track setting differs from the current one: let the user
             // choose before changing track ranges that the shelved state may
             // refer to, or the positions the fixes are drawn at.
-            Some(stored_settings) if settings_differ => {
+            (None, Some(stored_settings)) if settings_differ => {
                 let marker_settings_changed = !loader::marker_settings_match_config(
                     &stored_settings,
                     &self.processing_config,
@@ -362,20 +373,20 @@ impl App {
                     self.pending_resegment = Some(prompt);
                 }
             }
-            settings => {
-                let (config, marker_settings_changed) =
-                    settings.map_or((self.processing_config, false), |settings| {
-                        (
-                            loader::config_from_stored_segmentation(
-                                &settings,
-                                self.processing_config,
-                            ),
-                            !loader::marker_settings_match_config(
-                                &settings,
-                                &self.processing_config,
-                            ),
-                        )
+            (previous, stored_settings) => {
+                let settings = previous.unwrap_or_else(|| {
+                    let config = stored_settings.map_or(self.processing_config, |stored| {
+                        loader::config_from_stored_segmentation(&stored, self.processing_config)
                     });
+                    let applied_current_marker_settings = stored_settings.is_some_and(|stored| {
+                        !loader::marker_settings_match_config(&stored, &self.processing_config)
+                    });
+                    StoredHistoryLoadSettings {
+                        config,
+                        mode,
+                        applied_current_marker_settings,
+                    }
+                });
                 let track_table = loader::OpenTrackTable::from_stored_recording(
                     &stored.track_table,
                     track_snapshot,
@@ -383,16 +394,42 @@ impl App {
                 self.loader.spawn_gtd_bytes(
                     stored.bytes.into(),
                     filename,
-                    config,
-                    mode,
+                    settings.config,
+                    settings.mode,
                     Some(loader::HistoryOpen::ApplyShelved {
                         track_table,
-                        applied_current_marker_settings: marker_settings_changed,
+                        applied_current_marker_settings: settings.applied_current_marker_settings,
                         placement,
                     }),
                     origin,
                 );
             }
+        }
+    }
+
+    pub(super) fn refresh_expired_history_load(
+        &self,
+        completed: CompletedLoad,
+    ) -> Option<CompletedLoad> {
+        match completed {
+            CompletedLoad {
+                stored_history: Some(previous),
+                completion:
+                    LoadCompletion::Recording {
+                        origin,
+                        result: Ok(result),
+                    },
+                ..
+            } if !previous.layout.is_current() => {
+                self.history.refresh_stored_open(
+                    previous.layout.recording().clone(),
+                    origin,
+                    result.placement,
+                    previous.settings,
+                );
+                None
+            }
+            completed => Some(completed),
         }
     }
 
@@ -428,11 +465,19 @@ impl App {
         if let history_db::DbOp::TracksDeleted {
             snapshot_updates, ..
         } = op
+            && !snapshot_updates.is_empty()
         {
-            self.shared
-                .borrow_mut()
-                .loaded_files
-                .apply_track_snapshot_updates(snapshot_updates);
+            let layouts_to_read = {
+                let SharedAppState {
+                    loaded_files, tree, ..
+                } = &mut *self.shared.borrow_mut();
+                let adopted = loaded_files.apply_track_snapshot_updates(snapshot_updates);
+                tree.sync_after_track_purges(loaded_files.view(), snapshot_updates, &adopted)
+            };
+            for layout in &layouts_to_read {
+                self.read_recording_ui_state_if_unobserved(Some(layout));
+            }
+            self.store_the_hidden_tracks_the_user_changed();
         }
         match result {
             Ok(()) => {
@@ -490,6 +535,7 @@ impl App {
         origin: RecordingOperationOrigin,
         db_ref: DatabaseRef,
         placement: LoadedRecordingPlacement,
+        settings: Option<Box<StoredHistoryLoadSettings>>,
         result: Result<OpenedRecording, DbError>,
     ) {
         let retry = match &origin {
@@ -512,7 +558,12 @@ impl App {
                     self.session_history.finish(id, OpenStop::Expired);
                     return;
                 }
-                self.begin_history_open(placement, opened, origin);
+                self.begin_history_open(
+                    placement,
+                    opened,
+                    origin,
+                    settings.map(|settings| *settings),
+                );
             }
             Err(e) => {
                 log::error!("Failed to load recording from history: {e}");
@@ -562,8 +613,10 @@ impl App {
                 origin,
                 db_ref,
                 placement,
+                settings,
                 result,
-            } => self.open_the_recording_read_from_history(origin, db_ref, placement, result),
+            } => self
+                .open_the_recording_read_from_history(origin, db_ref, placement, settings, result),
             Response::Mutated { op, result } => self.apply_mutation_outcome(&op, &result),
             Response::PrunePreview(Ok(refs)) => self.history_window.set_prune_preview(refs),
             Response::PrunePreview(Err(e)) => log::error!("Prune preview failed: {e}"),
@@ -596,6 +649,7 @@ impl App {
             }
             Response::RecordingUiStateLoaded(Ok((observation, ui_state))) => {
                 self.apply_the_ui_state_stored_with_a_recording(observation, Ok(ui_state));
+                self.store_the_hidden_tracks_the_user_changed();
             }
             Response::RecordingUiStateLoaded(Err(error)) => {
                 log::warn!("Reading the display settings of a recording failed: {error}");
