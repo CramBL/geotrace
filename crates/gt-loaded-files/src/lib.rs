@@ -564,9 +564,12 @@ impl LoadedFiles {
     }
 
     /// A later compaction can invalidate an intermediate snapshot before the view receives it.
-    pub fn apply_track_snapshot_updates(&mut self, updates: &[StoredTrackSnapshotUpdate]) {
+    pub fn apply_track_snapshot_updates<'a>(
+        &mut self,
+        updates: &'a [StoredTrackSnapshotUpdate],
+    ) -> Vec<(LoadedFileId, &'a StoredTrackSnapshotUpdate)> {
         if updates.is_empty() {
-            return;
+            return Vec::new();
         }
         let mut updates_by_recording: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for update in updates {
@@ -575,8 +578,13 @@ impl LoadedFiles {
                 .or_default()
                 .push(update);
         }
-        let IndexAlignedFiles { files, history, .. } = self.storage.get_mut();
-        for (file, history) in files.get().0.iter().zip(history) {
+        let IndexAlignedFiles {
+            files,
+            history,
+            ids,
+        } = self.storage.get_mut();
+        let mut adopted = Vec::new();
+        for ((file, history), &id) in files.get().0.iter().zip(history).zip(ids.iter()) {
             let FileHistory::Recording {
                 track_snapshot: Some(snapshot),
                 ..
@@ -599,9 +607,11 @@ impl LoadedFiles {
                     })
                 {
                     **snapshot = update.after().clone();
+                    adopted.push((id, *update));
                 }
             }
         }
+        adopted
     }
 
     /// Re-point loaded recordings after their history identity was renamed from

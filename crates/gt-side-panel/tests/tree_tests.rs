@@ -494,6 +494,7 @@ fn a_share_outside_the_region_leaves_the_visible_section_where_it_is(#[case] sha
 fn a_hidden_track_is_kept_by_its_stored_number() {
     let mut tree = TreeState::new();
     let loaded = stored_recording(&[1, 2, 4]);
+    tree.apply_stored_hidden_tracks(stored_layout(&loaded), BTreeSet::new());
     tree.sync_from_loaded_files(loaded.view());
 
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(2)));
@@ -541,22 +542,31 @@ fn a_recording_outside_the_history_database_stores_no_hidden_track() {
 }
 
 #[test]
-fn hiding_a_track_before_the_stored_ui_state_arrives_stores_that_track() {
+fn unloading_an_edited_track_during_a_visibility_read_preserves_its_edit() {
     let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
+    let mut loaded = stored_recording(&[1, 2]);
+    tree.sync_from_loaded_files(loaded.view());
 
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+    assert_eq!(track_check(&tree, 0, 0), CheckState::Off);
+    assert!(pending_hidden_tracks(&mut tree).is_empty());
 
+    loaded.files_mut()[0].tracks.remove(0);
+    tree.sync_from_loaded_files(loaded.view());
+    tree.apply_stored_hidden_tracks(stored_layout(&loaded), BTreeSet::from([2]));
+    assert_eq!(track_check(&tree, 0, 0), CheckState::Off);
     assert_eq!(
         pending_hidden_tracks(&mut tree),
-        vec![(db_ref(), BTreeSet::from([1]))]
+        vec![(db_ref(), BTreeSet::from([1, 2]))]
     );
 }
 
 #[test]
 fn removing_a_recording_from_the_view_keeps_its_hidden_tracks() {
     let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
+    let loaded = stored_recording(&[1, 2]);
+    tree.apply_stored_hidden_tracks(stored_layout(&loaded), BTreeSet::new());
+    tree.sync_from_loaded_files(loaded.view());
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
     pending_hidden_tracks(&mut tree);
 
@@ -595,7 +605,9 @@ fn a_stored_track_the_recording_no_longer_has_stays_stored() {
 #[test]
 fn resegmenting_a_recording_stores_it_without_a_hidden_track() {
     let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
+    let loaded = stored_recording(&[1, 2]);
+    tree.apply_stored_hidden_tracks(stored_layout(&loaded), BTreeSet::new());
+    tree.sync_from_loaded_files(loaded.view());
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
     pending_hidden_tracks(&mut tree);
 
@@ -610,13 +622,11 @@ fn resegmenting_a_recording_stores_it_without_a_hidden_track() {
         pending_hidden_tracks(&mut tree),
         vec![(db_ref(), BTreeSet::new())]
     );
-    assert_eq!(tree.hidden_track_numbers(&db_ref()), None);
+    assert_eq!(tree.hidden_track_numbers(&db_ref()), Some(&BTreeSet::new()));
 }
 
-/// Two loaded files of one recording leave one entry, from the later of the
-/// two in tree order.
 #[test]
-fn one_recording_loaded_twice_stores_the_later_files_hidden_tracks() {
+fn two_verified_copies_of_a_recording_store_edits_to_both_tracks() {
     let mut loaded = stored_recording(&[1, 2]);
     let history = loaded
         .view()
@@ -626,11 +636,35 @@ fn one_recording_loaded_twice_stores_the_later_files_hidden_tracks() {
         .clone();
     loaded.push(make_loaded_file("ride.gtd".to_owned(), &[1, 2]), history);
     let mut tree = TreeState::new();
+    tree.apply_stored_hidden_tracks(stored_layout(&loaded), BTreeSet::new());
     tree.sync_from_loaded_files(loaded.view());
 
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
     tree.hide_track(TrackRef::new(FileIdx::new(1), TrackIdx::new(1)));
 
+    assert_eq!(
+        pending_hidden_tracks(&mut tree),
+        vec![(db_ref(), BTreeSet::from([1, 2]))]
+    );
+}
+
+#[test]
+fn the_last_visibility_edit_to_a_stored_track_survives_a_pending_read() {
+    let mut loaded = stored_recording(&[1, 2]);
+    let history = loaded.view().get(0).unwrap().history().clone();
+    loaded.push(make_loaded_file("copy.gtd".to_owned(), &[1, 2]), history);
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(loaded.view());
+
+    let earlier_copy = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let later_copy = TrackRef::new(FileIdx::new(1), TrackIdx::new(0));
+    tree.hide_track(later_copy);
+    tree.hide_track(earlier_copy);
+    tree.toggle_track_check(earlier_copy);
+
+    tree.apply_stored_hidden_tracks(stored_layout(&loaded), BTreeSet::from([1, 2]));
+    assert_eq!(track_check(&tree, 0, 0), CheckState::On);
+    assert_eq!(track_check(&tree, 1, 0), CheckState::Off);
     assert_eq!(
         pending_hidden_tracks(&mut tree),
         vec![(db_ref(), BTreeSet::from([2]))]

@@ -403,6 +403,7 @@ fn a_failed_history_read_retains_its_recording_request() {
             origin: RecordingOperationOrigin::Independent,
             db_ref: recording.clone(),
             placement: LoadedRecordingPlacement::AddAnEntry,
+            settings: None,
             result: Err(DbError::Io(io::ErrorKind::PermissionDenied.into())),
         });
     let failure = harness.state().load_failures.iter().next().unwrap();
@@ -1273,6 +1274,7 @@ fn resegment_decisions_complete_every_recording_operation(
                 origin: RecordingOperationOrigin::Arrival(arrival),
                 db_ref: recording.clone(),
                 placement: LoadedRecordingPlacement::AddAnEntry,
+                settings: None,
                 result: Ok(test_util::recordings::opened_recording(
                     &recording,
                     StoredRecording {

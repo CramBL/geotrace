@@ -938,6 +938,7 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
             origin,
             db_ref: recording.clone(),
             placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
+            settings: None,
             result: Ok(test_util::recordings::opened_recording(&recording, stored)),
         });
 

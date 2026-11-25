@@ -1008,7 +1008,10 @@ impl App {
         {
             self.invalidate_history_listing();
         }
-        let Some(completed) = self.complete_load_retry(completed) else {
+        let Some(completed) = self
+            .refresh_expired_history_load(completed)
+            .and_then(|completed| self.complete_load_retry(completed))
+        else {
             return;
         };
         let reset_visibility = match self.history_load_adoption(&completed.completion) {
@@ -1042,7 +1045,7 @@ impl App {
                 {
                     self.history.load_snap_runs(db_ref.clone());
                     self.history.load_attached_logs(db_ref.clone());
-                    self.read_the_ui_state_stored_with_a_loaded_recording(
+                    self.read_recording_ui_state_if_unobserved(
                         history.track_snapshot().map(|snapshot| snapshot.layout()),
                     );
                 }

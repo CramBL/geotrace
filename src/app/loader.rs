@@ -16,9 +16,9 @@ use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryAccess, ReadOnlyRecordings, RecordingDebugTag,
-    RecordingInsert, Recordings, StoredFixPlacementRule, StoredLogSettings, StoredRecording,
-    StoredTrackSnapshot, StoredTrackSplitRule, StoredTrackTable, TrackLayoutVisibility, TrackRange,
-    TrackState,
+    RecordingInsert, Recordings, StoredFixPlacementRule, StoredLayoutRevision, StoredLogSettings,
+    StoredRecording, StoredTrackSnapshot, StoredTrackSplitRule, StoredTrackTable,
+    TrackLayoutVisibility, TrackRange, TrackState,
 };
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
@@ -157,12 +157,25 @@ enum LoadMessage {
     },
 }
 
+#[derive(Clone, Copy)]
+pub struct StoredHistoryLoadSettings {
+    pub config: SegmentationConfig,
+    pub mode: GtdLoadMode,
+    pub applied_current_marker_settings: bool,
+}
+
+pub(super) struct StoredHistoryLoad {
+    pub layout: StoredLayoutRevision,
+    pub settings: StoredHistoryLoadSettings,
+}
+
 /// The result of a single completed background load, returned by `LoadJobs::drain`.
 pub(super) struct CompletedLoad {
     pub filename: String,
     pub elapsed_secs: f32,
     pub completion: LoadCompletion,
     pub retry: Option<LoadRetryAttempt>,
+    pub stored_history: Option<StoredHistoryLoad>,
 }
 
 /// Where the app puts a recording a load finished: in an entry of its own, or
@@ -350,6 +363,7 @@ pub(super) struct LoadJobs {
     pub finishing_jobs: Vec<FinishedJob>,
     next_id: u64,
     retries: BTreeMap<u64, LoadRetryAttempt>,
+    stored_history_loads: BTreeMap<u64, StoredHistoryLoad>,
     file_dialogs: Vec<PendingFileDialog>,
     /// Path to the history database file, forwarded to background load threads
     /// so they can insert recordings after parsing.  `None` when storage is
@@ -375,6 +389,7 @@ impl LoadJobs {
             finishing_jobs: Vec::new(),
             next_id: 0,
             retries: BTreeMap::new(),
+            stored_history_loads: BTreeMap::new(),
             file_dialogs: Vec::new(),
             db_path: None,
             analysis_config: AnalysisConfig::default(),
@@ -567,6 +582,25 @@ impl LoadJobs {
         let id = self.alloc_id();
         if let RecordingOperationOrigin::Retry(attempt) = &origin {
             self.retries.insert(id, *attempt);
+        }
+        if let Some(HistoryOpen::ApplyShelved {
+            track_table: OpenTrackTable::Stored(snapshot),
+            applied_current_marker_settings,
+            ..
+        }) = &open
+            && origin.session_history().is_none()
+        {
+            self.stored_history_loads.insert(
+                id,
+                StoredHistoryLoad {
+                    layout: snapshot.layout().clone(),
+                    settings: StoredHistoryLoadSettings {
+                        config,
+                        mode,
+                        applied_current_marker_settings: *applied_current_marker_settings,
+                    },
+                },
+            );
         }
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
@@ -900,6 +934,7 @@ impl LoadJobs {
                         elapsed_secs: (frame_time - job.started_at) as f32,
                         completion,
                         retry: self.retries.remove(&id),
+                        stored_history: self.stored_history_loads.remove(&id),
                     });
                 }
             }
