@@ -5,8 +5,9 @@ use egui::accesskit::Role;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_pending_writes::WriteAccess;
 use gt_session_bridge::{
-    AnalysisSettingKey, ErrorCode, ProcessingSettingKey, Reply, Request, SetSetting, SettingApply,
-    SettingInput, SettingKey, SettingSelection, SettingUnit, SettingValue,
+    AnalysisSettingKey, ErrorCode, ProcessingSettingKey, Reply, Request, SessionRequest,
+    SetSetting, SettingApply, SettingInput, SettingKey, SettingSelection, SettingUnit,
+    SettingValue,
 };
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use rstest::rstest;
@@ -32,7 +33,17 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
         key,
         value: SettingInput::Number(18.5),
     });
+    let before = harness.state().describe_setting(key);
+    let unacknowledged = harness.state_mut().execute_session_request_in_test(
+        SessionRequest {
+            request: request.clone(),
+            session: session::SESSION_ID,
+        },
+        false,
+    );
+    let after_unacknowledged = harness.state().describe_setting(key);
     let reply = session::execute(&mut harness, request);
+    assert_eq!((after_unacknowledged, &unacknowledged), (before, &reply));
     let Reply::Setting { setting } = &reply else {
         panic!("expected the effective elevation mask");
     };

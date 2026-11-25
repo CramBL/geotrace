@@ -109,18 +109,17 @@ impl Server {
         })
     }
 
-    /// Return true after a successful reply channel send.
-    pub fn dispatch(&mut self, execute: impl FnOnce(SessionRequest) -> Reply) -> bool {
-        if let Ok(pending) = self.pending.try_recv()
-            && !pending.reply.is_closed()
-        {
-            let request = SessionRequest {
-                request: pending.request,
-                session: self.session,
-            };
-            return pending.reply.send(execute(request)).is_ok();
+    /// Return the prepared effect after a successful reply send.
+    pub fn dispatch<T>(&mut self, prepare: impl FnOnce(SessionRequest) -> (Reply, T)) -> Option<T> {
+        let pending = self.pending.try_recv().ok()?;
+        if pending.reply.is_closed() {
+            return None;
         }
-        false
+        let (reply, effect) = prepare(SessionRequest {
+            request: pending.request,
+            session: self.session,
+        });
+        pending.reply.send(reply).is_ok().then_some(effect)
     }
 }
 
