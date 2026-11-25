@@ -22,32 +22,6 @@ use super::loader::{AttachedLogRequester, LoadedRecordingPlacement, Recalculatio
 use super::session_history::OpenStop;
 use super::{App, ResegmentPrompt, history_db, loader, modals, storage};
 
-fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
-    match stored.debug_tag {
-        Some(gt_store::RecordingDebugTag::TimeRepair) => {
-            let backward_jump_threshold = stored.segmentation.map_or_else(
-                || {
-                    chrono::Duration::seconds(i64::from(
-                        loader::DEBUG_TIME_REPAIR_DEFAULT_THRESHOLD_SECONDS,
-                    ))
-                },
-                |settings| chrono::Duration::microseconds(settings.track_split_gap_us),
-            );
-            loader::GtdLoadMode::DebugTimeRepair {
-                backward_jump_threshold,
-            }
-        }
-        Some(debug_tag) => {
-            log::warn!(
-                "History recording has an unknown debug tag {}",
-                debug_tag.attribute_value()
-            );
-            loader::GtdLoadMode::Regular
-        }
-        None => loader::GtdLoadMode::Regular,
-    }
-}
-
 /// What the user chose in the prompt for a recordings database that would not
 /// open. Each failure offers one of the three remedies.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -322,7 +296,7 @@ impl App {
             .unwrap_or(&db_ref.identity)
             .to_owned();
 
-        let mode = load_mode_for_stored_recording(&opened.stored);
+        let mode = loader::GtdLoadMode::for_stored_recording(&opened.stored);
         let settings_differ = !opened.track_snapshot.rows().is_empty()
             && opened.stored.segmentation.is_some_and(|settings| {
                 !loader::stored_tracks_match_config(&settings, &self.processing_config)

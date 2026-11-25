@@ -14,9 +14,9 @@ use gt_logfile::{LogText, ParsedLog, YearResolution};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{
-    AttachedLog, DatabaseRef, DbError, HistoryAccess, ReadOnlyRecordings, RecordingInsert,
-    Recordings, StoredFixPlacementRule, StoredLogSettings, StoredRecording, StoredTrackSnapshot,
-    StoredTrackSplitRule, TrackLayoutVisibility, TrackRange, TrackState,
+    AttachedLog, DatabaseRef, DbError, HistoryAccess, ReadOnlyRecordings, RecordingDebugTag,
+    RecordingInsert, Recordings, StoredFixPlacementRule, StoredLogSettings, StoredRecording,
+    StoredTrackSnapshot, StoredTrackSplitRule, TrackLayoutVisibility, TrackRange, TrackState,
 };
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
@@ -183,14 +183,36 @@ pub const DEBUG_TIME_REPAIR_MIN_THRESHOLD_SECONDS: u32 = 1;
 pub const DEBUG_TIME_REPAIR_MAX_THRESHOLD_SECONDS: u32 = 86_400;
 
 impl GtdLoadMode {
-    pub fn debug_tag(self) -> Option<gt_store::RecordingDebugTag> {
+    pub(super) fn for_stored_recording(stored: &StoredRecording) -> Self {
+        match stored.debug_tag {
+            Some(RecordingDebugTag::TimeRepair) => {
+                let backward_jump_threshold = stored.segmentation.map_or_else(
+                    || Duration::seconds(i64::from(DEBUG_TIME_REPAIR_DEFAULT_THRESHOLD_SECONDS)),
+                    |settings| Duration::microseconds(settings.track_split_gap_us),
+                );
+                Self::DebugTimeRepair {
+                    backward_jump_threshold,
+                }
+            }
+            Some(debug_tag) => {
+                log::warn!(
+                    "History recording has an unknown debug tag {}",
+                    debug_tag.attribute_value()
+                );
+                Self::Regular
+            }
+            None => Self::Regular,
+        }
+    }
+
+    pub fn debug_tag(self) -> Option<RecordingDebugTag> {
         match self {
-            Self::DebugTimeRepair { .. } => Some(gt_store::RecordingDebugTag::TimeRepair),
+            Self::DebugTimeRepair { .. } => Some(RecordingDebugTag::TimeRepair),
             Self::Regular => None,
         }
     }
 
-    fn time_repair_config(self) -> Option<gt_loader::DebugTimeRepairConfig> {
+    pub(super) fn time_repair_config(self) -> Option<gt_loader::DebugTimeRepairConfig> {
         match self {
             Self::DebugTimeRepair {
                 backward_jump_threshold,
@@ -2246,10 +2268,7 @@ mod tests {
         let stored_meta = gt_store::extract_meta(&stored.bytes).expect("read stored metadata");
 
         assert!(original_meta.same_recording(&stored_meta));
-        assert_eq!(
-            stored.debug_tag,
-            Some(gt_store::RecordingDebugTag::TimeRepair)
-        );
+        assert_eq!(stored.debug_tag, Some(RecordingDebugTag::TimeRepair));
         assert_eq!(
             stored
                 .segmentation

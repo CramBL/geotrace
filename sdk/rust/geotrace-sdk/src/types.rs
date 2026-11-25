@@ -77,14 +77,29 @@ impl DebugTimeRepair {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DebugTimeRepairTag {
+    Applied(DebugTimeRepair),
+    Pending(DebugTimeRepair),
+}
+
+impl DebugTimeRepairTag {
+    fn config(self) -> DebugTimeRepair {
+        match self {
+            Self::Applied(config) | Self::Pending(config) => config,
+        }
+    }
+}
+
 /// How [`NavFile::read_with_mode`] and [`NavFile::open_with_mode`] read time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NavFileOpenMode {
     /// Shift repeated spans of time using this debug time repair configuration.
+    /// Read the stored times when this configuration has already been applied.
     DebugTimeRepair(DebugTimeRepair),
     /// Read timestamps exactly as the file stores them, unless the file has a
-    /// debug time repair tag.
+    /// pending debug time repair tag.
     Regular,
 }
 
@@ -1212,7 +1227,7 @@ impl Channel {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NavFile {
     pub(crate) meta: Meta,
-    pub(crate) debug_time_repair: Option<DebugTimeRepair>,
+    pub(crate) debug_time_repair: Option<DebugTimeRepairTag>,
     pub(crate) nav_points: Vec<NavPoint>,
     pub(crate) markers: Vec<Marker>,
     pub(crate) event_markers: Vec<EventMarkerPoint>,
@@ -1225,9 +1240,10 @@ impl NavFile {
         &self.meta
     }
 
-    /// The debug time repair tag read from or written to the file.
+    /// The configuration in the current debug time repair tag.
+    /// An explicit repair with a different threshold updates an applied tag.
     pub fn debug_time_repair_tag(&self) -> Option<DebugTimeRepair> {
-        self.debug_time_repair
+        self.debug_time_repair.map(DebugTimeRepairTag::config)
     }
 
     pub fn nav_points(&self) -> &[NavPoint] {
@@ -1256,12 +1272,17 @@ impl NavFile {
         &self.channels
     }
 
-    /// Set the debug time repair tag written as root metadata.
+    /// On an ordinary read, the SDK applies this repair configuration.
     pub fn set_debug_time_repair_tag(&mut self, tag: DebugTimeRepair) {
-        self.debug_time_repair = Some(tag);
+        self.debug_time_repair = Some(DebugTimeRepairTag::Pending(tag));
     }
 
-    /// Return this file with a debug time repair tag.
+    /// Record the configuration used for timestamps that already include debug time repair.
+    pub fn set_applied_debug_time_repair_tag(&mut self, tag: DebugTimeRepair) {
+        self.debug_time_repair = Some(DebugTimeRepairTag::Applied(tag));
+    }
+
+    /// Return this file with a pending debug time repair tag.
     pub fn with_debug_time_repair_tag(mut self, tag: DebugTimeRepair) -> Self {
         self.set_debug_time_repair_tag(tag);
         self

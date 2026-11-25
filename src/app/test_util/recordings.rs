@@ -4,13 +4,15 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use chrono::DateTime;
+use chrono::{DateTime, TimeDelta};
 use egui_kittest::Harness;
+use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use gt_pending_writes::PendingWrites;
 use gt_store::{
-    DatabaseRef, HistoryAccess, HistoryDatabase as _, ReadOnlyRecordings, RecordingEntry,
-    RecordingUiState, Recordings, RecordingsHandle, Store, StoredFixPlacementRule, StoredRecording,
-    StoredSegmentation, StoredTrackSnapshot, StoredTrackSplitRule, TrackRange, TrackState,
+    DatabaseRef, HistoryAccess, HistoryDatabase as _, ReadOnlyRecordings, RecordingDebugTag,
+    RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, Store, StoredFixPlacementRule,
+    StoredRecording, StoredSegmentation, StoredTrackSnapshot, StoredTrackSplitRule, TrackRange,
+    TrackState,
 };
 use gt_test_utils::history_fixtures::StoredTrackTableFixture;
 use gt_test_utils::{SyntheticGtdSpec, recording_fixtures};
@@ -176,6 +178,45 @@ pub fn seed_recording_cut_at(path: &Path, bounds: &[u64]) {
 /// Store one recording of two ten-point tracks in a database at `path`.
 pub fn seed_two_track_recording(path: &Path) {
     seed_recording_cut_at(path, &[10]);
+}
+
+pub fn store_recording_with_shelved_middle_track(
+    path: &Path,
+    debug_time_repair_threshold: Option<TimeDelta>,
+) -> DatabaseRef {
+    let start = DateTime::from_timestamp(1_748_000_000, 0).unwrap();
+    let mut recorder = NavFileBuilder::new().open();
+    for offset in [0, 10, 3600] {
+        for second in offset..offset + 5 {
+            recorder.add_nav_fix(
+                NavFix::builder()
+                    .time(NavFixTime::Receiver(start + TimeDelta::seconds(second)))
+                    .lat(Angle::degrees(51.5))
+                    .lon(Angle::degrees(-0.1))
+                    .build(),
+            );
+        }
+    }
+    let mut recording = recorder.finish().unwrap();
+    recording.nav_points_mut().rotate_left(5);
+    let mut bytes = Vec::new();
+    recording.write(&mut bytes).unwrap();
+    let states = [TrackState::Live, TrackState::Shelved, TrackState::Live];
+    let rows: [_; 3] = std::array::from_fn(|index| TrackRange {
+        start: index as u64 * 5,
+        end: (index as u64 + 1) * 5,
+        state: states[index],
+    });
+    let mut meta = gt_store::extract_meta(&bytes).unwrap();
+    let mut segmentation = self::segmentation();
+    if let Some(threshold) = debug_time_repair_threshold {
+        meta.debug_tag = Some(RecordingDebugTag::TimeRepair);
+        segmentation.track_split_gap_us = threshold.num_microseconds().unwrap();
+    }
+    Recordings::open_or_create(path)
+        .unwrap()
+        .insert("dev", &meta, &rows, segmentation, &bytes)
+        .unwrap()
 }
 
 pub fn worker_on(path: &Path) -> HistoryWorker {

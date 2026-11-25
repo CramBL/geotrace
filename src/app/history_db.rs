@@ -42,7 +42,7 @@ use super::association_batches::RecordingOperationOrigin;
 use super::load_failures::LoadRetryAttempt;
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
-use crate::app::loader::{self, LoadedRecordingPlacement};
+use crate::app::loader::{self, GtdLoadMode, LoadedRecordingPlacement};
 use crate::app::recording_from_disk::{self, RecordingFromDisk, ScreenedRecordings};
 
 /// Why recordings are being deleted - selects the completion toast.
@@ -1372,8 +1372,10 @@ fn purge_tracks_with_stored(
         return Ok(None);
     }
 
-    let new_bytes = gt_loader::reencode_dropping_ranges(&stored.bytes, &drop_ranges)
-        .map_err(|e| DbError::Backend(e.to_string()))?;
+    let mode = GtdLoadMode::for_stored_recording(stored);
+    let new_bytes =
+        gt_loader::reencode_dropping_ranges(&stored.bytes, &drop_ranges, mode.time_repair_config())
+            .map_err(|e| DbError::Backend(e.to_string()))?;
 
     // Range-shift the table onto the compacted nav points. A surviving row
     // keeps its length and starts where the previous row ended, and a tombstone
@@ -1411,7 +1413,8 @@ fn purge_tracks_with_stored(
 mod tests {
     use std::sync::mpsc::TryRecvError;
 
-    use chrono::DateTime;
+    use chrono::{DateTime, Duration};
+    use geotrace_sdk::{DebugTimeRepair, NavFile, NavFileOpenMode};
     use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_log_view::{AttachmentSettingsState, AttachmentSettingsStatus, LoadedLog, LoadedLogs};
     use gt_pending_writes::WriteAccess;
@@ -1735,6 +1738,58 @@ mod tests {
                 .unwrap(),
             hidden
         );
+        worker.shutdown();
+    }
+
+    #[rstest]
+    #[case::ordinary(None)]
+    #[case::debug_time_repair(Some(Duration::seconds(150)))]
+    fn purging_a_middle_track_keeps_the_fixes_of_each_surviving_row(
+        #[case] debug_time_repair_threshold: Option<Duration>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.h5");
+        let recording = recordings::store_recording_with_shelved_middle_track(
+            &path,
+            debug_time_repair_threshold,
+        );
+        let worker = recordings::worker_on(&path);
+        let db = ReadOnlyRecordings::open_existing_read_only(&path).unwrap();
+        let (original, _) = HistoryAccess::lock()
+            .load_recording_with_snapshot(&db, &recording)
+            .unwrap();
+        let repair =
+            debug_time_repair_threshold.map(|threshold| DebugTimeRepair::new(threshold).unwrap());
+        let mode = repair.map_or(NavFileOpenMode::Regular, NavFileOpenMode::DebugTimeRepair);
+        let original_file = NavFile::read_with_mode(original.bytes.as_slice(), mode).unwrap();
+
+        worker.delete_shelved_tracks(DeleteShelvedTracksScope::OneRecording(recording.clone()));
+        let Response::Mutated {
+            op: DbOp::TracksDeleted { count: 1, .. },
+            result,
+        } = recordings::next_response(&worker)
+        else {
+            panic!("expected the purge of one track");
+        };
+        result.unwrap();
+
+        let (compacted, snapshot) = HistoryAccess::lock()
+            .load_recording_with_snapshot(&db, &recording)
+            .unwrap();
+        let compacted_file = NavFile::read(compacted.bytes.as_slice()).unwrap();
+        assert_eq!(compacted_file.debug_time_repair_tag(), repair);
+        let rows = snapshot.rows();
+        assert_eq!(rows[1].state, TrackState::Deleted);
+        assert_eq!((rows[1].start, rows[1].end), (5, 5));
+        for index in [0, 2] {
+            let before = original.track_rows()[index];
+            let after = rows[index];
+            assert_eq!(after.state, TrackState::Live);
+            assert_eq!(
+                compacted_file.nav_points()[after.start as usize..after.end as usize],
+                original_file.nav_points()[before.start as usize..before.end as usize],
+            );
+        }
         worker.shutdown();
     }
 

@@ -77,6 +77,53 @@ fn debug_time_repair_tag_round_trips_through_write_and_read()
     Ok(())
 }
 
+#[test]
+fn explicit_repair_updates_the_applied_threshold_on_write() -> Result<(), Box<dyn std::error::Error>>
+{
+    let time = |seconds| test_util::base() + Duration::seconds(seconds);
+    let original_times = [800, 804, 600, 604, 440, 444].map(time);
+    let mut recorder = NavFileBuilder::new().open();
+    for timestamp in original_times {
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(NavFixTime::Receiver(timestamp))
+                .lat(Angle::degrees(55.0))
+                .lon(Angle::degrees(12.0))
+                .build(),
+        );
+    }
+    let mut file = recorder.finish()?;
+    for (point, timestamp) in file.nav_points_mut().iter_mut().zip(original_times) {
+        point.fix.time = NavFixTime::Receiver(timestamp);
+    }
+    let original = DebugTimeRepair::new(Duration::seconds(150))?;
+    let override_repair = DebugTimeRepair::new(Duration::seconds(180))?;
+    file.set_applied_debug_time_repair_tag(original);
+    let bytes = test_util::to_bytes(&file)?;
+    let overridden = NavFile::read_with_mode(
+        bytes.as_slice(),
+        NavFileOpenMode::DebugTimeRepair(override_repair),
+    )?;
+    let rewritten = test_util::to_bytes(&overridden)?;
+    let ordinary = NavFile::read(rewritten.as_slice())?;
+    let repaired = NavFile::read_with_mode(
+        rewritten.as_slice(),
+        NavFileOpenMode::DebugTimeRepair(original),
+    )?;
+
+    assert_eq!(
+        nav_fix_times(&ordinary),
+        [800, 804, 984, 988, 824, 828].map(time)
+    );
+    assert_eq!(
+        nav_fix_times(&repaired),
+        [800, 804, 984, 988, 1138, 1142].map(time)
+    );
+    assert_eq!(ordinary.debug_time_repair_tag(), Some(override_repair));
+    assert_eq!(repaired.debug_time_repair_tag(), Some(original));
+    Ok(())
+}
+
 fn assert_repaired_timeline(file: &NavFile, t0: DateTime<Utc>) {
     assert_eq!(
         file.nav_points()

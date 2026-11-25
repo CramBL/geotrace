@@ -69,6 +69,12 @@ pub struct DebugTimeRepairConfig {
     pub backward_jump_threshold: Duration,
 }
 
+impl DebugTimeRepairConfig {
+    fn sdk_config(self) -> Result<SdkDebugTimeRepair, LoadError> {
+        SdkDebugTimeRepair::new(self.backward_jump_threshold).map_err(LoadError::from)
+    }
+}
+
 fn to_uom_velocity(v: geotrace_sdk::Velocity) -> uom::si::f64::Velocity {
     uom::si::f64::Velocity::new::<uom::si::velocity::meter_per_second>(v.as_meters_per_second())
 }
@@ -139,12 +145,10 @@ fn load_gtd_file_with_progress_and_time_repair(
     progress(0.05, STAGE_READING);
     let file = File::open(path)?;
     progress(0.20, STAGE_PARSING);
-    let open_mode = match time_repair {
-        Some(config) => NavFileOpenMode::DebugTimeRepair(SdkDebugTimeRepair::new(
-            config.backward_jump_threshold,
-        )?),
-        None => NavFileOpenMode::Regular,
-    };
+    let open_mode = time_repair
+        .map(DebugTimeRepairConfig::sdk_config)
+        .transpose()?
+        .map_or(NavFileOpenMode::Regular, NavFileOpenMode::DebugTimeRepair);
     let nav_file = NavFile::read_with_mode(file, open_mode)?;
     let source = FileSource::GtdPath(path.to_path_buf());
     build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
@@ -288,12 +292,10 @@ fn load_gtd_contents(
     time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
     progress(0.15, STAGE_PARSING);
-    let open_mode = match time_repair {
-        Some(config) => NavFileOpenMode::DebugTimeRepair(SdkDebugTimeRepair::new(
-            config.backward_jump_threshold,
-        )?),
-        None => NavFileOpenMode::Regular,
-    };
+    let open_mode = time_repair
+        .map(DebugTimeRepairConfig::sdk_config)
+        .transpose()?
+        .map_or(NavFileOpenMode::Regular, NavFileOpenMode::DebugTimeRepair);
     let nav_file = NavFile::read_with_mode(bytes, open_mode)?;
     build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
 }
@@ -324,8 +326,14 @@ pub fn same_recorded_payload(
 pub fn reencode_dropping_ranges(
     bytes: &[u8],
     drop_ranges: &[std::ops::Range<usize>],
+    time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<Vec<u8>, LoadError> {
-    let nav_file = NavFile::read(bytes)?;
+    let explicit_repair = time_repair
+        .map(DebugTimeRepairConfig::sdk_config)
+        .transpose()?;
+    let open_mode =
+        explicit_repair.map_or(NavFileOpenMode::Regular, NavFileOpenMode::DebugTimeRepair);
+    let nav_file = NavFile::read_with_mode(bytes, open_mode)?;
     let point_count = nav_file.nav_points().len();
 
     // Mark every index that falls inside a dropped range. Ranges past the end
@@ -343,10 +351,12 @@ pub fn reencode_dropping_ranges(
         .with_lenient_errors()
         .open();
 
-    for (point, drop) in nav_file.nav_points().iter().zip(&dropped) {
-        if *drop {
-            continue;
-        }
+    let retained = nav_file
+        .nav_points()
+        .iter()
+        .zip(&dropped)
+        .filter_map(|(point, drop)| (!drop).then_some(point));
+    for point in retained.clone() {
         recorder.add_nav_fix(point.fix);
     }
 
@@ -375,18 +385,12 @@ pub fn reencode_dropping_ranges(
     }
 
     let mut rebuilt = recorder.finish()?;
-    let mut retained: Vec<_> = nav_file
-        .nav_points()
-        .iter()
-        .zip(&dropped)
-        .filter_map(|(point, drop)| (!drop).then_some(point))
-        .collect();
-    retained.sort_by_key(|point| point.fix.time.effective());
+    // The SDK sorts fixes for marker interpolation. Stored row ranges use recording order.
     for (point, original) in rebuilt.nav_points_mut().iter_mut().zip(retained) {
-        point.set_satellite_evidence(original.satellite_evidence().clone());
+        point.clone_from(original);
     }
-    if let Some(tag) = nav_file.debug_time_repair_tag() {
-        rebuilt.set_debug_time_repair_tag(tag);
+    if let Some(tag) = explicit_repair.or_else(|| nav_file.debug_time_repair_tag()) {
+        rebuilt.set_applied_debug_time_repair_tag(tag);
     }
     let mut out = Vec::new();
     rebuilt.write(&mut out)?;
@@ -1707,7 +1711,7 @@ mod tests {
 
         // Dropping a point range must not drop the channel.
         let reencoded =
-            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3))).unwrap();
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3)), None).unwrap();
         let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
         assert_eq!(nav_file.channels().len(), 1);
         let accel = &nav_file.channels()[0];
@@ -1746,19 +1750,92 @@ mod tests {
         file.nav_points_mut().reverse();
         let bytes = test_util::to_bytes(&file).unwrap();
         let reencoded =
-            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..2))).unwrap();
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..2)), None).unwrap();
         let decoded = NavFile::read(reencoded.as_slice()).unwrap();
         assert_eq!(decoded.nav_points().len(), 2);
-        assert_eq!(
-            decoded.nav_points()[0].fix.time,
-            NavFixTime::Receiver(base())
+        assert_eq!(decoded.nav_points()[0], file.nav_points()[0]);
+        assert_eq!(decoded.nav_points()[1], file.nav_points()[2]);
+        assert_eq!(decoded.nav_points()[1].satellite_evidence(), &evidence);
+        assert_eq!(decoded.nav_points()[1].satellites(), &None);
+    }
+
+    #[test]
+    fn reencoding_a_tagged_recording_preserves_surviving_times() {
+        let time = |seconds| base() + Duration::seconds(seconds);
+        let mut recorder = NavFileBuilder::new().open();
+        for seconds in [0, 4, 100, 104, 200, 204] {
+            recorder.add_nav_fix(minimal_fix(time(seconds)));
+        }
+        recorder.add_annotation(Annotation::builder().time(time(2)).build().unwrap());
+        recorder.add_event_marker(
+            SdkEventMarker::builder()
+                .variant_path("test/retained")
+                .sys_time(time(2))
+                .build()
+                .unwrap(),
         );
-        assert_eq!(decoded.nav_points()[0].satellite_evidence(), &evidence);
-        assert_eq!(decoded.nav_points()[0].satellites(), &None);
-        assert_eq!(
-            decoded.nav_points()[1].satellite_evidence(),
-            &SatelliteEvidence::default()
+        recorder.add_channel(
+            geotrace_sdk::Channel::builder()
+                .name("speed")
+                .unit(Unit::M_PER_S)
+                .times(vec![time(2), time(202)])
+                .values(vec![1.0, 2.0])
+                .build()
+                .unwrap(),
         );
+        let mut file = recorder.finish().unwrap();
+        let original_points = file.nav_points_mut();
+        original_points.swap(0, 4);
+        original_points.swap(1, 5);
+        original_points[4].set_satellite_evidence(SatelliteEvidence::new(
+            vec![
+                SatelliteUsageReport::builder()
+                    .time(NavFixTime::Receiver(time(1)))
+                    .scope(SatelliteScope::Global)
+                    .coverage(SatelliteCoverage::Partial)
+                    .reported_count(4)
+                    .satellites(Vec::new())
+                    .build(),
+            ],
+            Vec::new(),
+        ));
+        let repair = SdkDebugTimeRepair::new(Duration::seconds(150)).unwrap();
+        file.set_debug_time_repair_tag(repair);
+        let bytes = test_util::to_bytes(&file).unwrap();
+        let retained =
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(2usize..4)), None).unwrap();
+
+        let decoded = NavFile::read(retained.as_slice()).unwrap();
+        assert_eq!(decoded.debug_time_repair_tag(), Some(repair));
+        assert_eq!(&decoded.nav_points()[..2], &file.nav_points()[..2]);
+        assert_eq!(&decoded.nav_points()[2..], &file.nav_points()[4..]);
+        assert_eq!(decoded.markers(), file.markers());
+        assert_eq!(decoded.event_markers(), file.event_markers());
+        assert_eq!(decoded.channels(), file.channels());
+        assert_eq!(
+            NavFile::read_with_mode(
+                retained.as_slice(),
+                NavFileOpenMode::DebugTimeRepair(repair)
+            )
+            .unwrap(),
+            decoded,
+        );
+        let other_threshold = SdkDebugTimeRepair::new(Duration::seconds(100)).unwrap();
+        let reopened = NavFile::read_with_mode(
+            retained.as_slice(),
+            NavFileOpenMode::DebugTimeRepair(other_threshold),
+        )
+        .unwrap();
+        assert_eq!(
+            reopened.nav_points()[2].fix.time,
+            NavFixTime::Receiver(time(304))
+        );
+        let attributes = hdf5_pure::File::from_bytes(retained)
+            .unwrap()
+            .root()
+            .attrs()
+            .unwrap();
+        assert!(!attributes.contains_key("debug_time_repair_backward_jump_threshold_us"));
     }
 
     #[test]
@@ -1772,7 +1849,7 @@ mod tests {
 
         // A range that runs past the end must not panic and must keep the rest.
         let reencoded =
-            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..99))).unwrap();
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..99)), None).unwrap();
         let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
         assert_eq!(nav_file.nav_points().len(), 1);
     }
@@ -1819,7 +1896,7 @@ mod tests {
                 .map(|i| i as f64)
                 .collect();
 
-            let result = reencode_dropping_ranges(&bytes, &ranges);
+            let result = reencode_dropping_ranges(&bytes, &ranges, None);
             if expected.is_empty() {
                 // Every point dropped: either re-encode errors, or it yields a file
                 // with no nav points - never one that resurrects dropped points.
