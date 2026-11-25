@@ -11,7 +11,7 @@ use gt_types::PointIdx;
 use proptest::strategy::Strategy as _;
 use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
 use serde_json::Value;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -46,6 +46,134 @@ impl TestEndpoint {
             endpoint: Endpoint::test_endpoint().unwrap(),
         }
     }
+
+    fn start(&self) -> (Server, mpsc::Receiver<()>) {
+        let (wake, wakes) = mpsc::channel(1);
+        let server =
+            Server::bind(self.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
+        (server, wakes)
+    }
+
+    async fn send_recording_list(&self) -> impl AsyncRead + AsyncWrite + Unpin {
+        let mut stream = self.endpoint.connect().await.unwrap();
+        Frame::encode(&REQUEST, MAX_REQUEST_BYTES)
+            .unwrap()
+            .write(&mut stream)
+            .await
+            .unwrap();
+        stream
+    }
+}
+
+#[tokio::test]
+async fn a_client_waiting_to_close_does_not_block_another_request() {
+    let fixture = TestEndpoint::new();
+    let (mut server, mut wakes) = fixture.start();
+    let mut first = fixture.send_recording_list().await;
+    self::dispatch_recording_list(&mut server, &mut wakes).await;
+    let reply: Reply = framing::read(&mut first, MAX_REPLY_BYTES).await.unwrap();
+    assert_eq!(reply, EMPTY_RECORDINGS);
+
+    let (reply, ()) = tokio::join!(
+        super::request_at(&fixture.endpoint, &REQUEST),
+        self::dispatch_recording_list(&mut server, &mut wakes)
+    );
+    assert_eq!(reply.unwrap(), EMPTY_RECORDINGS);
+    drop(first);
+}
+
+#[tokio::test]
+async fn a_full_app_queue_returns_busy_without_displacing_its_request() {
+    let fixture = TestEndpoint::new();
+    let (mut server, mut wakes) = fixture.start();
+    let mut first = fixture.send_recording_list().await;
+    self::wait_for_request(&mut wakes).await;
+
+    let reply = super::request_at(&fixture.endpoint, &REQUEST)
+        .await
+        .unwrap();
+    assert_eq!(reply, Reply::from(ErrorCode::Busy));
+    assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+    self::reply_with_empty_recording_list(&mut server);
+    let reply: Reply = framing::read(&mut first, MAX_REPLY_BYTES).await.unwrap();
+    assert_eq!(reply, EMPTY_RECORDINGS);
+}
+
+#[tokio::test]
+async fn excess_connections_close_and_a_completed_exchange_releases_a_slot() {
+    let fixture = TestEndpoint::new();
+    let (mut server, mut wakes) = fixture.start();
+    let mut open = Vec::new();
+    for _ in 0..super::MAX_ACTIVE_CONNECTIONS {
+        let mut stream = fixture.send_recording_list().await;
+        self::dispatch_recording_list(&mut server, &mut wakes).await;
+        let reply: Reply = framing::read(&mut stream, MAX_REPLY_BYTES).await.unwrap();
+        assert_eq!(reply, EMPTY_RECORDINGS);
+        open.push(stream);
+    }
+
+    for _ in 0..2 {
+        let overflow = async {
+            let mut stream = fixture.endpoint.connect().await?;
+            stream.read_u8().await
+        };
+        tokio::time::timeout(BRIDGE_TEST_TIMEOUT, overflow)
+            .await
+            .expect("An excess connection stayed open")
+            .expect_err("The server replied on an excess connection");
+    }
+    assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+    drop(open.pop().unwrap());
+
+    let request_after_close = async {
+        loop {
+            if let Ok(reply) = super::request_at(&fixture.endpoint, &REQUEST).await {
+                return reply;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    let (reply, ()) = tokio::time::timeout(BRIDGE_TEST_TIMEOUT, async {
+        tokio::join!(
+            request_after_close,
+            self::dispatch_recording_list(&mut server, &mut wakes)
+        )
+    })
+    .await
+    .expect("No exchange slot became available after closing a connection");
+    assert_eq!(reply, EMPTY_RECORDINGS);
+
+    drop(server);
+    for mut stream in open {
+        tokio::time::timeout(BRIDGE_TEST_TIMEOUT, stream.read_u8())
+            .await
+            .expect("A connection stayed open after shutdown")
+            .expect_err("The server replied after shutdown");
+    }
+}
+
+async fn dispatch_recording_list(server: &mut Server, wakes: &mut mpsc::Receiver<()>) {
+    self::wait_for_request(wakes).await;
+    self::reply_with_empty_recording_list(server);
+}
+
+async fn wait_for_request(wakes: &mut mpsc::Receiver<()>) {
+    assert_eq!(
+        tokio::time::timeout(BRIDGE_TEST_TIMEOUT, wakes.recv())
+            .await
+            .expect("The server did not admit the request"),
+        Some(())
+    );
+}
+
+fn reply_with_empty_recording_list(server: &mut Server) {
+    assert_eq!(
+        server.dispatch(|request| {
+            assert_eq!(request.request, REQUEST);
+            (EMPTY_RECORDINGS, ())
+        }),
+        Some(())
+    );
 }
 
 #[tokio::test]
@@ -741,4 +869,13 @@ const REQUEST: Request = Request::ListRecordings(ListRecordings {
     after: None,
     limit: Some(NonZeroUsize::MIN),
 });
+
+const EMPTY_RECORDINGS: Reply = Reply::Recordings {
+    page: Recordings {
+        recordings: Vec::new(),
+        next_after: None,
+    },
+};
+
+const BRIDGE_TEST_TIMEOUT: Duration = Duration::from_secs(1);
 const FRAME_TEST_LIMIT: u8 = 32;

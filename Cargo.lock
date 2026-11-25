@@ -3085,6 +3085,7 @@ name = "gt-session-bridge"
 version = "0.19.0"
 dependencies = [
  "chrono",
+ "futures-util",
  "gt-history-types",
  "gt-loaded-files",
  "gt-query",
