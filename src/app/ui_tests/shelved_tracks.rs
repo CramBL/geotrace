@@ -13,10 +13,9 @@ use gt_types::{AssociationWindow, FileIdx};
 
 use crate::app::history_db::{DeleteShelvedTracksScope, Response};
 use crate::app::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
-use crate::app::{App, loader, test_util, ui_tests};
+use crate::app::test_util::recordings;
+use crate::app::{App, ui_tests};
 
-/// The stored track table of [`ui_tests::two_track_gtd_bytes`] with its second
-/// track shelved.
 fn one_live_and_one_shelved_track() -> [TrackRange; 2] {
     let [live, mut shelved] = ui_tests::two_live_track_ranges();
     shelved.state = TrackState::Shelved;
@@ -34,28 +33,10 @@ fn tracks_of_the_loaded_recording(harness: &Harness<'_, App>) -> Option<usize> {
         .map(|file| file.tracks.len())
 }
 
-/// A session with the history database holding one recording of a live and a
-/// shelved track, and the reference it is stored under.
-pub(super) fn app_with_stored_tracks<'a>(
-    tracks: &[TrackRange],
-) -> (Harness<'a, App>, tempfile::TempDir, gt_store::DatabaseRef) {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let store = gt_store::Store::open_in(dir.path());
-    let db_ref = ui_tests::insert_recording_into(
-        &store,
-        &ui_tests::two_track_gtd_bytes(),
-        tracks,
-        loader::stored_segmentation_from_config(&gt_track_builder::SegmentationConfig::default()),
-    );
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
-    harness.step();
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
-    (harness, dir, db_ref)
-}
-
 #[test]
 fn unshelving_a_track_of_a_loaded_recording_puts_it_in_the_view() {
-    let (mut harness, _dir, db_ref) = app_with_stored_tracks(&one_live_and_one_shelved_track());
+    let (mut harness, _dir, db_ref) =
+        recordings::app_with_stored_tracks(&one_live_and_one_shelved_track());
     harness.state().history.open(db_ref.clone());
     assert!(
         harness.step_until(|harness| tracks_of_the_loaded_recording(harness) == Some(1)),
@@ -63,7 +44,7 @@ fn unshelving_a_track_of_a_loaded_recording_puts_it_in_the_view() {
     );
 
     harness.state().history.set_tracks_shelved(
-        test_util::recordings::worker_track_snapshot(&harness.state().history, &db_ref),
+        recordings::worker_track_snapshot(&harness.state().history, &db_ref),
         vec![1],
         false,
     );
@@ -81,10 +62,11 @@ fn unshelving_a_track_of_a_loaded_recording_puts_it_in_the_view() {
 
 #[test]
 fn unshelving_a_track_of_a_recording_that_is_not_loaded_loads_nothing() {
-    let (mut harness, _dir, db_ref) = app_with_stored_tracks(&one_live_and_one_shelved_track());
+    let (mut harness, _dir, db_ref) =
+        recordings::app_with_stored_tracks(&one_live_and_one_shelved_track());
 
     harness.state().history.set_tracks_shelved(
-        test_util::recordings::worker_track_snapshot(&harness.state().history, &db_ref),
+        recordings::worker_track_snapshot(&harness.state().history, &db_ref),
         vec![1],
         false,
     );
@@ -106,7 +88,7 @@ fn unshelving_a_track_of_a_recording_that_is_not_loaded_loads_nothing() {
 #[test]
 fn merging_loaded_tracks_cancels_a_pending_shelve_and_clears_its_stored_row_mapping() {
     let stored_rows = ui_tests::two_live_track_ranges();
-    let (mut harness, _dir, recording) = app_with_stored_tracks(&stored_rows);
+    let (mut harness, _dir, recording) = recordings::app_with_stored_tracks(&stored_rows);
     harness.state().history.open(recording.clone());
     assert!(harness.step_until(|harness| tracks_of_the_loaded_recording(harness) == Some(2)));
     {
@@ -142,13 +124,14 @@ fn merging_loaded_tracks_cancels_a_pending_shelve_and_clears_its_stored_row_mapp
             .track_snapshot()
             .is_none()
     );
-    let stored = test_util::recordings::worker_track_snapshot(&harness.state().history, &recording);
+    let stored = recordings::worker_track_snapshot(&harness.state().history, &recording);
     assert_eq!(stored.rows(), &stored_rows);
 }
 
 #[test]
 fn removing_shelved_rows_keeps_the_live_track_addressable_without_reopening() {
-    let (mut harness, _dir, recording) = app_with_stored_tracks(&one_live_and_one_shelved_track());
+    let (mut harness, _dir, recording) =
+        recordings::app_with_stored_tracks(&one_live_and_one_shelved_track());
     harness.state().history.open(recording);
     assert!(harness.step_until(|harness| tracks_of_the_loaded_recording(harness) == Some(1)));
 
@@ -175,7 +158,8 @@ fn removing_shelved_rows_keeps_the_live_track_addressable_without_reopening() {
 
 #[test]
 fn a_rejected_delete_keeps_the_recording_and_its_log_loaded() {
-    let (mut harness, _dir, recording) = app_with_stored_tracks(&one_live_and_one_shelved_track());
+    let (mut harness, _dir, recording) =
+        recordings::app_with_stored_tracks(&one_live_and_one_shelved_track());
     harness.state().history.open(recording.clone());
     assert!(harness.step_until(|harness| tracks_of_the_loaded_recording(harness) == Some(1)));
 
@@ -243,14 +227,15 @@ fn a_rejected_delete_keeps_the_recording_and_its_log_loaded() {
     }
     assert_eq!(tracks_of_the_loaded_recording(&harness), Some(1));
     assert_eq!(harness.state().logs.len(), 1);
-    let stored = test_util::recordings::worker_track_snapshot(&harness.state().history, &recording);
+    let stored = recordings::worker_track_snapshot(&harness.state().history, &recording);
     let states: Vec<_> = stored.rows().iter().map(|row| row.state).collect();
     assert_eq!(states, [TrackState::Live, TrackState::Deleted]);
 }
 
 #[test]
 fn a_mixed_shelve_selection_lists_and_removes_only_the_stored_recording() {
-    let (mut harness, _dir, recording) = app_with_stored_tracks(&one_live_and_one_shelved_track());
+    let (mut harness, _dir, recording) =
+        recordings::app_with_stored_tracks(&one_live_and_one_shelved_track());
     harness.state().history.open(recording.clone());
     assert!(harness.step_until(|harness| tracks_of_the_loaded_recording(harness) == Some(1)));
     let filename = "session-only.gtd";
@@ -284,7 +269,7 @@ fn a_mixed_shelve_selection_lists_and_removes_only_the_stored_recording() {
                 .is_some_and(|entry| entry.file().metadata.filename == filename)
     }));
 
-    let stored = test_util::recordings::worker_track_snapshot(&harness.state().history, &recording);
+    let stored = recordings::worker_track_snapshot(&harness.state().history, &recording);
     assert!(
         stored
             .rows()

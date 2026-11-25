@@ -27,6 +27,7 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::storage_controls::AUTO_STORE_LABEL;
 use crate::app::test_util;
+use crate::app::test_util::harness;
 use crate::app::ui_tests;
 
 /// A data directory whose interference archive holds two days with a delete
@@ -66,7 +67,7 @@ fn app_asking_about_the_archives_under<'a>(
 /// The same, for findings this process cannot produce on its own: libhdf5
 /// hands one process the same open file twice.
 fn app_asking_about<'a>(inspected: InspectedArchives) -> Harness<'a, App> {
-    let (mut harness, _databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, _databases) = harness::app_with_the_databases_still_opening(&[]);
     harness
         .state_mut()
         .storage_open
@@ -405,7 +406,7 @@ fn a_window_closed_while_an_interrupted_delete_is_asked_about_opens_nothing() {
 /// while the archives open, and say what they are waiting for.
 #[test]
 fn the_environment_controls_are_grayed_while_the_archives_open() {
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::Application;
     harness.run_steps(3);
@@ -432,7 +433,7 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
             .expect("open the archive"),
         day,
     );
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
     harness.run_steps(3);
 
     assert!(
@@ -469,8 +470,8 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
         day,
     );
     let (mut harness, databases) =
-        ui_tests::app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+        harness::app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::Application;
     harness.run_steps(3);
@@ -524,8 +525,8 @@ fn the_recording_storage_controls_are_grayed_in_a_read_only_session() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
     let (mut harness, databases) =
-        ui_tests::app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+        harness::app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::Application;
     harness.run_steps(3);
@@ -555,7 +556,7 @@ fn the_recording_storage_controls_are_grayed_in_a_read_only_session() {
 /// nowhere to download to until the archive is open.
 #[test]
 fn the_download_control_is_grayed_while_the_archive_opens() {
-    let (mut harness, _databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, _databases) = harness::app_with_the_databases_still_opening(&[]);
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::AircraftInterference;
     harness.run_steps(3);

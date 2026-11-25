@@ -5,21 +5,23 @@ use std::sync::mpsc;
 use egui_kittest::Harness;
 use gt_instance_lock::DataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteAccess};
-use gt_test_utils::HarnessInteraction as _;
+use gt_test_utils::{HarnessInteraction as _, recording_fixtures};
 
 use crate::app::App;
 use crate::app::archive_recovery::UnavailableArchives;
 use crate::app::storage::OpenStorage;
 use crate::app::test_util;
+use crate::app::test_util::harness;
+use crate::app::test_util::recordings;
 use crate::app::ui_tests;
 
-/// [`ui_tests::app_with_the_databases_still_opening`] for a session that reads and
+/// [`harness::app_with_the_databases_still_opening`] for a session that reads and
 /// writes the settings file at `config_path`.
 fn app_with_the_databases_still_opening_reading<'a>(
     config_path: PathBuf,
     write_access: WriteAccess,
 ) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
-    ui_tests::app_with_the_databases_still_opening_built_by(move |cc| {
+    harness::app_with_the_databases_still_opening_built_by(move |cc| {
         test_util::harness::transient_app_with_the_settings_file(
             cc,
             &[],
@@ -64,9 +66,9 @@ fn seed_a_two_track_recording(store: &gt_store::Store) -> gt_store::DatabaseRef 
     let settings = crate::app::loader::stored_segmentation_from_config(
         &gt_track_builder::SegmentationConfig::default(),
     );
-    ui_tests::insert_recording_into(
-        store,
-        &ui_tests::two_track_gtd_bytes(),
+    recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
+        &recording_fixtures::two_track_gtd_bytes(),
         &ui_tests::two_live_track_ranges(),
         settings,
     )
@@ -124,7 +126,7 @@ fn the_hidden_tracks_the_settings_file_lists_are_stored_with_their_recording() {
         db_ref,
         databases,
     } = app_reading_hidden_tracks_from_the_settings_file(WriteAccess::Owner);
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     harness.state().history.open(db_ref.clone());
 
@@ -182,7 +184,7 @@ fn a_read_only_session_stores_none_of_the_hidden_tracks_the_settings_file_lists(
         db_ref,
         databases,
     } = app_reading_hidden_tracks_from_the_settings_file(WriteAccess::ReadOnly);
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     harness.state().history.open(db_ref.clone());
 
@@ -207,9 +209,9 @@ fn a_read_only_session_stores_none_of_the_hidden_tracks_the_settings_file_lists(
 fn ui_state_a_newer_version_stored_raises_one_message_for_two_recordings() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     harness.step();
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     assert_eq!(
         harness.state().toasts.len(),

@@ -21,7 +21,7 @@ use gt_store::{
     StoredLogSettings, StoredSegmentation, StoredYearResolution, TrackRange, TrackState,
     UiStateVersionReporter,
 };
-use gt_test_utils::{By, HarnessInteraction as _};
+use gt_test_utils::{By, HarnessInteraction as _, recording_fixtures};
 use gt_track_builder::SegmentationConfig;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use hdf5_pure::{AttrValue, File as Hdf5File};
@@ -408,7 +408,7 @@ fn next_visibility_response(harness: &mut Harness<'_, App>) -> Response {
 fn a_disk_copy_with_different_track_ranges_keeps_its_visibility_local() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
-    let bytes = ui_tests::two_track_gtd_bytes();
+    let bytes = recording_fixtures::two_track_gtd_bytes();
     let one_track = [TrackRange {
         start: 0,
         end: 20,
@@ -419,7 +419,12 @@ fn a_disk_copy_with_different_track_ranges_keeps_its_visibility_local() {
         track_split_gap_us: longer_gap.num_microseconds().unwrap(),
         ..recordings::segmentation()
     };
-    let recording = ui_tests::insert_recording_into(&store, &bytes, &one_track, stored);
+    let recording = recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
+        &bytes,
+        &one_track,
+        stored,
+    );
     let mut harness = self::owner_app(&store);
     let page = self::await_page(&mut harness, UNFILTERED);
     let opening = self::open_status(&session::execute(
@@ -494,9 +499,9 @@ fn a_disk_copy_with_different_track_ranges_keeps_its_visibility_local() {
 fn desktop_history_recalculation_clears_visibility_before_reopening() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
-    let recording = ui_tests::insert_recording_into(
-        &store,
-        &ui_tests::two_track_gtd_bytes(),
+    let recording = recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
+        &recording_fixtures::two_track_gtd_bytes(),
         &ui_tests::two_live_track_ranges(),
         recordings::segmentation(),
     );
@@ -612,8 +617,12 @@ fn a_checked_history_open_requires_the_stored_layout_when_present(
             },
         ],
     };
-    let recording =
-        ui_tests::insert_recording_into(&store, &bytes, &tracks, recordings::segmentation());
+    let recording = recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
+        &bytes,
+        &tracks,
+        recordings::segmentation(),
+    );
     if matches!(layout, CheckedHistoryLayout::Damaged) {
         let file = Hdf5File::open_rw(store.recordings_path()).unwrap();
         let group = file
@@ -711,9 +720,9 @@ fn history_open_status_checks_the_layout_after_apply_processing(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
-    ui_tests::insert_recording_into(
-        &store,
-        &ui_tests::two_track_gtd_bytes(),
+    recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
+        &recording_fixtures::two_track_gtd_bytes(),
         &ui_tests::two_live_track_ranges(),
         recordings::segmentation(),
     );
@@ -764,9 +773,9 @@ fn history_open_status_checks_the_selected_recording_after_unload(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
-    let selected = ui_tests::insert_recording_into(
-        &store,
-        &ui_tests::two_track_gtd_bytes(),
+    let selected = recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
+        &recording_fixtures::two_track_gtd_bytes(),
         &ui_tests::two_live_track_ranges(),
         recordings::segmentation(),
     );
@@ -1155,13 +1164,13 @@ fn after_loading(harness: &mut Harness<'_, App>, operation: HistoryOpenId) -> Hi
 fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     assert_eq!(
         session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
         Reply::from(ErrorCode::HistoryNotReady)
     );
     databases
-        .send(ui_tests::storage_opened_in(
+        .send(harness::storage_opened_in(
             &store,
             &harness.ctx,
             &harness.state().pending_writes,
@@ -1395,8 +1404,8 @@ fn store_recording_across_midnight(store: &Store, midnight: DateTime<Utc>) {
     }
     let mut bytes = Vec::new();
     recorder.finish().unwrap().write(&mut bytes).unwrap();
-    let reference = ui_tests::insert_recording_into(
-        store,
+    let reference = recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
         &bytes,
         &[TrackRange {
             start: 0,
@@ -1413,9 +1422,9 @@ fn store_recording_across_midnight(store: &Store, midnight: DateTime<Utc>) {
 }
 
 fn owner_app(store: &Store) -> Harness<'static, App> {
-    let (harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     databases
-        .send(ui_tests::storage_opened_in(
+        .send(harness::storage_opened_in(
             store,
             &harness.ctx,
             &harness.state().pending_writes,
@@ -1426,7 +1435,7 @@ fn owner_app(store: &Store) -> Harness<'static, App> {
 
 fn read_only_app(store: &Store) -> Harness<'static, App> {
     let (harness, databases) =
-        ui_tests::app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
+        harness::app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
     let history =
         store
             .open_recordings_read_only()

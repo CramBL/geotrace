@@ -1373,7 +1373,7 @@ fn arrival_batches_complete_history_screening_and_prompt_decisions(
 fn deferred_arrival_sets_keep_independent_candidates_after_storage_opens() {
     let dir = tempfile::tempdir().expect("temp directory");
     let store = Store::open_in(dir.path());
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = test_util::harness::app_with_the_databases_still_opening(&[]);
     harness.state_mut().initial_position_source_policy =
         InitialPositionSourcePolicy::AutomaticallyUseUnambiguous;
     harness
@@ -1388,7 +1388,7 @@ fn deferred_arrival_sets_keep_independent_candidates_after_storage_opens() {
             name: "recording.gtd".to_owned(),
         }]);
     assert!(harness.state().loader.loading_jobs.is_empty());
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    test_util::harness::send_open_storage_and_step(&mut harness, &databases, &store);
     assert!(harness.step_until(|h| h.state().logs.len() == 1
         && h.state().shared.borrow().loaded_files.len() == 1
         && h.state().logs.pending_initial_position_sources().is_empty()));

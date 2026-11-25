@@ -2,6 +2,7 @@ use egui_kittest::kittest::Queryable as _;
 use gt_test_utils::HarnessInteraction as _;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 
+use crate::app::test_util::recordings;
 use crate::app::ui_tests;
 
 /// The plot's file legend names recordings through the user's template, the
@@ -34,7 +35,7 @@ fn plot_legend_follows_the_recording_name_template() {
 #[test]
 fn shelve_confirmation_follows_the_recording_name_template() {
     let (mut harness, _dir, recording) =
-        super::shelved_tracks::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
     harness.state().history.open(recording);
     assert!(harness.step_until(|harness| !harness.state().shared.borrow().loaded_files.is_empty()));
     {

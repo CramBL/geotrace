@@ -318,6 +318,37 @@ pub fn synthetic_gtd_bytes_with_channels(
     bytes
 }
 
+/// Two sets of ten fixes with a 3601-second step between sets.
+#[expect(
+    clippy::expect_used,
+    reason = "Invalid fixture data or serialization must fail the test"
+)]
+pub fn two_track_gtd_bytes() -> Vec<u8> {
+    let start = DateTime::from_timestamp(RECORDING_FIXTURE_START_SECS, 0).expect("fixture start");
+    let mut recorder = sdk::NavFileBuilder::new().open();
+    for fix in 0..2 * FIXES_PER_TRACK {
+        let seconds = if fix < FIXES_PER_TRACK {
+            fix
+        } else {
+            fix + TRACK_GAP_OFFSET_SECS
+        };
+        recorder.add_nav_fix(
+            sdk::NavFix::builder()
+                .time(sdk::NavFixTime::Receiver(
+                    start + Duration::seconds(seconds),
+                ))
+                .lat(sdk::Angle::degrees(51.5 + 0.0002 * fix as f64))
+                .lon(sdk::Angle::degrees(-0.1))
+                .heading(sdk::Angle::degrees(270.0))
+                .build(),
+        );
+    }
+    let nav_file = recorder.finish().expect("valid nav file");
+    let mut bytes = Vec::new();
+    nav_file.write(&mut bytes).expect("write bytes");
+    bytes
+}
+
 fn synthetic_satellites(sats_seen: u32, sats_in_fix: u32) -> Vec<sdk::Satellite> {
     (1..=sats_seen)
         .map(|prn| {
@@ -338,6 +369,11 @@ fn synthetic_satellites(sats_seen: u32, sats_in_fix: u32) -> Vec<sdk::Satellite>
         })
         .collect()
 }
+
+pub const RECORDING_FIXTURE_START_SECS: i64 = 1_748_000_000;
+
+const FIXES_PER_TRACK: i64 = 10;
+const TRACK_GAP_OFFSET_SECS: i64 = 3_600;
 
 #[cfg(test)]
 mod tests {

@@ -24,7 +24,7 @@ use crate::app::instance_wait::{
 use crate::app::read_only_session::READ_ONLY_MARKER_LABEL;
 use crate::app::storage::{DatabasesPending, OPENING_DATABASES, StorageOpen};
 use crate::app::test_util;
-use crate::app::test_util::harness::TestDroppedFile;
+use crate::app::test_util::harness::{self, TestDroppedFile};
 use crate::app::ui_tests;
 
 /// The same wait, with the registry every write of the run goes through left
@@ -991,7 +991,7 @@ fn a_file_queued_while_waiting_loads_read_only_and_is_not_stored() {
     // this is the one frame the choice takes before that lands.
     harness.step();
     let databases = harness.state_mut().storage_open.take_over_for_test();
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     let recordings =
@@ -1026,7 +1026,7 @@ fn log_text_pasted_while_waiting_loads_in_the_read_only_session_it_starts() {
         .click();
     harness.step();
     let databases = harness.state_mut().storage_open.take_over_for_test();
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
 
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
 }

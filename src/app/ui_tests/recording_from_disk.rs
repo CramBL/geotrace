@@ -13,7 +13,7 @@ use gt_store::{
     StoredLogFilterStack, StoredLogSettings, StoredRecording, StoredSegmentation, StoredTrackTable,
     StoredYearResolution, TrackRange, TrackState,
 };
-use gt_test_utils::{HarnessInteraction as _, TestHarness};
+use gt_test_utils::{HarnessInteraction as _, TestHarness, recording_fixtures};
 use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationWindow, FileIdx, Latitude, Longitude, TrackIdx, TrackRef};
 use rstest::rstest;
@@ -25,7 +25,8 @@ use crate::app::recording_from_disk::{
     RecordingsAlreadyInHistory,
 };
 use crate::app::test_util;
-use crate::app::test_util::harness::TestDroppedFile;
+use crate::app::test_util::harness::{self, TestDroppedFile};
+use crate::app::test_util::recordings;
 use crate::app::ui_tests;
 use crate::app::{App, ParsedLogOrigin, log_viewer, modals};
 use crate::settings::InitialPositionSourcePolicy;
@@ -33,7 +34,7 @@ use crate::settings::InitialPositionSourcePolicy;
 /// The app with `ride.gtd` in its history database, the second of its two
 /// tracks shelved, and the same file sitting on disk beside the database.
 fn app_with_a_stored_recording_on_disk() -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
-    app_with_a_stored_shelved_track(&ui_tests::two_track_gtd_bytes())
+    app_with_a_stored_shelved_track(&recording_fixtures::two_track_gtd_bytes())
 }
 
 fn app_with_a_stored_shelved_track(
@@ -59,7 +60,7 @@ fn app_with_a_stored_recording_of_live_tracks()
 fn app_with_a_stored_recording_of(
     tracks: &[gt_store::TrackRange],
 ) -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
-    app_with_a_stored_recording_of_bytes(tracks, &ui_tests::two_track_gtd_bytes())
+    app_with_a_stored_recording_of_bytes(tracks, &recording_fixtures::two_track_gtd_bytes())
 }
 
 fn app_with_a_stored_recording_of_bytes(
@@ -71,16 +72,21 @@ fn app_with_a_stored_recording_of_bytes(
     let gtd_path = dir.path().join("ride.gtd");
     std::fs::write(&gtd_path, bytes).expect("write the recording");
 
-    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
     harness.step();
 
     // Stored under the settings the app runs with: opening the stored version
     // then reproduces its tracks without the "Track settings differ" prompt.
     let settings =
         crate::app::loader::stored_segmentation_from_config(&harness.state().processing_config);
-    ui_tests::insert_recording_into(&store, bytes, tracks, settings);
+    recordings::store_recording_with_segmentation(
+        &store.recordings_path(),
+        bytes,
+        tracks,
+        settings,
+    );
 
-    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    harness::send_open_storage_and_step(&mut harness, &databases, &store);
     (harness, dir, gtd_path)
 }
 
@@ -246,7 +252,7 @@ enum DiskShelfMode {
 }
 
 fn two_tracks_with_missing_samples() -> Vec<u8> {
-    let bytes = ui_tests::two_track_gtd_bytes();
+    let bytes = recording_fixtures::two_track_gtd_bytes();
     let file = NavFile::read(bytes.as_slice()).expect("read two tracks");
     let mut builder = NavFileBuilder::new().open();
     for (index, point) in file.nav_points().iter().enumerate() {
