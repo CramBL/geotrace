@@ -18,7 +18,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use egui::Context;
-use gt_loaded_files::{LoadedFileId, StoredTrackSnapshotUpdate};
+use gt_loaded_files::LoadedFileId;
 use gt_loader::StoredGtdBytes;
 use gt_log_view::{
     AttachmentSettingsCompletion, AttachmentSettingsWrite, LogAttachmentRef, LogSaveCompletion,
@@ -31,7 +31,8 @@ use gt_store::{
     LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
     ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingUiState,
     Recordings, RecordingsHandle, StoredLayoutRevision, StoredLogSettings, StoredRecording,
-    StoredTrackSnapshot, StoredTrackTable, TrackRange, TrackState, UiStateVersionReporter,
+    StoredTrackSnapshot, StoredTrackSnapshotUpdate, StoredTrackTable, TrackRange, TrackState,
+    UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -1296,17 +1297,8 @@ impl DeletedTracks {
         if rows.is_empty() {
             return Ok(());
         }
-        let recording = before.recording();
-        if purge_tracks_with_stored(db, recording, stored, rows)? {
-            match access.read_track_snapshot(db, recording) {
-                Ok(after) => self
-                    .snapshot_updates
-                    .push(StoredTrackSnapshotUpdate { before, after }),
-                Err(error) => {
-                    log::warn!("Could not read the remaining track table of {recording}: {error}")
-                }
-            }
-        }
+        self.snapshot_updates
+            .extend(purge_tracks_with_stored(db, access, before, stored, rows)?);
         self.count += rows.len();
         Ok(())
     }
@@ -1327,15 +1319,14 @@ impl DeletedTracks {
 /// and leaves the recording as it is when `drop_rows` holds a row past the end
 /// of the table or a row that already holds a tombstone.
 ///
-/// The recording's stored snap runs are dropped by
-/// [`HistoryDatabase::replace_recording_in_place`]: the runs name point indices
-/// that the re-encode shifts.
+/// The replacement drops the stored snap run because the nav point indices change.
 fn purge_tracks_with_stored(
     db: &mut Recordings,
-    db_ref: &DatabaseRef,
+    access: &HistoryAccess,
+    before: StoredTrackSnapshot,
     stored: &StoredRecording,
     drop_rows: &[usize],
-) -> Result<bool, DbError> {
+) -> Result<Option<StoredTrackSnapshotUpdate>, DbError> {
     // One unusable row rejects the whole request. The caller numbered the
     // tracks against another table, and the rows that do hold a track may hold
     // tracks other than the ones that the user chose.
@@ -1362,8 +1353,8 @@ fn purge_tracks_with_stored(
         .enumerate()
         .any(|(row, t)| !drop.contains(&row) && t.state != TrackState::Deleted);
     if !a_track_survives {
-        db.delete_batch(std::slice::from_ref(db_ref))?;
-        return Ok(false);
+        db.delete_batch(std::slice::from_ref(before.recording()))?;
+        return Ok(None);
     }
 
     let drop_ranges: Vec<Range<usize>> = stored
@@ -1378,7 +1369,7 @@ fn purge_tracks_with_stored(
         })
         .collect();
     if drop_ranges.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
 
     let new_bytes = gt_loader::reencode_dropping_ranges(&stored.bytes, &drop_ranges)
@@ -1413,8 +1404,7 @@ fn purge_tracks_with_stored(
         .unwrap_or_else(|| loader::stored_segmentation_from_config(&SegmentationConfig::default()));
     let meta = gt_store::extract_meta(&new_bytes)?;
 
-    db.replace_recording_in_place(db_ref, &meta, &new_tracks, settings, &new_bytes)?;
-    Ok(true)
+    access.replace_recording_after_track_purge(db, before, &meta, &new_tracks, settings, &new_bytes)
 }
 
 #[cfg(test)]
@@ -1694,8 +1684,10 @@ mod tests {
 
     /// A recording whose every track is shelved is deleted from history with
     /// them, because an empty re-encode would fail.
-    #[test]
-    fn deleting_the_shelved_tracks_of_a_recording_with_no_live_track_deletes_the_recording() {
+    #[rstest]
+    #[case::one_recording(false)]
+    #[case::every_recording(true)]
+    fn deleting_shelved_tracks_removes_recordings_with_no_live_track(#[case] bulk: bool) {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
         let worker = recordings::worker_on(&path);
@@ -1710,7 +1702,20 @@ mod tests {
         };
         result.expect("the second shelve runs");
 
-        worker.delete_shelved_tracks(DeleteShelvedTracksScope::OneRecording(first.clone()));
+        let hidden = RecordingUiState::with_hidden_track_numbers([2]);
+        let snapshot = recordings::worker_track_snapshot(&worker, &second);
+        worker.store_recording_ui_state(snapshot.layout().clone(), hidden.clone());
+        assert!(matches!(
+            recordings::next_response(&worker),
+            Response::RecordingUiStateStored(Ok(()))
+        ));
+
+        let scope = if bulk {
+            DeleteShelvedTracksScope::EveryRecording
+        } else {
+            DeleteShelvedTracksScope::OneRecording(first)
+        };
+        worker.delete_shelved_tracks(scope);
         let Response::Mutated {
             op: DbOp::TracksDeleted { count, .. },
             result,
@@ -1719,9 +1724,17 @@ mod tests {
             panic!("expected a TracksDeleted mutation");
         };
         result.expect("the delete runs");
-        assert_eq!(count, 2);
-
-        assert_eq!(shelved_tracks_per_recording(&worker), vec![(second, 1)]);
+        assert_eq!(count, if bulk { 3 } else { 2 });
+        assert_eq!(
+            shelved_tracks_per_recording(&worker),
+            vec![(second.clone(), usize::from(!bulk))]
+        );
+        let db = ReadOnlyRecordings::open_existing_read_only(&path).unwrap();
+        assert_eq!(
+            db.recording_ui_state(&second, &UiStateVersionReporter::default())
+                .unwrap(),
+            hidden
+        );
         worker.shutdown();
     }
 

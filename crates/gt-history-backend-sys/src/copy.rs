@@ -12,11 +12,11 @@ use gt_history_types::{
     GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
     HIDDEN_TRACKS_DATASET, HistoryAccess, LogAttachmentId, LogAttachmentListingEntry,
     LogAttachmentReadError, NavPointTimeRange, RecordingDebugTag, RecordingEntry, RecordingInsert,
-    RecordingMeta, RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredTrackTable,
-    StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET,
-    TRACKS_GROUP, TrackLayoutVisibility, TrackRange, TrackState, UI_STATE_GROUP,
-    UI_STATE_VERSION_ATTR, UiStateVersionReporter, UnreadableTrackColumn,
+    RecordingMeta, RecordingReplacement, RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP,
+    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    StoredTrackTable, StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET,
+    TRACK_STATE_DATASET, TRACKS_GROUP, TrackLayoutVisibility, TrackRange, TrackState,
+    UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, UnreadableTrackColumn,
 };
 use hdf5::Group;
 use thiserror::Error;
@@ -836,28 +836,21 @@ fn resolve_replacement_stage(
     Ok(())
 }
 
-/// Rewrite one recording's GTD data, metadata attributes, track table and
-/// segmentation settings under the group name it already has.
-///
-/// The recording's log attachment attributes are kept. Every other attribute
-/// and every member of the group, its snap run included, is replaced by what
-/// `gtd_bytes`, `meta`, `tracks` and `settings` describe.
-///
-/// A failure while the replacement is being built leaves the stored recording
-/// as it was: the replacement is built in a stage (see
-/// [`REPLACEMENT_STAGE_PREFIX`]) and linked in only once it is complete. HDF5
-/// has no way to point a name at another object in one step, as
-/// [`rename_identity`] also works around: a failure between the two link
-/// operations leaves the recording in its stage, and
-/// [`resolve_replacement_stage`] puts it back.
+/// [`resolve_replacement_stage`] restores the replacement if relinking fails
+/// after the original group is removed.
 pub(crate) fn replace_recording(
     db_path: &std::path::Path,
     db_ref: &DatabaseRef,
-    meta: &RecordingMeta,
-    tracks: &[TrackRange],
-    settings: StoredSegmentation,
-    gtd_bytes: &[u8],
+    replacement: RecordingReplacement<'_>,
 ) -> Result<(), InternalError> {
+    let visibility = replacement.visibility();
+    let RecordingReplacement {
+        meta,
+        tracks,
+        settings,
+        bytes,
+        ..
+    } = replacement;
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
     let meta_grp = file.group("meta").or_else(|_| file.create_group("meta"))?;
@@ -876,13 +869,20 @@ pub(crate) fn replace_recording(
     let rec_grp = id_grp.group(&db_ref.group_name)?;
 
     let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or_else(|| Path::new(".")))?;
-    std::fs::write(tmp.path(), gtd_bytes)?;
+    std::fs::write(tmp.path(), bytes)?;
     let gtd_file = hdf5::File::open(tmp.path())?;
 
     let stage = meta_grp.create_group(&stage_name)?;
     copy_attrs(&gtd_file, &stage, |_| true)?;
     copy_members(&gtd_file, &stage)?;
     write_track_table(&stage, tracks)?;
+    if visibility == TrackLayoutVisibility::Preserve && rec_grp.link_exists(UI_STATE_GROUP) {
+        // Keep the original targets of HDF5 object references.
+        stage.link_hard(
+            &format!("/{recording_path}/{UI_STATE_GROUP}"),
+            UI_STATE_GROUP,
+        )?;
+    }
     copy_attrs(&rec_grp, &stage, |name| {
         LogAttachmentId::from_attr_key(name).is_some()
     })?;
