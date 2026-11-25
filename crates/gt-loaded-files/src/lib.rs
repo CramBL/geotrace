@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use std::ops::{Deref, Index, IndexMut};
 use std::sync::Arc;
 
-use gt_history_types::{DatabaseRef, RecordingMeta, StoredTrackSnapshot, TrackState};
+use gt_history_types::{
+    DatabaseRef, RecordingMeta, StoredTrackSnapshot, StoredTrackSnapshotUpdate, TrackState,
+};
 use gt_types::{
     AddressedFix, FileIdx, FixRef, Generation, LoadedFile, LoadedTrack, NavPoint, PointIdx,
     TrackIdx, TrackRef, Versionable, Versioned,
@@ -72,11 +74,6 @@ pub enum FileHistory {
 pub enum RecordingLoadOrigin {
     History,
     Import,
-}
-
-pub struct StoredTrackSnapshotUpdate {
-    pub before: StoredTrackSnapshot,
-    pub after: StoredTrackSnapshot,
 }
 
 impl FileHistory {
@@ -574,7 +571,7 @@ impl LoadedFiles {
         let mut updates_by_recording: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for update in updates {
             updates_by_recording
-                .entry(update.before.recording())
+                .entry(update.before().recording())
                 .or_default()
                 .push(update);
         }
@@ -591,18 +588,17 @@ impl LoadedFiles {
                 continue;
             };
             for update in updates {
-                if update.after.recording() == snapshot.recording()
-                    && snapshot.same_observation(&update.before)
+                if snapshot.same_observation(update.before())
                     && file.tracks.iter().all(|track| {
                         track
                             .metadata
                             .index
                             .checked_sub(1)
-                            .and_then(|row| update.after.rows().get(row))
+                            .and_then(|row| update.after().rows().get(row))
                             .is_some_and(|row| row.state != TrackState::Deleted)
                     })
                 {
-                    **snapshot = update.after.clone();
+                    **snapshot = update.after().clone();
                 }
             }
         }

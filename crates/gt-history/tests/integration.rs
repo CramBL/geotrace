@@ -25,7 +25,7 @@ use gt_history_types::{
 use gt_test_utils::navigation_evidence_fixtures::{self, NavigationDetail};
 use gt_track_builder::{FixPlacementRule, SegmentationConfig};
 use gt_types::{LoadedFile, LoadedTrack, SatelliteQueryScope};
-use hdf5::File as NativeFile;
+use hdf5::{File as NativeFile, ObjectReference1, ReferencedObject};
 use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceSettings, FileSpaceStrategy};
 use rstest::rstest;
 
@@ -4045,6 +4045,238 @@ fn writing_ui_state_keeps_a_dataset_this_build_defines_none_of() {
         })
     );
     assert!(reporter.is_empty());
+}
+
+#[rstest]
+#[case::current(CURRENT_UI_STATE_VERSION, &[1, 2])]
+#[case::newer(CURRENT_UI_STATE_VERSION + 1, &[2])]
+fn a_partial_purge_retains_ui_subtrees_through_a_later_visibility_write(
+    #[case] recording_ui_version: i64,
+    #[case] recording_hidden_after_write: &[u64],
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let recording = insert_two_track(&mut db, "dev", 1_000_000_000, 20);
+    let other = insert_two_track(&mut db, "dev", 2_000_000_000, 20);
+    let fully_shelved = insert_two_track(&mut db, "dev", 3_000_000_000, 20);
+    db.set_tracks_shelved(&fully_shelved, &[0, 1], true)
+        .unwrap();
+    db.set_snap_blob(&recording, &[1, 2, 3]).unwrap();
+    let group_path = |recording: &DatabaseRef| {
+        format!(
+            "/by_identity/{}/{}/{UI_STATE_GROUP}",
+            gt_history::identity_group_name(&recording.identity),
+            recording.group_name,
+        )
+    };
+    {
+        let file = NativeFile::open_rw(&path).unwrap();
+        for (reference, version) in [
+            (&recording, recording_ui_version),
+            (&other, CURRENT_UI_STATE_VERSION + 1),
+        ] {
+            let group = file.create_group(&group_path(reference)).unwrap();
+            group
+                .new_attr::<i64>()
+                .create(UI_STATE_VERSION_ATTR)
+                .unwrap()
+                .write_scalar(&version)
+                .unwrap();
+            group
+                .new_dataset_builder()
+                .with_data(&[2_u64])
+                .create(HIDDEN_TRACKS_DATASET)
+                .unwrap();
+            let viewport = group.create_group("viewport").unwrap();
+            viewport
+                .new_dataset_builder()
+                .with_data(&[-8_i32, 20])
+                .create("offset")
+                .unwrap()
+                .new_attr::<u32>()
+                .create("mode")
+                .unwrap()
+                .write_scalar(&3)
+                .unwrap();
+            let offset = viewport.reference::<ObjectReference1>("offset").unwrap();
+            viewport
+                .new_attr::<ObjectReference1>()
+                .create("selected_dataset")
+                .unwrap()
+                .write_scalar(&offset)
+                .unwrap();
+        }
+    }
+
+    db.delete_batch(std::slice::from_ref(&fully_shelved))
+        .unwrap();
+    assert!(!db.contains(&fully_shelved).unwrap());
+    let access = HistoryAccess::lock();
+    let before = access.read_track_snapshot(&db, &recording).unwrap();
+    let unchanged = access.read_track_snapshot(&db, &other).unwrap();
+    let remaining = [
+        TrackRange {
+            start: 0,
+            end: 0,
+            state: TrackState::Deleted,
+        },
+        TrackRange {
+            start: 0,
+            end: 10,
+            state: TrackState::Live,
+        },
+    ];
+    let bytes = make_gtd_bytes(1_000_000_010, 10);
+    let meta = gt_history::extract_meta(&bytes).unwrap();
+    let settings = fixtures::default_segmentation();
+    assert!(matches!(
+        access.replace_recording_after_track_purge(
+            &mut db,
+            before.clone(),
+            &meta,
+            &remaining[1..],
+            settings,
+            &bytes,
+        ),
+        Err(DbError::StoredTrackLayoutChanged)
+    ));
+    let update = access
+        .replace_recording_after_track_purge(
+            &mut db,
+            before.clone(),
+            &meta,
+            &remaining,
+            settings,
+            &bytes,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(update.before().same_observation(&before));
+    assert!(!before.is_current());
+    assert!(update.after().is_current());
+    assert_eq!(update.after().rows(), remaining);
+    assert!(unchanged.same_observation(&access.read_track_snapshot(&db, &other).unwrap()));
+    assert_eq!(db.snap_blob(&recording).unwrap(), None);
+
+    let recording_group = group_path(&recording);
+    let other_group = group_path(&other);
+    {
+        let file = NativeFile::open(&path).unwrap();
+        assert_stored_viewport(
+            &file.group(&recording_group).unwrap(),
+            recording_ui_version,
+            &[2],
+        );
+        assert_stored_viewport(
+            &file.group(&other_group).unwrap(),
+            CURRENT_UI_STATE_VERSION + 1,
+            &[2],
+        );
+    }
+    db.set_recording_ui_state(
+        &recording,
+        &RecordingUiState::with_hidden_track_numbers([1, 2]),
+        &UiStateVersionReporter::default(),
+    )
+    .unwrap();
+    let file = NativeFile::open(&path).unwrap();
+    assert_stored_viewport(
+        &file.group(&recording_group).unwrap(),
+        recording_ui_version,
+        recording_hidden_after_write,
+    );
+    assert_stored_viewport(
+        &file.group(&other_group).unwrap(),
+        CURRENT_UI_STATE_VERSION + 1,
+        &[2],
+    );
+}
+
+#[expect(clippy::expect_used, reason = "an invalid fixture must fail the test")]
+fn assert_stored_viewport(group: &hdf5::Group, version: i64, hidden: &[u64]) {
+    let attr = group.attr(UI_STATE_VERSION_ATTR).expect("UI state version");
+    assert_eq!(attr.read_scalar::<i64>().expect("integer version"), version);
+    let tracks = group.dataset(HIDDEN_TRACKS_DATASET).expect("hidden tracks");
+    assert_eq!(tracks.read_raw::<u64>().expect("track numbers"), hidden);
+    let viewport = group.group("viewport").expect("viewport");
+    let offset = viewport.dataset("offset").expect("viewport offset");
+    assert!(offset.dtype().expect("offset type").is::<i32>());
+    assert_eq!(offset.read_raw::<i32>().expect("offset values"), [-8, 20]);
+    let mode = offset.attr("mode").expect("viewport mode");
+    assert_eq!(mode.read_scalar::<u32>().expect("mode value"), 3);
+    let reference = viewport
+        .attr("selected_dataset")
+        .expect("selected dataset")
+        .read_scalar::<ObjectReference1>()
+        .expect("dataset reference");
+    let referenced = viewport
+        .dereference(&reference)
+        .expect("dereference offset");
+    let token = match referenced {
+        ReferencedObject::Dataset(dataset) => Some(dataset.loc_info().expect("object info").token),
+        _ => None,
+    };
+    assert_eq!(
+        token,
+        Some(offset.loc_info().expect("offset object info").token)
+    );
+}
+
+#[cfg(feature = "backend-pure")]
+#[test_log::test]
+fn a_purge_with_conflicting_ui_state_leaves_the_recordings_readable() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let recording = insert_two_track(&mut db, "dev", 1_000_000_000, 20);
+    let other = insert_two_track(&mut db, "dev", 2_000_000_000, 20);
+    let state = RecordingUiState::with_hidden_track_numbers([2]);
+    let reporter = UiStateVersionReporter::default();
+    db.set_recording_ui_state(&recording, &state, &reporter)
+        .unwrap();
+
+    let candidate = dir.path().join("candidate.gtd");
+    fs::write(&candidate, make_gtd_bytes(1_000_000_010, 10)).unwrap();
+    {
+        let file = NativeFile::open_rw(&candidate).unwrap();
+        file.create_group(UI_STATE_GROUP).unwrap();
+    }
+    let bytes = fs::read(candidate).unwrap();
+    let meta = gt_history::extract_meta(&bytes).unwrap();
+    let access = HistoryAccess::lock();
+    let before = access.read_track_snapshot(&db, &recording).unwrap();
+    let unaffected = access.read_track_snapshot(&db, &other).unwrap();
+    let rows = [
+        TrackRange {
+            start: 0,
+            end: 0,
+            state: TrackState::Deleted,
+        },
+        TrackRange {
+            start: 0,
+            end: 10,
+            state: TrackState::Live,
+        },
+    ];
+    let failure = access.replace_recording_after_track_purge(
+        &mut db,
+        before.clone(),
+        &meta,
+        &rows,
+        fixtures::default_segmentation(),
+        &bytes,
+    );
+    assert!(failure.is_err());
+    let (stored, current) = access
+        .load_recording_with_snapshot(&db, &recording)
+        .unwrap();
+    assert_eq!(current.rows(), before.rows());
+    assert_eq!(stored.meta.unwrap().nav_point_count, 20);
+    assert_eq!(db.recording_ui_state(&recording, &reporter).unwrap(), state);
+    let (stored, current) = access.load_recording_with_snapshot(&db, &other).unwrap();
+    assert_eq!(stored.meta.unwrap().nav_point_count, 20);
+    assert!(unaffected.same_observation(&current));
 }
 
 /// A read and a write both leave a group above this build's version exactly

@@ -8,8 +8,8 @@ use gt_history_types::{
     GTD_META_TRAVEL_MODE_ATTR, HISTORY_LOCK as DB_LOCK, HistoryAccess, HistoryDatabase,
     LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
     ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingInsert, RecordingMeta,
-    RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
-    TrackLayoutVisibility, TrackRange, TrackState, UiStateVersionReporter,
+    RecordingReplacement, RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording,
+    StoredSegmentation, TrackLayoutVisibility, TrackRange, TrackState, UiStateVersionReporter,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -296,18 +296,14 @@ impl HistoryDatabase for PureDb {
             .map_err(Into::into)
     }
 
-    fn replace_recording_in_place(
+    fn replace_recording_payload(
         &mut self,
         db_ref: &DatabaseRef,
-        meta: &RecordingMeta,
-        tracks: &[TrackRange],
-        settings: StoredSegmentation,
-        bytes: &[u8],
+        replacement: RecordingReplacement<'_>,
     ) -> Result<(), DbError> {
         let access = HistoryAccess::lock();
         access.invalidate_recording_snapshots(self, std::slice::from_ref(db_ref))?;
-        copy::replace_recording(&self.path, db_ref, meta, tracks, settings, bytes)
-            .map_err(Into::into)
+        copy::replace_recording(&self.path, db_ref, replacement).map_err(Into::into)
     }
 
     fn set_track_layout(

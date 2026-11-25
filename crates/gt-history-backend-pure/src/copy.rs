@@ -4,8 +4,9 @@
 //! types, manipulates that tree, then writes the whole thing to a new
 //! `FileBuilder` in one pass.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem;
+use std::path::Path;
 use std::sync::Arc;
 
 use gt_history_types::{
@@ -16,14 +17,17 @@ use gt_history_types::{
     DbError, GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
     HIDDEN_TRACKS_DATASET, LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError,
-    RecordingInsert, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET,
-    SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
-    StoredTrackTable, StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET,
-    TRACK_STATE_DATASET, TRACKS_GROUP, TrackLayoutVisibility, TrackRange, TrackState,
-    UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, UnreadableTrackColumn,
-    log_attachment,
+    RecordingInsert, RecordingMeta, RecordingReplacement, RecordingUiState, SCHEMA_VERSION_ATTR,
+    SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation,
+    StoredTrackSplitRule, StoredTrackTable, StoredUiStateVersion, TRACK_END_DATASET,
+    TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackLayoutVisibility, TrackRange,
+    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
+    UnreadableTrackColumn, log_attachment,
 };
-use hdf5_pure::{AttrValue, DType, DeflateLevel, FileBuilder, FormatError, Group, GroupBuilder};
+use hdf5_pure::{
+    AttrValue, DType, DatasetBuilder, DeflateLevel, FileBuilder, FormatError, Group, GroupBuilder,
+    StagedGroup,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -200,7 +204,7 @@ fn find_recording_group(
     by_id: &Group,
     identity: &str,
     RecordingGroupName(recording): RecordingGroupName<'_>,
-) -> Result<Option<Group>, InternalError> {
+) -> Result<Option<(String, Group)>, InternalError> {
     if !gt_history_types::is_history_link_name(recording) {
         return Ok(None);
     }
@@ -216,7 +220,9 @@ fn find_recording_group(
             .map(str::to_owned);
         if gt_history_types::stored_identity_for_group(&name, declared) == identity
             && let Ok(recording_group) = group.group(recording)
-            && selected.replace(recording_group).is_some()
+            && selected
+                .replace((name.into_owned(), recording_group))
+                .is_some()
         {
             return Err(InternalError::AmbiguousRecording {
                 identity: identity.to_owned(),
@@ -232,18 +238,16 @@ fn open_recording_group(
     identity: &str,
     recording: RecordingGroupName<'_>,
 ) -> Result<Group, InternalError> {
-    find_recording_group(by_id, identity, recording)?.ok_or_else(|| {
-        InternalError::NoSuchRecording {
+    find_recording_group(by_id, identity, recording)?
+        .map(|(_, group)| group)
+        .ok_or_else(|| InternalError::NoSuchRecording {
             identity: identity.to_owned(),
             group_name: recording.0.to_owned(),
-        }
-    })
+        })
 }
 
-/// Write a single [`DatasetNode`] into an open group builder.
-fn write_dataset_into(gb: &mut GroupBuilder, ds: &DatasetNode) {
+fn configure_dataset(db: &mut DatasetBuilder, ds: &DatasetNode) {
     let chunk = chunk_for_shape(&ds.shape);
-    let db = gb.create_dataset(&ds.name);
     db.with_shape(&ds.shape);
     match &ds.data {
         DatasetData::F64(v) => {
@@ -285,7 +289,7 @@ fn write_group_into(parent: &mut GroupBuilder, node: &GroupNode) -> Result<(), I
         gb.set_attr(k, v.clone());
     }
     for ds in &node.datasets {
-        write_dataset_into(&mut gb, ds);
+        configure_dataset(gb.create_dataset(&ds.name), ds);
     }
     for child in &node.groups {
         write_group_into(&mut gb, child)?;
@@ -414,30 +418,6 @@ fn snap_blob_node(blob: &[u8]) -> GroupNode {
             data: DatasetData::U8(blob.to_vec()),
             attrs: Vec::new(),
         }],
-        groups: Vec::new(),
-    }
-}
-
-/// The `__geotrace_ui_state__` subgroup node at [`CURRENT_UI_STATE_VERSION`],
-/// holding the datasets this build defines followed by `kept_datasets`.
-fn ui_state_node(ui_state: &RecordingUiState, kept_datasets: Vec<DatasetNode>) -> GroupNode {
-    let hidden_track_numbers: Vec<u64> = ui_state.hidden_track_numbers().iter().copied().collect();
-    let n = hidden_track_numbers.len() as u64;
-    let mut datasets = vec![DatasetNode {
-        name: HIDDEN_TRACKS_DATASET.to_owned(),
-        shape: vec![n],
-        data: DatasetData::U64(hidden_track_numbers),
-        attrs: Vec::new(),
-    }];
-    datasets.extend(kept_datasets);
-    GroupNode {
-        unreadable_log_attachments: Vec::new(),
-        name: UI_STATE_GROUP.to_owned(),
-        attrs: vec![(
-            UI_STATE_VERSION_ATTR.to_owned(),
-            AttrValue::I64(CURRENT_UI_STATE_VERSION),
-        )],
-        datasets,
         groups: Vec::new(),
     }
 }
@@ -636,24 +616,49 @@ pub(crate) fn insert_recording(
     }))
 }
 
-/// Rewrite one recording's GTD data, metadata attributes, track table and
-/// segmentation settings under the group name it already has.
-///
-/// The recording's log attachment attributes are carried over. Everything else
-/// under the group, its snap run included, is replaced by what `gtd_bytes`,
-/// `meta`, `tracks` and `settings` describe.
 pub(crate) fn replace_recording(
-    db_path: &std::path::Path,
+    db_path: &Path,
     db_ref: &DatabaseRef,
-    meta: &RecordingMeta,
-    tracks: &[TrackRange],
-    settings: StoredSegmentation,
-    gtd_bytes: &[u8],
+    replacement: RecordingReplacement<'_>,
+) -> Result<(), InternalError> {
+    let visibility = replacement.visibility();
+    let RecordingReplacement {
+        meta,
+        tracks,
+        settings,
+        bytes,
+        ..
+    } = replacement;
+    let gtd_file = hdf5_pure::File::from_bytes(bytes.to_vec())?;
+    let replacement = build_new_recording(
+        &gtd_file,
+        &db_ref.group_name,
+        meta,
+        &db_ref.identity,
+        tracks,
+        settings,
+    )?;
+
+    match visibility {
+        TrackLayoutVisibility::Clear => rewrite_recording(db_path, db_ref, replacement)?,
+        TrackLayoutVisibility::Preserve => compact_recording(db_path, db_ref, replacement)?,
+    }
+    log::info!(
+        "Replaced recording identity={:?}, group={:?} in history database",
+        db_ref.identity,
+        db_ref.group_name
+    );
+    Ok(())
+}
+
+fn rewrite_recording(
+    db_path: &Path,
+    db_ref: &DatabaseRef,
+    mut replacement: GroupNode,
 ) -> Result<(), InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
     drop(existing_db);
-
     let Some(stored) = find_recording_node_mut(
         &mut identity_nodes,
         &db_ref.identity,
@@ -665,16 +670,6 @@ pub(crate) fn replace_recording(
             group_name: db_ref.group_name.clone(),
         });
     };
-
-    let gtd_file = hdf5_pure::File::from_bytes(gtd_bytes.to_vec())?;
-    let mut replacement = build_new_recording(
-        &gtd_file,
-        &db_ref.group_name,
-        meta,
-        &db_ref.identity,
-        tracks,
-        settings,
-    )?;
     replacement.attrs.extend(
         stored
             .attrs
@@ -684,46 +679,100 @@ pub(crate) fn replace_recording(
     );
     replacement.unreadable_log_attachments = mem::take(&mut stored.unreadable_log_attachments);
     *stored = replacement;
+    write_db(&identity_nodes, db_path)
+}
 
-    write_db(&identity_nodes, db_path)?;
-    log::info!(
-        "Replaced recording identity={:?}, group={:?} in history database",
-        db_ref.identity,
-        db_ref.group_name
-    );
+fn compact_recording(
+    db_path: &Path,
+    db_ref: &DatabaseRef,
+    replacement: GroupNode,
+) -> Result<(), InternalError> {
+    let database = hdf5_pure::File::open_rw(db_path)?;
+    let by_identity = database.root().group("by_identity")?;
+    let recording = open_recording_group(
+        &by_identity,
+        &db_ref.identity,
+        RecordingGroupName(&db_ref.group_name),
+    )?;
+    let previous_members = recording
+        .groups()?
+        .into_iter()
+        .chain(recording.datasets()?)
+        .chain(recording.named_datatypes()?);
+    for name in previous_members.filter(|name| name != UI_STATE_GROUP) {
+        recording.delete(&name)?;
+    }
+    for name in recording.attr_datatypes()?.into_keys() {
+        if LogAttachmentId::from_attr_key(&name).is_none()
+            && !replacement.attrs.iter().any(|(key, _)| key == &name)
+        {
+            recording.remove_attr(&name)?;
+        }
+    }
+    for (name, value) in replacement.attrs {
+        recording.set_attr(&name, value)?;
+    }
+    for dataset in &replacement.datasets {
+        recording.create_dataset(&dataset.name, |builder| configure_dataset(builder, dataset))?;
+    }
+    for child in &replacement.groups {
+        recording.create_group_with(&child.name, |group| stage_group_contents(group, child))?;
+    }
+    database.close()?;
     Ok(())
 }
 
-/// Remove multiple recordings in a single read-modify-write cycle.
-pub(crate) fn delete_batch(
-    db_path: &std::path::Path,
-    refs: &[gt_history_types::DatabaseRef],
-) -> Result<(), InternalError> {
-    let existing_db = hdf5_pure::File::open(db_path)?;
-    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
-    drop(existing_db);
+fn stage_group_contents(group: &mut StagedGroup<'_>, node: &GroupNode) {
+    for (name, value) in &node.attrs {
+        group.set_attr(name, value.clone());
+    }
+    for dataset in &node.datasets {
+        group.create_dataset(&dataset.name, |builder| configure_dataset(builder, dataset));
+    }
+    for child in &node.groups {
+        group.create_group_with(&child.name, |group| stage_group_contents(group, child));
+    }
+}
 
+pub(crate) fn delete_batch(db_path: &Path, refs: &[DatabaseRef]) -> Result<(), InternalError> {
+    let database = hdf5_pure::File::open_rw(db_path)?;
+    let by_identity = database.root().group("by_identity")?;
+    let mut removed_groups = HashMap::new();
     let mut attachments = Vec::new();
     for db_ref in refs {
-        if let Some(id_node) = find_identity_node_mut(
-            &mut identity_nodes,
+        let Some((identity, recording)) = find_recording_group(
+            &by_identity,
             &db_ref.identity,
-            Some(&db_ref.group_name),
-        )? {
-            if let Some(rec) = id_node.groups.iter().find(|r| r.name == db_ref.group_name) {
-                attachments.extend(
-                    rec.attrs
-                        .iter()
-                        .filter_map(|(key, _)| LogAttachmentId::from_attr_key(key)),
-                );
-                attachments.extend_from_slice(&rec.unreadable_log_attachments);
-            }
-            id_node.groups.retain(|r| r.name != db_ref.group_name);
+            RecordingGroupName(&db_ref.group_name),
+        )?
+        else {
+            continue;
+        };
+        if removed_groups
+            .entry(identity)
+            .or_insert_with(HashSet::new)
+            .insert(db_ref.group_name.as_str())
+        {
+            attachments.extend(
+                recording
+                    .attr_datatypes()?
+                    .into_keys()
+                    .filter_map(|key| LogAttachmentId::from_attr_key(&key)),
+            );
         }
     }
-    identity_nodes.retain(|n| !n.groups.is_empty());
 
-    write_db(&identity_nodes, db_path)?;
+    for (identity, recordings) in removed_groups {
+        let identity_group = by_identity.group(&identity)?;
+        if identity_group.groups()?.len() == recordings.len() {
+            by_identity.delete(&identity)?;
+        } else {
+            for recording in recordings {
+                identity_group.delete(recording)?;
+            }
+        }
+    }
+    database.close()?;
     log_attachment::delete_files(
         &log_attachment::logs_directory_for_database(db_path),
         &attachments,
@@ -810,7 +859,7 @@ pub(crate) fn set_tracks_shelved(
 ) -> Result<(), InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
     let stored_tracks = if let Ok(by_id) = existing_db.root().group("by_identity")
-        && let Some(recording) =
+        && let Some((_, recording)) =
             find_recording_group(&by_id, identity, RecordingGroupName(group_name))?
     {
         stored_track_table(&recording).into_present_rows()
@@ -1040,52 +1089,72 @@ pub(crate) fn set_recording_ui_state(
     ui_state: &RecordingUiState,
     reporter: &UiStateVersionReporter,
 ) -> Result<(), InternalError> {
-    let existing_db = hdf5_pure::File::open(db_path)?;
-    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
-    drop(existing_db);
-
-    let Some(rec) = find_recording_node_mut(
-        &mut identity_nodes,
+    let file = hdf5_pure::File::open_rw(db_path)?;
+    let by_identity = file.root().group("by_identity")?;
+    let Some((_, recording)) = find_recording_group(
+        &by_identity,
         &db_ref.identity,
         RecordingGroupName(&db_ref.group_name),
     )?
     else {
         return Ok(());
     };
+    let group = match recording.group(UI_STATE_GROUP) {
+        Ok(group) => Some(group),
+        Err(hdf5_pure::Error::Format(FormatError::PathNotFound(_))) => None,
+        Err(error) => return Err(error.into()),
+    };
+    let version = group
+        .as_ref()
+        .map(Group::attrs)
+        .transpose()?
+        .and_then(|attrs| attrs.get(UI_STATE_VERSION_ATTR).and_then(AttrValue::as_i64));
 
-    let stored_index = rec
-        .groups
-        .iter()
-        .position(|group| group.name == UI_STATE_GROUP);
-    let stored_version = stored_index
-        .and_then(|index| rec.groups.get(index))
-        .and_then(GroupNode::ui_state_version);
-
-    let kept_datasets = match StoredUiStateVersion::from_attribute_value(stored_version) {
-        StoredUiStateVersion::Newer(found) => {
+    let hidden_track_numbers: Vec<u64> = ui_state.hidden_track_numbers().iter().copied().collect();
+    let shape = [hidden_track_numbers.len() as u64];
+    match (StoredUiStateVersion::from_attribute_value(version), group) {
+        (StoredUiStateVersion::Newer(found), _) => {
             reporter.report_too_new(db_ref, found);
             return Ok(());
         }
-        StoredUiStateVersion::Current => match stored_index {
-            Some(index) => rec
-                .groups
-                .remove(index)
-                .datasets
-                .into_iter()
-                .filter(|dataset| dataset.name != HIDDEN_TRACKS_DATASET)
-                .collect(),
-            None => Vec::new(),
-        },
-        StoredUiStateVersion::Older(_) => {
-            if let Some(index) = stored_index {
-                rec.groups.remove(index);
+        (StoredUiStateVersion::Current, Some(group)) => {
+            match group.dataset(HIDDEN_TRACKS_DATASET) {
+                Ok(dataset) => {
+                    if dataset
+                        .read_u64()
+                        .is_ok_and(|saved| saved == hidden_track_numbers)
+                    {
+                        return Ok(());
+                    }
+                    group.delete(HIDDEN_TRACKS_DATASET)?;
+                }
+                Err(hdf5_pure::Error::Format(FormatError::PathNotFound(_))) => {}
+                Err(error) => return Err(error.into()),
             }
-            Vec::new()
+            group.create_dataset(HIDDEN_TRACKS_DATASET, |dataset| {
+                dataset
+                    .with_shape(&shape)
+                    .with_u64_data(&hidden_track_numbers);
+            })?;
         }
-    };
-    rec.groups.push(ui_state_node(ui_state, kept_datasets));
-
-    write_db(&identity_nodes, db_path)?;
+        (_, old_group) => {
+            if old_group.is_some() {
+                recording.delete(UI_STATE_GROUP)?;
+            }
+            recording.create_group_with(UI_STATE_GROUP, |group| {
+                group.set_attr(
+                    UI_STATE_VERSION_ATTR,
+                    AttrValue::I64(CURRENT_UI_STATE_VERSION),
+                );
+                group.create_dataset(HIDDEN_TRACKS_DATASET, |dataset| {
+                    dataset
+                        .with_shape(&shape)
+                        .with_u64_data(&hidden_track_numbers);
+                });
+            })?;
+        }
+    }
+    file.close()?;
     Ok(())
 }
 
@@ -1198,7 +1267,7 @@ pub(crate) fn delete_log_attachment_attribute(
 ) -> Result<(), InternalError> {
     let file = hdf5_pure::File::open_rw(db_path)?;
     let by_id = file.root().group("by_identity")?;
-    let Some(group) = find_recording_group(&by_id, identity, RecordingGroupName(group_name))?
+    let Some((_, group)) = find_recording_group(&by_id, identity, RecordingGroupName(group_name))?
     else {
         return Ok(());
     };
@@ -1370,7 +1439,7 @@ pub(crate) fn load_recording(
             gb.set_attr(k, v.clone());
         }
         for ds in &node.datasets {
-            write_dataset_into(&mut gb, ds);
+            configure_dataset(gb.create_dataset(&ds.name), ds);
         }
         for sg in &node.groups {
             write_group_into(&mut gb, sg)?;

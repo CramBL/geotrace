@@ -8,7 +8,7 @@ use parking_lot::{Mutex, ReentrantMutex, ReentrantMutexGuard};
 use same_file::Handle;
 
 use crate::{
-    DatabaseRef, DbError, HistoryDatabase, ReadOnlyHistoryDatabase, StoredRecording,
+    DatabaseRef, DbError, HistoryDatabase, ReadOnlyHistoryDatabase, RecordingMeta, StoredRecording,
     StoredSegmentation, TrackRange, TrackState,
 };
 
@@ -20,6 +20,35 @@ pub struct HistoryAccess {
 pub enum TrackLayoutVisibility {
     Clear,
     Preserve,
+}
+
+pub struct RecordingReplacement<'a> {
+    pub meta: &'a RecordingMeta,
+    pub tracks: &'a [TrackRange],
+    pub settings: StoredSegmentation,
+    pub bytes: &'a [u8],
+    visibility: TrackLayoutVisibility,
+}
+
+impl<'a> RecordingReplacement<'a> {
+    pub(crate) fn new(
+        meta: &'a RecordingMeta,
+        tracks: &'a [TrackRange],
+        settings: StoredSegmentation,
+        bytes: &'a [u8],
+    ) -> Self {
+        Self {
+            meta,
+            tracks,
+            settings,
+            bytes,
+            visibility: TrackLayoutVisibility::Clear,
+        }
+    }
+
+    pub fn visibility(&self) -> TrackLayoutVisibility {
+        self.visibility
+    }
 }
 
 impl HistoryAccess {
@@ -73,6 +102,41 @@ impl HistoryAccess {
         database.set_track_layout(recording, &rows, settings, visibility)?;
         let identity = Handle::from_path(database.path())?;
         Ok(self.snapshot(identity, recording.clone(), rows))
+    }
+
+    /// Retains the stored UI subtree when surviving rows keep their track numbers.
+    pub fn replace_recording_after_track_purge(
+        &self,
+        database: &mut impl HistoryDatabase,
+        before: StoredTrackSnapshot,
+        meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+        bytes: &[u8],
+    ) -> Result<Option<StoredTrackSnapshotUpdate>, DbError> {
+        self.verify_layout_revision(database, before.layout())?;
+        if !before.is_current_with_membership() || !before.is_partial_purge_successor(tracks) {
+            return Err(DbError::StoredTrackLayoutChanged);
+        }
+
+        let recording = before.recording();
+        database.replace_recording_payload(
+            recording,
+            RecordingReplacement {
+                visibility: TrackLayoutVisibility::Preserve,
+                ..RecordingReplacement::new(meta, tracks, settings, bytes)
+            },
+        )?;
+        match self.read_track_snapshot(database, recording) {
+            Ok(after) if after.rows() == tracks => {
+                Ok(Some(StoredTrackSnapshotUpdate { before, after }))
+            }
+            result => {
+                let error = result.err().unwrap_or(DbError::StoredTrackLayoutChanged);
+                log::warn!("Could not verify the remaining track table of {recording}: {error}");
+                Ok(None)
+            }
+        }
     }
 
     pub fn invalidate_track_snapshots(
@@ -296,6 +360,52 @@ impl StoredTrackSnapshot {
 
     pub fn same_payload_revision(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.payload_revision, &other.payload_revision)
+    }
+
+    fn is_partial_purge_successor(&self, rows: &[TrackRange]) -> bool {
+        if self.rows.len() != rows.len() {
+            return false;
+        }
+        let mut cursor = 0;
+        let mut removed_track = false;
+        let mut retained_track = false;
+        for (old, new) in self.rows.iter().zip(rows) {
+            if new.start != cursor {
+                return false;
+            }
+            if new.state == TrackState::Deleted {
+                if new.end != new.start {
+                    return false;
+                }
+                removed_track |= old.state != TrackState::Deleted;
+            } else {
+                let same_length = old
+                    .end
+                    .checked_sub(old.start)
+                    .is_some_and(|length| new.end.checked_sub(new.start) == Some(length));
+                if old.state != new.state || !same_length {
+                    return false;
+                }
+                retained_track = true;
+            }
+            cursor = new.end;
+        }
+        removed_track && retained_track
+    }
+}
+
+pub struct StoredTrackSnapshotUpdate {
+    before: StoredTrackSnapshot,
+    after: StoredTrackSnapshot,
+}
+
+impl StoredTrackSnapshotUpdate {
+    pub fn before(&self) -> &StoredTrackSnapshot {
+        &self.before
+    }
+
+    pub fn after(&self) -> &StoredTrackSnapshot {
+        &self.after
     }
 }
 

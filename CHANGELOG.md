@@ -51,6 +51,7 @@
 - **Map & Tracks:** Fixed map cross-highlights appearing over hidden or filtered fixes.
 - **Map & Tracks:** Fixed start and finish flags remaining on query-hidden fixes.
 - **Recordings:** Fixed shelving or deleting the wrong stored track after "Apply to loaded data" changed track boundaries.
+- **Recordings:** Fixed permanent track deletion clearing saved visibility for the tracks that remain in History.
 - **Interface:** Fixed a load error disappearing when another file finished loading after it.
 - **Log Viewer:** Fixed logs from a device that loses its clock on reboot getting the wrong year or failing to load.
 - **Log Viewer:** Fixed log entries appearing at unrelated recording positions when the device resets its clock on reboot.

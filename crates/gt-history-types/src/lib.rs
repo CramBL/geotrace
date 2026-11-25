@@ -17,7 +17,8 @@ pub use log_attachment::{
     StoredLogSettings, StoredYearResolution, logs_directory_for_database,
 };
 pub use track_snapshot::{
-    HISTORY_LOCK, HistoryAccess, StoredLayoutRevision, StoredTrackSnapshot, TrackLayoutVisibility,
+    HISTORY_LOCK, HistoryAccess, RecordingReplacement, StoredLayoutRevision, StoredTrackSnapshot,
+    StoredTrackSnapshotUpdate, TrackLayoutVisibility,
 };
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,
@@ -954,6 +955,17 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
         tracks: &[TrackRange],
         settings: StoredSegmentation,
         bytes: &[u8],
+    ) -> Result<(), DbError> {
+        self.replace_recording_payload(
+            db_ref,
+            RecordingReplacement::new(meta, tracks, settings, bytes),
+        )
+    }
+
+    fn replace_recording_payload(
+        &mut self,
+        db_ref: &DatabaseRef,
+        replacement: RecordingReplacement<'_>,
     ) -> Result<(), DbError>;
 
     /// Replace a recording's stored tracks and segmentation settings (e.g. after
