@@ -7,7 +7,7 @@
 //! value at `N` characters as `{title:12}`. Unknown tokens are kept verbatim as
 //! literal text, and an empty result falls back to the filename.
 
-use std::{borrow::Cow, num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
 /// The field values a [`render_name_template`] call draws from.
 ///
@@ -86,14 +86,6 @@ impl TokenPlaceholder {
             max_chars,
         })
     }
-
-    fn resolve_within_limit<'a>(self, fields: &NameFields<'a>) -> Option<Cow<'a, str>> {
-        let value = self.token.resolve(fields)?;
-        Some(match self.max_chars {
-            Some(max_chars) => crate::truncate_with_ellipsis(value, max_chars),
-            None => Cow::Borrowed(value),
-        })
-    }
 }
 
 /// A parsed template segment: either literal text or a token placeholder.
@@ -153,7 +145,20 @@ fn parse(template: &str) -> Vec<Part<'_>> {
 /// joins them to their neighbour. Leading and trailing literal text next to a
 /// present token is kept. If nothing renders, falls back to `fields.filename`.
 pub fn render_name_template(template: &str, fields: &NameFields<'_>) -> String {
-    let mut out = String::new();
+    self::render_name_template_prefix(template, fields, usize::MAX).0
+}
+
+/// Return a UTF-8 prefix of the rendered name and whether the byte limit shortened it.
+pub fn render_name_template_prefix(
+    template: &str,
+    fields: &NameFields<'_>,
+    max_bytes: usize,
+) -> (String, bool) {
+    let mut out = NamePrefix {
+        text: String::new(),
+        remaining: max_bytes,
+        omitted_content: false,
+    };
     // Literals seen since the last emitted token, a candidate separator.
     let mut pending = String::new();
     // Whether any token value has been emitted yet.
@@ -163,11 +168,15 @@ pub fn render_name_template(template: &str, fields: &NameFields<'_>) -> String {
     let mut pending_after_absent = false;
 
     for part in parse(template) {
+        if out.omitted_content {
+            break;
+        }
         match part {
             Part::Literal(text) => pending.push_str(text),
             Part::Token(placeholder) => {
                 match placeholder
-                    .resolve_within_limit(fields)
+                    .token
+                    .resolve(fields)
                     .filter(|value| !value.is_empty())
                 {
                     Some(value) => {
@@ -175,11 +184,11 @@ pub fn render_name_template(template: &str, fields: &NameFields<'_>) -> String {
                         // content from this token, or when it is genuine leading
                         // text (not a separator orphaned by an absent token).
                         if emitted_content || !pending_after_absent {
-                            out.push_str(&pending);
+                            out.append(&pending);
                         }
                         pending.clear();
                         pending_after_absent = false;
-                        out.push_str(&value);
+                        out.append_token_value(value, placeholder.max_chars);
                         emitted_content = true;
                     }
                     None => {
@@ -195,14 +204,62 @@ pub fn render_name_template(template: &str, fields: &NameFields<'_>) -> String {
     // standalone text (a template with no resolving tokens). Only a separator
     // left dangling by an absent token with no preceding content is dropped.
     if emitted_content || !pending_after_absent {
-        out.push_str(&pending);
+        out.append(&pending);
     }
 
-    let trimmed = out.trim();
-    if trimmed.is_empty() {
-        fields.filename.to_owned()
-    } else {
-        trimmed.to_owned()
+    out.finish(fields.filename)
+}
+
+struct NamePrefix {
+    text: String,
+    remaining: usize,
+    omitted_content: bool,
+}
+
+impl NamePrefix {
+    fn append_token_value(&mut self, value: &str, max_chars: Option<NonZeroUsize>) {
+        if self.omitted_content {
+            return;
+        }
+        match max_chars.and_then(|limit| crate::prefix_before_ellipsis(value, limit)) {
+            Some(prefix) => {
+                self.append(prefix);
+                self.append(crate::ELLIPSIS);
+            }
+            None => self.append(value),
+        }
+    }
+
+    fn append(&mut self, fragment: &str) {
+        if self.omitted_content {
+            return;
+        }
+        let fragment = if self.text.is_empty() {
+            fragment.trim_start()
+        } else {
+            fragment
+        };
+        let (prefix, excess) = fragment.split_at(fragment.floor_char_boundary(self.remaining));
+        self.text.push_str(prefix);
+        if excess.is_empty() {
+            self.remaining -= prefix.len();
+        } else {
+            // The first omitted UTF-8 character ends the prefix across fragments.
+            self.remaining = 0;
+            self.omitted_content = !excess.trim_start().is_empty();
+        }
+    }
+
+    fn finish(mut self, fallback: &str) -> (String, bool) {
+        if self.omitted_content {
+            return (self.text, true);
+        }
+        if self.text.is_empty() {
+            let (prefix, excess) = fallback.split_at(fallback.floor_char_boundary(self.remaining));
+            return (prefix.to_owned(), !excess.is_empty());
+        }
+        self.text.truncate(self.text.trim_end().len());
+        (self.text, false)
     }
 }
 
@@ -226,6 +283,26 @@ mod tests {
             identity,
             filename: "ride.gtd",
         }
+    }
+
+    #[rstest]
+    #[case::leading_and_trailing_space("{title}", Some("  Summit    "), 6, ("Summit", false))]
+    #[case::space_before_omitted_content("{title}   {device}", Some("A"), 2, ("A ", true))]
+    #[case::partial_utf8_character("{title}{device}", Some("é"), 1, ("", true))]
+    #[case::fallback_filename("{title}", None, 4, ("ride", true))]
+    #[case::partial_ellipsis("{title:2}", Some("ABCD"), 4, ("AB", true))]
+    fn rendered_name_prefix_respects_the_byte_limit(
+        #[case] template: &str,
+        #[case] title: Option<&str>,
+        #[case] max_bytes: usize,
+        #[case] expected: (&str, bool),
+    ) {
+        let (prefix, truncated) = super::render_name_template_prefix(
+            template,
+            &fields(title, Some("B"), None),
+            max_bytes,
+        );
+        assert_eq!((prefix.as_str(), truncated), expected);
     }
 
     #[rstest]

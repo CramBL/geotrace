@@ -16,6 +16,7 @@ schema = ["dep:schemars"]
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+gt-fmt = { path = "../gt-fmt" }
 gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-query = { path = "../gt-query" }
@@ -33,6 +34,8 @@ uuid = { workspace = true, features = ["serde"] }
 xxhash-rust.workspace = true
 
 [dev-dependencies]
+geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
+gt-loader = { path = "../gt-loader" }
 gt-test-utils = { path = "../gt-test-utils" }
 proptest.workspace = true
 

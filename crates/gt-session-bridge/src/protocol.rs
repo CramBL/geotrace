@@ -3,12 +3,14 @@ use std::ops::Range;
 
 use chrono::{DateTime, Utc};
 use gt_loaded_files::{
-    LoadedFileEntry, LoadedFilesView, RecordingPage, RecordingSummary, SessionTrackRef,
+    LoadedFileEntry, LoadedFilesView, MAX_RECORDINGS_PER_PAGE, RecordingPage, RecordingSummary,
+    SessionTrackRef,
 };
 use gt_types::{TimeRange as LoadedTimeRange, TrackIdx, TrackRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::framing::{Frame, MAX_REPLY_BYTES};
 use crate::history::{
     GetHistoryOpenStatus, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings,
     OpenHistoryRecording,
@@ -294,12 +296,12 @@ pub struct Recordings {
 }
 
 impl Recordings {
-    pub(crate) fn new(page: RecordingPage, session: Uuid) -> Self {
+    pub(crate) fn new(page: &RecordingPage<'_>, session: Uuid, name_template: &str) -> Self {
         Self {
             recordings: page
                 .recordings
-                .into_iter()
-                .map(|summary| Recording::new(summary, session))
+                .iter()
+                .map(|summary| Recording::new(summary, session, name_template))
                 .collect(),
             next_after: page.next_after.map(|number| RecordingReference {
                 session,
@@ -316,6 +318,8 @@ pub struct Recording {
     pub filename: String,
     pub title: Option<String>,
     pub device: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub metadata_truncated: bool,
     pub time_range: Option<TimeRange>,
     pub track_count: usize,
 }
@@ -333,18 +337,71 @@ impl From<LoadedTimeRange> for TimeRange {
 }
 
 impl Recording {
-    pub(crate) fn new(recording: RecordingSummary, session: Uuid) -> Self {
+    pub(crate) fn new(
+        recording: &RecordingSummary<'_>,
+        session: Uuid,
+        name_template: &str,
+    ) -> Self {
+        let fields = recording.name_fields;
+        let (name, truncated) = gt_fmt::render_name_template_prefix(
+            name_template,
+            &fields,
+            MAX_METADATA_JSON_BYTES - JSON_QUOTE_BYTES,
+        );
+        let mut metadata = MetadataPreview { truncated };
+        let display_name = metadata.prefix(&name).to_owned();
+        let filename = metadata.prefix(fields.filename).to_owned();
+        let title = fields.title.map(|value| metadata.prefix(value).to_owned());
+        let device = fields.device.map(|value| metadata.prefix(value).to_owned());
         Self {
             id: RecordingReference {
                 session,
                 number: recording.id.into(),
             },
-            display_name: recording.display_name,
-            filename: recording.filename,
-            title: recording.title,
-            device: recording.device,
+            display_name,
+            filename,
+            title,
+            device,
+            metadata_truncated: metadata.truncated,
             time_range: recording.time_range.map(Into::into),
             track_count: recording.track_count,
         }
     }
 }
+
+struct MetadataPreview {
+    truncated: bool,
+}
+
+impl MetadataPreview {
+    fn prefix<'a>(&mut self, text: &'a str) -> &'a str {
+        let mut upper = text.len().min(MAX_METADATA_JSON_BYTES - JSON_QUOTE_BYTES);
+        let candidate = text
+            .get(..text.floor_char_boundary(upper))
+            .unwrap_or_default();
+        let prefix = if Frame::encode(&candidate, MAX_METADATA_JSON_BYTES).is_ok() {
+            candidate
+        } else {
+            let mut lower = 0;
+            while lower < upper {
+                let middle = lower + (upper - lower).div_ceil(2);
+                let candidate = text
+                    .get(..text.floor_char_boundary(middle))
+                    .unwrap_or_default();
+                if Frame::encode(&candidate, MAX_METADATA_JSON_BYTES).is_ok() {
+                    lower = middle;
+                } else {
+                    upper = middle - 1;
+                }
+            }
+            text.get(..text.floor_char_boundary(lower))
+                .unwrap_or_default()
+        };
+        self.truncated |= prefix.len() < text.len();
+        prefix
+    }
+}
+
+const JSON_QUOTE_BYTES: usize = 2;
+// Four strings use one fifth each. The remaining fifth covers the row and page structure.
+const MAX_METADATA_JSON_BYTES: usize = MAX_REPLY_BYTES / MAX_RECORDINGS_PER_PAGE / 5;

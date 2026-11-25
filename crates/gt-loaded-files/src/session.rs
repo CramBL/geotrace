@@ -1,5 +1,6 @@
 use std::num::NonZeroUsize;
 
+use gt_fmt::NameFields;
 use gt_types::{Generation, TimeRange, TrackIdx, TrackRef};
 
 use crate::{IndexAlignedFiles, LoadedFileEntry, LoadedFileId, LoadedFilesView};
@@ -19,7 +20,7 @@ impl ListRecordings {
     }
 
     /// List recordings in load order, up to [`MAX_RECORDINGS_PER_PAGE`].
-    pub fn execute(self, files: LoadedFilesView<'_>, name_template: &str) -> RecordingPage {
+    pub fn execute(self, files: LoadedFilesView<'_>) -> RecordingPage<'_> {
         let ids = &files.loaded_files.storage.get().ids;
         let start = self
             .after
@@ -28,7 +29,7 @@ impl ListRecordings {
         let end = start.saturating_add(limit).min(ids.len());
         let recordings: Vec<_> = (start..end)
             .filter_map(|index| files.get(index))
-            .map(|entry| RecordingSummary::new(entry, name_template))
+            .map(RecordingSummary::new)
             .collect();
         let next_after = if end < ids.len() {
             recordings.last().map(|summary| summary.id)
@@ -42,26 +43,23 @@ impl ListRecordings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordingPage {
-    pub recordings: Vec<RecordingSummary>,
+#[derive(Debug, Clone)]
+pub struct RecordingPage<'a> {
+    pub recordings: Vec<RecordingSummary<'a>>,
     pub next_after: Option<LoadedFileId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordingSummary {
+#[derive(Debug, Clone)]
+pub struct RecordingSummary<'a> {
     pub id: LoadedFileId,
-    pub display_name: String,
-    pub filename: String,
-    pub title: Option<String>,
-    pub device: Option<String>,
+    pub name_fields: NameFields<'a>,
     /// The time range of the loaded tracks. An empty recording has no range.
     pub time_range: Option<TimeRange>,
     pub track_count: usize,
 }
 
-impl RecordingSummary {
-    pub fn new(entry: LoadedFileEntry<'_>, name_template: &str) -> Self {
+impl<'a> RecordingSummary<'a> {
+    pub fn new(entry: LoadedFileEntry<'a>) -> Self {
         let file = entry.file();
         let filename = entry.basename();
         let mut name_fields = entry.name_fields(filename);
@@ -75,10 +73,7 @@ impl RecordingSummary {
         }
         Self {
             id: entry.id(),
-            display_name: gt_fmt::render_name_template(name_template, &name_fields),
-            filename: filename.to_owned(),
-            title: file.metadata.title.clone(),
-            device: file.metadata.device.clone(),
+            name_fields,
             time_range: file.metadata.time_range,
             track_count: file.tracks.len(),
         }
@@ -182,19 +177,21 @@ mod tests {
             ),
         );
 
-        let page = ListRecordings::new(None, NonZeroUsize::MIN)
-            .execute(files.view(), "{identity} {title} {device} {filename}");
+        let page = ListRecordings::new(None, NonZeroUsize::MIN).execute(files.view());
 
         let [recording] = page.recordings.as_slice() else {
             panic!("expected one recording");
         };
         assert_eq!(
-            recording.display_name,
+            gt_fmt::render_name_template(
+                "{identity} {title} {device} {filename}",
+                &recording.name_fields
+            ),
             "Field test Morning Receiver morning.gtd"
         );
-        assert_eq!(recording.filename, "morning.gtd");
-        assert_eq!(recording.title.as_deref(), Some("Morning"));
-        assert_eq!(recording.device.as_deref(), Some("Receiver"));
+        assert_eq!(recording.name_fields.filename, "morning.gtd");
+        assert_eq!(recording.name_fields.title, Some("Morning"));
+        assert_eq!(recording.name_fields.device, Some("Receiver"));
         assert_eq!(recording.time_range, Some(TimeRange::new(start, end)));
         assert_eq!(recording.track_count, 1);
         assert!(page.next_after.is_none());
@@ -204,13 +201,13 @@ mod tests {
     fn a_recording_without_tracks_has_no_loaded_time_range() {
         let mut files = LoadedFiles::new();
         let request = ListRecordings::new(None, NonZeroUsize::MIN);
-        let empty = request.execute(files.view(), "{filename}");
+        let empty = request.execute(files.view());
         assert!(empty.recordings.is_empty());
         assert!(empty.next_after.is_none());
 
         files.push(test_util::empty_file(), FileHistory::None);
 
-        let listed = request.execute(files.view(), "{filename}");
+        let listed = request.execute(files.view());
         let recording = listed.recordings.first().expect("one recording");
         assert_eq!(recording.time_range, None);
         assert_eq!(recording.track_count, 0);
@@ -227,7 +224,7 @@ mod tests {
             .get(MAX_RECORDINGS_PER_PAGE)
             .expect("one more file")
             .id();
-        let first = ListRecordings::new(None, NonZeroUsize::MAX).execute(view, "{filename}");
+        let first = ListRecordings::new(None, NonZeroUsize::MAX).execute(view);
         assert_eq!(first.recordings.len(), MAX_RECORDINGS_PER_PAGE);
         let cursor = first.next_after.expect("more recordings");
         let cursor_index = MAX_RECORDINGS_PER_PAGE - 1;
@@ -239,8 +236,7 @@ mod tests {
 
         let view = files.view();
         assert!(view.entry_for_id(cursor).is_none());
-        let remaining =
-            ListRecordings::new(Some(cursor.into()), NonZeroUsize::MIN).execute(view, "{filename}");
+        let remaining = ListRecordings::new(Some(cursor.into()), NonZeroUsize::MIN).execute(view);
 
         assert_eq!(remaining.recordings.len(), 1);
         assert_eq!(

@@ -13,9 +13,9 @@ use uom::si::{
     length::{kilometer, meter},
 };
 
-pub use name_template::{NameFields, Token, render_name_template};
+pub use name_template::{NameFields, Token, render_name_template, render_name_template_prefix};
 
-pub mod name_template;
+mod name_template;
 
 #[derive(Clone, Copy, Debug)]
 pub struct NavigationSummary(pub FixStats);
@@ -375,13 +375,15 @@ pub fn format_bytes(bytes: u64) -> String {
 /// `value` cut to its first `max_chars` characters, with [`ELLIPSIS`] appended
 /// when characters were dropped. The ellipsis is extra, not part of the limit.
 pub fn truncate_with_ellipsis(value: &str, max_chars: NonZeroUsize) -> Cow<'_, str> {
-    match value.char_indices().nth(max_chars.get()) {
-        Some((cut, _)) => {
-            let head = value.get(..cut).unwrap_or(value);
-            Cow::Owned(format!("{head}{ELLIPSIS}"))
-        }
+    match self::prefix_before_ellipsis(value, max_chars) {
+        Some(head) => Cow::Owned(format!("{head}{ELLIPSIS}")),
         None => Cow::Borrowed(value),
     }
+}
+
+fn prefix_before_ellipsis(value: &str, max_chars: NonZeroUsize) -> Option<&str> {
+    let (cut, _) = value.char_indices().nth(max_chars.get())?;
+    value.get(..cut)
 }
 
 /// Format a count with comma thousands separators (`8,940`).
