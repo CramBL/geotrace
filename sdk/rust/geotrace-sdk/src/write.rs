@@ -10,7 +10,9 @@ use crate::fixed_width_string::{
 };
 use crate::format_version::WRITTEN_FORMAT_VERSION;
 use crate::provenance::{SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR};
-use crate::types::{Constellation, EventMarkerColor, MarkerIcon, Meta, NavFile};
+use crate::types::{
+    Constellation, DebugTimeRepairTag, EventMarkerColor, MarkerIcon, Meta, NavFile,
+};
 
 /// Serialise `nav_file` to HDF5 bytes.
 pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
@@ -22,9 +24,18 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
         AttrValue::String(WRITTEN_FORMAT_VERSION.to_string()),
     );
     set_provenance_attrs(&mut fb, &nav_file.meta);
-    if let Some(repair) = nav_file.debug_time_repair {
+    if let Some(tag) = nav_file.debug_time_repair {
+        let (name, repair) = match tag {
+            DebugTimeRepairTag::Applied(repair) => (
+                APPLIED_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR,
+                repair,
+            ),
+            DebugTimeRepairTag::Pending(repair) => {
+                (DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR, repair)
+            }
+        };
         fb.set_attr(
-            DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR,
+            name,
             AttrValue::I64(repair.backward_jump_threshold_micros()),
         );
     }
@@ -650,6 +661,8 @@ const MICROS_SINCE_EPOCH_UNITS: &str = "microseconds since 1970-01-01T00:00:00Z"
 
 pub(crate) const DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR: &str =
     "debug_time_repair_backward_jump_threshold_us";
+pub(crate) const APPLIED_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR: &str =
+    "applied_debug_time_repair_backward_jump_threshold_us";
 
 const ABSENT_BOOT_TIME_MICROS: u64 = u64::MAX;
 

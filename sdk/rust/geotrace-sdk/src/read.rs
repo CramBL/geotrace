@@ -16,9 +16,9 @@ use crate::format_version::SUPPORTED_FORMAT_VERSIONS;
 use crate::provenance;
 use crate::size_checked_file::{ColumnContext, SizeCheckedFile, SizeCheckedGroup};
 use crate::types::{
-    Annotation, AnnotationIcon, Channel, Constellation, DebugTimeRepair, EventMarkerColor,
-    EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile,
-    NavFileOpenMode, NavFix, NavFixTime, NavPoint, RecordedFixTimestamps, Satellite,
+    Annotation, AnnotationIcon, Channel, Constellation, DebugTimeRepair, DebugTimeRepairTag,
+    EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, Meta,
+    NavFile, NavFileOpenMode, NavFix, NavFixTime, NavPoint, RecordedFixTimestamps, Satellite,
     SatelliteReport, TravelMode,
 };
 use crate::write;
@@ -57,7 +57,18 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFil
     let event_markers = read_event_markers(&file)?;
     let event_marker_styles = read_event_marker_styles(&file)?;
     let channels = read_channels(&file)?;
-    let debug_time_repair = read_debug_time_repair_tag(&attrs);
+    let debug_time_repair = read_debug_time_repair_tag(
+        &attrs,
+        write::APPLIED_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR,
+    )
+    .map(DebugTimeRepairTag::Applied)
+    .or_else(|| {
+        read_debug_time_repair_tag(
+            &attrs,
+            write::DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR,
+        )
+        .map(DebugTimeRepairTag::Pending)
+    });
 
     let mut nav_file = NavFile {
         meta,
@@ -68,23 +79,32 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFil
         event_marker_styles,
         channels,
     };
-    let repair = match mode {
-        NavFileOpenMode::Regular => debug_time_repair,
-        NavFileOpenMode::DebugTimeRepair(repair) => Some(repair),
+    let repair = match (mode, debug_time_repair) {
+        (NavFileOpenMode::Regular, Some(DebugTimeRepairTag::Pending(repair))) => Some(repair),
+        (NavFileOpenMode::Regular, _) => None,
+        (NavFileOpenMode::DebugTimeRepair(repair), Some(DebugTimeRepairTag::Applied(applied)))
+            if repair == applied =>
+        {
+            None
+        }
+        (NavFileOpenMode::DebugTimeRepair(repair), _) => Some(repair),
     };
     if let Some(repair) = repair {
         crate::time_repair::repair_repeated_time_spans(&mut nav_file, repair)?;
+        if matches!(debug_time_repair, Some(DebugTimeRepairTag::Applied(_))) {
+            nav_file.set_applied_debug_time_repair_tag(repair);
+        }
     }
     Ok(nav_file)
 }
 
-fn read_debug_time_repair_tag(attrs: &HashMap<String, AttrValue>) -> Option<DebugTimeRepair> {
-    let value = attrs.get(write::DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR)?;
+fn read_debug_time_repair_tag(
+    attrs: &HashMap<String, AttrValue>,
+    name: &str,
+) -> Option<DebugTimeRepair> {
+    let value = attrs.get(name)?;
     let Some(micros) = value.as_i64() else {
-        log::warn!(
-            "debug time repair tag ignored: {:?} is not an integer",
-            write::DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR
-        );
+        log::warn!("debug time repair tag ignored: {name:?} is not an integer",);
         return None;
     };
     let tag = DebugTimeRepair::from_threshold_micros(micros);

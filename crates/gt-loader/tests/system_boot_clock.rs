@@ -291,7 +291,8 @@ fn permanent_deletion_preserves_retained_readings_and_selects_a_new_reference() 
     .bytes()
     .unwrap();
     let removed = 0..1;
-    let retained = gt_loader::reencode_dropping_ranges(&bytes, slice::from_ref(&removed)).unwrap();
+    let retained =
+        gt_loader::reencode_dropping_ranges(&bytes, slice::from_ref(&removed), None).unwrap();
     let decoded = NavFile::read(retained.as_slice()).unwrap();
     assert_eq!(
         decoded
