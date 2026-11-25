@@ -421,9 +421,7 @@ pub fn track_ranges_from_columns(
 ///
 /// A recording lists every row of its stored track table except its
 /// [`TrackState::Deleted`] tombstones. A listing position `i` belongs to the
-/// stored row `listed_track_rows(&tracks)[i]`. Segmentation reproduces one
-/// track per listed row from the nav points of a recording read back through
-/// [`ReadOnlyHistoryDatabase::load`].
+/// stored row `listed_track_rows(&tracks)[i]`.
 pub fn listed_track_rows(tracks: &[TrackRange]) -> Vec<usize> {
     tracks
         .iter()

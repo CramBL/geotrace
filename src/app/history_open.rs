@@ -362,17 +362,23 @@ impl App {
                     self.pending_resegment = Some(prompt);
                 }
             }
-            // Every stored track setting matches: reproduce the stored tracks,
-            // leave the shelved ones out, and rebuild generated markers from
-            // current settings.
-            Some(stored_settings) => {
-                let marker_settings_changed = !loader::marker_settings_match_config(
-                    &stored_settings,
-                    &self.processing_config,
-                );
-                let config = loader::config_from_stored_segmentation(
-                    &stored_settings,
-                    self.processing_config,
+            settings => {
+                let (config, marker_settings_changed) =
+                    settings.map_or((self.processing_config, false), |settings| {
+                        (
+                            loader::config_from_stored_segmentation(
+                                &settings,
+                                self.processing_config,
+                            ),
+                            !loader::marker_settings_match_config(
+                                &settings,
+                                &self.processing_config,
+                            ),
+                        )
+                    });
+                let track_table = loader::OpenTrackTable::from_stored_recording(
+                    &stored.track_table,
+                    track_snapshot,
                 );
                 self.loader.spawn_gtd_bytes(
                     stored.bytes.into(),
@@ -380,23 +386,8 @@ impl App {
                     config,
                     mode,
                     Some(loader::HistoryOpen::ApplyShelved {
-                        track_table: loader::OpenTrackTable::Stored(track_snapshot),
+                        track_table,
                         applied_current_marker_settings: marker_settings_changed,
-                        placement,
-                    }),
-                    origin,
-                );
-            }
-            // Older recording with no stored settings: load with current settings.
-            None => {
-                self.loader.spawn_gtd_bytes(
-                    stored.bytes.into(),
-                    filename,
-                    self.processing_config,
-                    mode,
-                    Some(loader::HistoryOpen::ApplyShelved {
-                        track_table: loader::OpenTrackTable::Stored(track_snapshot),
-                        applied_current_marker_settings: false,
                         placement,
                     }),
                     origin,

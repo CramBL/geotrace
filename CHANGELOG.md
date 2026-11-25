@@ -53,6 +53,7 @@
 - **Recordings:** Fixed shelving or deleting the wrong stored track after "Apply to loaded data" changed track boundaries.
 - **Recordings:** Fixed permanent track deletion clearing saved visibility for the tracks that remain in History.
 - **Recordings:** Fixed permanent track deletion reassigning fixes to different tracks in recordings with backward time steps.
+- **Recordings:** Fixed History merging surviving tracks on reopen after permanent deletion of a track between them.
 - **Interface:** Fixed a load error disappearing when another file finished loading after it.
 - **Log Viewer:** Fixed logs from a device that loses its clock on reboot getting the wrong year or failing to load.
 - **Log Viewer:** Fixed log entries appearing at unrelated recording positions when the device resets its clock on reboot.

@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -6,7 +7,7 @@ use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
-use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
+use geotrace_sdk::{Angle, NavFile, NavFileBuilder, NavFix, NavFixTime};
 use gt_loaded_files::FileHistory;
 use gt_pending_writes::WriteAccess;
 use gt_session_bridge::{
@@ -15,7 +16,7 @@ use gt_session_bridge::{
     OpenHistoryRecording, QueryCounts, QueryJobState, RecordingReference, Reply, Request,
     SessionRequest,
 };
-use gt_side_panel::NodeKey;
+use gt_side_panel::{CheckState, NodeKey};
 use gt_store::{
     DatabaseRef, DbError, HistoryAccess, HistoryDatabase as _, LogAttachments as _, LogToAttach,
     ReadOnlyHistoryDatabase as _, RecordingUiState, Recordings, RecordingsHandle, Store,
@@ -31,7 +32,9 @@ use rstest::rstest;
 use crate::app::archive_recovery::UnavailableArchives;
 use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::auto_prune::AutoPruneOutcome;
-use crate::app::history_db::{DbOp, DeleteReason, HistoryWorker, Response};
+use crate::app::history_db::{
+    DbOp, DeleteReason, DeleteShelvedTracksScope, HistoryWorker, Response,
+};
 use crate::app::history_list::RecordingListing;
 use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
 use crate::app::storage::OpenStorage;
@@ -575,9 +578,128 @@ fn desktop_history_recalculation_clears_visibility_before_reopening() {
 }
 
 #[rstest]
+#[case::use_stored_layout(false)]
+#[case::recalculate(true)]
+fn reopening_after_a_middle_track_purge_uses_the_selected_layout(#[case] recalculate: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    let path = store.recordings_path();
+    let recording = recordings::store_recording_with_shelved_middle_track(&path, None);
+    let mut db = store.open_recordings().unwrap();
+    let (original, _) = HistoryAccess::lock()
+        .load_recording_with_snapshot(&db, &recording)
+        .unwrap();
+    let file = NavFile::read(original.bytes.as_slice()).unwrap();
+    let fix_times = |range: Range<usize>| {
+        file.nav_points()[range]
+            .iter()
+            .map(|fix| fix.fix.time.effective())
+            .collect::<Vec<_>>()
+    };
+    let first = fix_times(0..5);
+    let last = fix_times(10..15);
+    let hidden = RecordingUiState::with_hidden_track_numbers([3]);
+    let reporter = UiStateVersionReporter::default();
+    db.set_recording_ui_state(&recording, &hidden, &reporter)
+        .unwrap();
+    drop(db);
+
+    let worker = recordings::worker_on(&path);
+    worker.delete_shelved_tracks(DeleteShelvedTracksScope::OneRecording(recording.clone()));
+    assert!(matches!(
+        recordings::next_response(&worker),
+        Response::Mutated {
+            op: DbOp::TracksDeleted { count: 1, .. },
+            result: Ok(()),
+        }
+    ));
+    worker.shutdown();
+
+    let mut harness = self::owner_app(&store);
+    if recalculate {
+        harness
+            .state_mut()
+            .processing_config
+            .track_layout
+            .track_split_gap = TimeDelta::seconds(30);
+    }
+    self::await_page(&mut harness, UNFILTERED);
+    harness.state().history.open(recording);
+    if recalculate {
+        let label = "Recalculate with current settings";
+        assert!(harness.step_until(|harness| harness.query_by_label(label).is_some()));
+        harness.get_by_label(label).click();
+    }
+    assert!(harness.step_until(|harness| !harness.state().shared.borrow().loaded_files.is_empty()));
+
+    let shared = harness.state().shared.borrow();
+    let entry = shared.loaded_files.view().get(0).unwrap();
+    let tracks: Vec<_> = entry
+        .file()
+        .tracks
+        .iter()
+        .map(|track| {
+            (
+                track.metadata.index,
+                track
+                    .points
+                    .iter()
+                    .map(|fix| fix.tpv.time().utc())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let snapshot = entry.history().track_snapshot().unwrap();
+    assert!(snapshot.is_current());
+    if recalculate {
+        assert_eq!(tracks, [(1, [first, last].concat())]);
+        assert_eq!(
+            snapshot.rows(),
+            [TrackRange {
+                start: 0,
+                end: 10,
+                state: TrackState::Live,
+            }]
+        );
+        return;
+    }
+    assert_eq!(tracks, [(1, first), (3, last)]);
+    assert_eq!(
+        snapshot.rows(),
+        [
+            TrackRange {
+                start: 0,
+                end: 5,
+                state: TrackState::Live,
+            },
+            TrackRange {
+                start: 5,
+                end: 5,
+                state: TrackState::Deleted,
+            },
+            TrackRange {
+                start: 5,
+                end: 10,
+                state: TrackState::Live,
+            },
+        ]
+    );
+    assert_eq!(
+        shared
+            .tree
+            .track_node(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)))
+            .unwrap()
+            .check,
+        CheckState::Off,
+    );
+}
+
+#[rstest]
 #[case::no_stored_rows(CheckedHistoryLayout::Empty)]
 #[case::deleted_middle_track(CheckedHistoryLayout::Tombstone)]
 #[case::inconsistent_track_columns(CheckedHistoryLayout::Damaged)]
+#[case::out_of_bounds_range(CheckedHistoryLayout::InvalidCoverage)]
+#[case::misplaced_tombstone(CheckedHistoryLayout::InvalidTombstone)]
 fn a_checked_history_open_requires_the_stored_layout_when_present(
     #[case] layout: CheckedHistoryLayout,
 ) {
@@ -600,6 +722,33 @@ fn a_checked_history_open_requires_the_stored_layout_when_present(
     nav.write(&mut bytes).unwrap();
     let tracks = match layout {
         CheckedHistoryLayout::Empty => Vec::new(),
+        CheckedHistoryLayout::InvalidCoverage => vec![TrackRange {
+            start: 0,
+            end: 4,
+            state: TrackState::Live,
+        }],
+        CheckedHistoryLayout::InvalidTombstone => vec![
+            TrackRange {
+                start: 0,
+                end: 1,
+                state: TrackState::Live,
+            },
+            TrackRange {
+                start: 0,
+                end: 0,
+                state: TrackState::Deleted,
+            },
+            TrackRange {
+                start: 1,
+                end: 2,
+                state: TrackState::Live,
+            },
+            TrackRange {
+                start: 2,
+                end: 3,
+                state: TrackState::Shelved,
+            },
+        ],
         CheckedHistoryLayout::Tombstone | CheckedHistoryLayout::Damaged => vec![
             TrackRange {
                 start: 0,
@@ -677,7 +826,28 @@ fn a_checked_history_open_requires_the_stored_layout_when_present(
             assert!(matches!(outcome, HistoryOpenState::Ready { .. }));
             assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
         }
-        CheckedHistoryLayout::Tombstone | CheckedHistoryLayout::Damaged => {
+        CheckedHistoryLayout::Tombstone => {
+            assert!(matches!(outcome, HistoryOpenState::Ready { .. }));
+            let shared = harness.state().shared.borrow();
+            let entry = shared.loaded_files.view().get(0).unwrap();
+            assert_eq!(entry.file().tracks.len(), 1);
+            assert_eq!(entry.file().tracks[0].metadata.index, 1);
+            assert_eq!(entry.file().tracks[0].points.len(), 1);
+            assert_eq!(entry.file().tracks[0].points[0].tpv.time().utc(), start);
+            let snapshot = entry.history().track_snapshot().unwrap();
+            assert!(snapshot.is_current_with_membership());
+            assert_eq!(
+                snapshot
+                    .rows()
+                    .iter()
+                    .map(|row| row.state)
+                    .collect::<Vec<_>>(),
+                [TrackState::Live, TrackState::Deleted, TrackState::Shelved]
+            );
+        }
+        CheckedHistoryLayout::Damaged
+        | CheckedHistoryLayout::InvalidCoverage
+        | CheckedHistoryLayout::InvalidTombstone => {
             assert_eq!(
                 outcome,
                 HistoryOpenState::Failed {
@@ -694,14 +864,7 @@ fn a_checked_history_open_requires_the_stored_layout_when_present(
             let shared = harness.state().shared.borrow();
             let entry = shared.loaded_files.view().get(0).unwrap();
             assert!(entry.history().track_snapshot().is_none());
-            assert_eq!(
-                entry.file().tracks.len(),
-                if matches!(layout, CheckedHistoryLayout::Tombstone) {
-                    1
-                } else {
-                    3
-                },
-            );
+            assert_eq!(entry.file().tracks.len(), 3);
         }
     }
 }
@@ -709,7 +872,99 @@ fn a_checked_history_open_requires_the_stored_layout_when_present(
 enum CheckedHistoryLayout {
     Damaged,
     Empty,
+    InvalidCoverage,
+    InvalidTombstone,
     Tombstone,
+}
+
+#[rstest]
+#[case::damaged(ZeroFixTrackTable::Damaged)]
+#[case::missing(ZeroFixTrackTable::Missing)]
+#[case::present(ZeroFixTrackTable::Present)]
+fn a_zero_fix_recording_uses_snapshots_for_empty_or_missing_tables(
+    #[case] table: ZeroFixTrackTable,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    let file = NavFileBuilder::new()
+        .with_identity("dev")
+        .unwrap()
+        .open()
+        .finish()
+        .unwrap();
+    let mut bytes = Vec::new();
+    file.write(&mut bytes).unwrap();
+    let path = store.recordings_path();
+    let recording = recordings::store_recording(&path, &bytes, &[]);
+    {
+        let file = Hdf5File::open_rw(path).unwrap();
+        let group = file
+            .group(&format!(
+                "by_identity/{}/{}",
+                gt_store::identity_group_name(&recording.identity),
+                recording.group_name,
+            ))
+            .unwrap();
+        match table {
+            ZeroFixTrackTable::Damaged => group
+                .group("__geotrace_tracks__")
+                .unwrap()
+                .delete("end")
+                .unwrap(),
+            ZeroFixTrackTable::Missing => group.delete("__geotrace_tracks__").unwrap(),
+            ZeroFixTrackTable::Present => {}
+        }
+        file.commit().unwrap();
+    }
+    let mut harness = self::owner_app(&store);
+    let page = self::await_page(&mut harness, UNFILTERED);
+    let damaged = matches!(table, ZeroFixTrackTable::Damaged);
+    if damaged {
+        let opening = self::open_status(&session::execute(
+            &mut harness,
+            Request::OpenHistoryRecording(OpenHistoryRecording {
+                recording: page.recordings[0].id,
+            }),
+        ));
+        assert_eq!(
+            self::after_loading(&mut harness, opening.operation),
+            HistoryOpenState::Failed {
+                code: ErrorCode::HistoryTrackLayoutUnavailable,
+            }
+        );
+    }
+    harness.state().history.open(recording.clone());
+    assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1));
+    let history_verified = {
+        let shared = harness.state().shared.borrow();
+        let entry = shared.loaded_files.view().get(0).unwrap();
+        assert_eq!(entry.history().db_ref(), Some(&recording));
+        assert!(entry.file().tracks.is_empty());
+        entry.history().track_snapshot().is_some()
+    };
+
+    let disk = dir.path().join("empty.gtd");
+    std::fs::write(&disk, bytes).unwrap();
+    harness
+        .input_mut()
+        .dropped_files
+        .push(Arc::new(TestDroppedFile::path(disk)));
+    harness.step();
+    harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+    assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 2));
+    let shared = harness.state().shared.borrow();
+    let entry = shared.loaded_files.view().get(1).unwrap();
+    assert_eq!(entry.history().db_ref(), Some(&recording));
+    assert!(entry.file().tracks.is_empty());
+    let disk_verified = entry.history().track_snapshot().is_some();
+    assert_eq!((history_verified, disk_verified), (!damaged, !damaged));
+}
+
+enum ZeroFixTrackTable {
+    Damaged,
+    Missing,
+    Present,
 }
 
 #[rstest]
