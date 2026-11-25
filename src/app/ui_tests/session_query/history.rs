@@ -10,8 +10,8 @@ use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use gt_loaded_files::FileHistory;
 use gt_pending_writes::WriteAccess;
 use gt_session_bridge::{
-    ErrorCode, GetHistoryOpenStatus, HistoryDates, HistoryOpenId, HistoryOpenState,
-    HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings, ListRecordings,
+    ApplyProcessing, ErrorCode, GetHistoryOpenStatus, HistoryDates, HistoryOpenId,
+    HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings, ListRecordings,
     OpenHistoryRecording, QueryCounts, QueryJobState, RecordingReference, Reply, Request,
     SessionRequest,
 };
@@ -742,7 +742,7 @@ fn history_open_status_checks_the_layout_after_apply_processing(
         .track_layout
         .track_split_gap = split_gap;
     assert_eq!(
-        session::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
         Reply::ProcessingQueued,
     );
     harness.run_steps(3);

@@ -4,9 +4,9 @@ use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use gt_loaded_files::FileHistory;
 use gt_session_bridge::{
-    ErrorCode, GetRecording, GetTrack, OpenPoint, ProcessingSettingKey, QueryJobState, RangeTarget,
-    RecordingReference, Reply, Request, SessionRequest, SetSetting, SettingInput, SettingKey,
-    SettingSelection, ShowOnMap, ShowOnPlot, TrackReference,
+    ApplyProcessing, ErrorCode, GetRecording, GetTrack, OpenPoint, ProcessingSettingKey,
+    QueryJobState, RangeTarget, RecordingReference, Reply, Request, SessionRequest, SetSetting,
+    SettingInput, SettingKey, SettingSelection, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_store::{ReadOnlyHistoryDatabase as _, Store};
 use gt_test_utils::{HarnessInteraction as _, recording_fixtures};
@@ -61,7 +61,7 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
         2
     );
     assert_eq!(
-        session::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
         Reply::ProcessingQueued
     );
     assert_eq!(
@@ -134,7 +134,7 @@ fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
 
     self::set_track_split_gap(&mut harness, Duration::seconds(30));
     assert_eq!(
-        session::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
         Reply::ProcessingQueued
     );
     let fresh = self::recording_tracks(&mut harness, first.recording);
@@ -180,7 +180,7 @@ fn reprocessing_dismisses_a_gui_pin_before_the_track_index_addresses_another_fix
 
     self::set_track_split_gap(&mut harness, Duration::seconds(30));
     assert_eq!(
-        session::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
         Reply::ProcessingQueued
     );
     assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
@@ -203,7 +203,7 @@ fn a_later_settings_input_takes_effect_on_the_next_apply() {
         .unwrap()
         .set_value_accesskit(0.0);
     assert_eq!(
-        session::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
         Reply::ProcessingQueued
     );
     harness.run_steps(2);
@@ -248,7 +248,7 @@ fn applying_processing_requires_nav_points_and_preserves_empty_tracks() {
         .loaded_files
         .data_generation();
     assert_eq!(
-        session::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
         Reply::Error {
             code: ErrorCode::NoLoadedNavPoints
         }
@@ -273,7 +273,7 @@ fn an_apply_without_a_reply_handoff_preserves_loaded_tracks() {
     assert_eq!(
         app.execute_session_request_in_test(
             SessionRequest {
-                request: Request::ApplyProcessing,
+                request: Request::ApplyProcessing(ApplyProcessing {}),
                 session: session::SESSION_ID,
             },
             false,
@@ -303,7 +303,7 @@ fn a_window_close_request_takes_precedence_over_applying_processing() {
         .push(egui::ViewportEvent::Close);
     let _output = harness.ctx.clone().run_logic(&input, |_| {
         assert_eq!(
-            session::execute(&mut harness, Request::ApplyProcessing),
+            session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
             Reply::Error {
                 code: ErrorCode::ShuttingDown
             }
@@ -348,7 +348,7 @@ fn applying_processing_to_a_stored_recording_keeps_its_history_track_table() {
     assert_eq!(before.track_rows(), ui_tests::two_live_track_ranges());
     self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(
-        session::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
         Reply::ProcessingQueued
     );
     harness.run_steps(3);

@@ -241,6 +241,7 @@ GeoTrace saves eligible settings changes automatically and keeps changes in memo
 The `apply` field indicates when GeoTrace uses the setting.
 
 Use `apply_processing` to rebuild the loaded tracks and generated markers with the current Processing settings, as with Apply to loaded data in Settings.
+Send an empty arguments object or omit the arguments.
 GeoTrace requires a loaded recording with navigation points.
 GeoTrace acknowledges the request with `processing_queued`.
 The app may be busy while it rebuilds the tracks.

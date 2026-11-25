@@ -10,7 +10,9 @@ use gt_test_utils::fixtures;
 use gt_types::PointIdx;
 use proptest::strategy::Strategy as _;
 use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
+use serde_json::Value;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -18,9 +20,9 @@ use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 use super::inspection::Inspection;
 use super::{
-    ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics, ListRecordings,
-    MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Pending, QueryText, QueryValidation, Recording,
-    RecordingReference, Recordings, Reply, Request, Server,
+    ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
+    ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, Pending, QueryText, QueryValidation,
+    Recording, RecordingReference, Recordings, Reply, Request, Server,
 };
 
 struct TestEndpoint {
@@ -572,7 +574,50 @@ async fn bad_frames_receive_errors_before_dispatch() {
         let reply: Reply = framing::read(&mut stream, MAX_REPLY_BYTES).await.unwrap();
         assert_eq!(reply, Reply::Error { code });
     }
-    assert_eq!(wakes.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[tokio::test]
+async fn apply_processing_rejects_extra_wire_fields_before_dispatch() {
+    let fixture = TestEndpoint::new();
+    let (wake, mut wakes) = mpsc::channel(1);
+    let _server =
+        Server::bind(fixture.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
+    for (field, value) in [
+        (
+            "recording",
+            serde_json::json!({"session": Uuid::nil(), "number": 1}),
+        ),
+        ("dry_run", serde_json::json!(true)),
+        ("extra", Value::Null),
+    ] {
+        let mut request = serde_json::json!({"method": "apply_processing"});
+        request[field] = value;
+        let mut stream = fixture.endpoint.connect().await.unwrap();
+        Frame::encode(&request, MAX_REQUEST_BYTES)
+            .unwrap()
+            .write(&mut stream)
+            .await
+            .unwrap();
+        let reply = tokio::select! {
+            reply = framing::read::<Reply>(&mut stream, MAX_REPLY_BYTES) => reply.unwrap(),
+            _ = wakes.recv() => panic!("Unexpected field {field} reached dispatch"),
+        };
+        assert_eq!(
+            reply,
+            Reply::from(ErrorCode::InvalidRequest),
+            "field {field}"
+        );
+    }
+    assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[test]
+fn apply_processing_keeps_the_existing_wire_command() {
+    let command = r#"{"method":"apply_processing"}"#;
+    let request = Request::ApplyProcessing(ApplyProcessing {});
+    assert_eq!(serde_json::to_string(&request).unwrap(), command);
+    assert_eq!(serde_json::from_str::<Request>(command).unwrap(), request);
 }
 
 #[tokio::test]

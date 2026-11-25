@@ -24,7 +24,7 @@ pub(crate) struct Inspection<'a> {
 impl<'a> Inspection<'a> {
     pub(crate) fn execute(&self, request: Request) -> Reply {
         match request {
-            Request::ApplyProcessing
+            Request::ApplyProcessing(_)
             | Request::CancelQuery(_)
             | Request::DescribeSetting(_)
             | Request::GetHistoryOpenStatus(_)
