@@ -43,7 +43,7 @@ pub use visibility::{
     PresentElementRef, ResolvedElement, ResolvedEligibility, TrackDataVisibility, TrackVisibility,
 };
 
-pub mod arc_identity;
+mod arc_identity;
 pub mod context_series;
 pub mod display_mask;
 pub mod drawn_position;
