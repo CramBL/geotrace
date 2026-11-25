@@ -384,6 +384,13 @@ enum SnapMessage {
     },
 }
 
+impl SnapMessage {
+    fn send_and_request_repaint(self, tx: &mpsc::Sender<Self>, ctx: &Context) {
+        tx.send(self).ok();
+        ctx.request_repaint();
+    }
+}
+
 /// Why a run entered the queue: manual triggers outrank automatic entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapPriority {
@@ -425,8 +432,7 @@ pub struct SnapScheduler {
     /// Where that transport comes from. Supplied by the application, so
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
-    /// No requests are queued at all while offline. Cached runs stay usable.
-    offline: bool,
+    accepting_runs: bool,
     queue: VecDeque<PendingRun>,
     /// The queued tracks currently shown on the map, per
     /// [`Self::set_visibility`]. Gates which [`SnapPriority::Auto`] entries
@@ -453,7 +459,7 @@ impl SnapScheduler {
             server_url: DEFAULT_SERVER_URL.to_owned(),
             http: None,
             transport_source,
-            offline,
+            accepting_runs: !offline,
             queue: VecDeque::new(),
             visible: FxHashSet::default(),
             in_flight: None,
@@ -461,6 +467,10 @@ impl SnapScheduler {
             cache: FxHashMap::default(),
             latest: FxHashMap::default(),
         }
+    }
+
+    pub(super) fn stop_starting_runs(&mut self) {
+        self.accepting_runs = false;
     }
 
     /// Point future runs at a different matching server. Drops the cached
@@ -531,9 +541,8 @@ impl SnapScheduler {
         SnapProgress { in_flight, queued }
     }
 
-    /// Queue a snap run for a track. No-ops when offline or when the track
-    /// is already queued or in flight - except that a manual request for a
-    /// track queued automatically promotes it to the front of the queue. A
+    /// Queue a snap run for a track while admission is open. A manual request
+    /// promotes an automatic entry to the front of the queue. A
     /// cache hit for the same content, parameters, and host promotes the
     /// cached run to the track's displayed run without a request:
     /// switching parameters back to a known combination is instant and
@@ -545,11 +554,12 @@ impl SnapScheduler {
         params: SnapParams,
         priority: SnapPriority,
     ) {
-        // The cache lookup comes before the offline gate: promotion is
-        // local, and cached results stay fully usable offline.
         let key = SnapCacheKey::new(track, params, self.current_host());
         if let Some(run) = self.cache.get(&key) {
             self.latest.insert(key.content, Arc::clone(run));
+            return;
+        }
+        if !self.accepting_runs {
             return;
         }
         if let Some(position) = self.queue.iter().position(|p| p.track == track_ref) {
@@ -559,7 +569,7 @@ impl SnapScheduler {
             }
             return;
         }
-        if self.offline || self.activity.contains_key(&track_ref) {
+        if self.activity.contains_key(&track_ref) {
             return;
         }
         let plan = request_plan::plan(track.placed_points().unwrap_or_default());
@@ -645,6 +655,26 @@ impl SnapScheduler {
         self.cache.insert(key, run);
     }
 
+    #[cfg(test)]
+    pub(super) fn set_run_in_flight_for_test(&mut self, track: TrackRef) {
+        self.in_flight = Some(track);
+    }
+
+    #[cfg(test)]
+    pub(super) fn report_completed_test_run(
+        &self,
+        track: TrackRef,
+        key: SnapCacheKey,
+        run: SnapRun,
+    ) {
+        SnapMessage::Done {
+            track,
+            key,
+            run: Box::new(run),
+        }
+        .send_and_request_repaint(&self.tx, &self.ctx);
+    }
+
     /// Forget all transient per-track activity. Call after file/track
     /// removals shift indices. The content-keyed cache and display stores
     /// are unaffected, and an in-flight run finishes into them under its
@@ -710,7 +740,7 @@ impl SnapScheduler {
     }
 
     fn start_next_if_idle(&mut self) {
-        if self.in_flight.is_some() {
+        if !self.accepting_runs || self.in_flight.is_some() {
             return;
         }
         let Some(position) = next_eligible(&self.queue, &self.visible) else {
@@ -805,14 +835,12 @@ fn spawn_run(
                 &plan,
                 &params,
                 move |completed_chunks, total_chunks| {
-                    progress_tx
-                        .send(SnapMessage::Progress {
-                            track,
-                            completed_chunks,
-                            total_chunks,
-                        })
-                        .ok();
-                    progress_ctx.request_repaint();
+                    SnapMessage::Progress {
+                        track,
+                        completed_chunks,
+                        total_chunks,
+                    }
+                    .send_and_request_repaint(&progress_tx, &progress_ctx);
                 },
             );
             let reporter = SnapWarningReporter::default();
@@ -830,8 +858,7 @@ fn spawn_run(
                     run: Box::new(SnapRun::new(result, reporter.warnings(), server_host)),
                 }
             };
-            tx.send(message).ok();
-            ctx.request_repaint();
+            message.send_and_request_repaint(&tx, &ctx);
         },
     );
 }

@@ -60,7 +60,8 @@ impl PendingTrackDataDetach {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.apply_finished_session_recording_work(ctx);
+        self.begin_shutdown_if_requested(ctx);
+        self.apply_finished_background_work(ctx);
         self.dispatch_session_request(ctx);
         self.drive_settings_autosave(ctx);
     }
@@ -70,7 +71,7 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if self.intercept_close_request(ui) == FrameContents::ShutdownWindow {
+        if self.shutdown_ui(ui) == FrameContents::ShutdownWindow {
             return;
         }
 
@@ -81,7 +82,6 @@ impl eframe::App for App {
             self.update_checker.start(ui.ctx());
         }
 
-        self.apply_finished_background_work(ui);
         let load_problems_were_open = !self.load_failures.is_empty();
         if self.association_dialog.is_none() {
             self.load_failures.handle_keyboard(ui.ctx());
@@ -183,15 +183,6 @@ impl eframe::App for App {
 }
 
 impl App {
-    pub(super) fn apply_finished_session_recording_work(&mut self, ctx: &egui::Context) {
-        if self.session_history.pending()
-            || self.history.restoring_session_recordings()
-            || self.loader.restoring_session_attachments()
-        {
-            self.apply_finished_recording_work(ctx);
-        }
-    }
-
     pub(super) fn apply_finished_recording_work(&mut self, ctx: &egui::Context) {
         // Adopt the databases first: what waited on them starts in the frame
         // they arrive.
@@ -215,8 +206,8 @@ impl App {
         self.warn_once_that_a_newer_version_stored_ui_state();
     }
 
-    pub(in crate::app) fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
-        self.apply_finished_recording_work(ui.ctx());
+    fn apply_finished_background_work(&mut self, ctx: &egui::Context) {
+        self.apply_finished_recording_work(ctx);
         self.jamming.poll();
         self.geomagnetic_indices.poll();
         self.tec_maps.poll();

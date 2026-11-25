@@ -159,6 +159,23 @@ pub fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
     )
 }
 
+pub fn step_minimized_logic(harness: &mut Harness<'_, App>) {
+    let ctx = harness.ctx.clone();
+    let mut input = egui::RawInput {
+        viewports: harness.input_mut().viewports.clone(),
+        focused: false,
+        ..Default::default()
+    };
+    input
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .minimized = Some(true);
+    let _output = ctx.run_logic(&input, |ctx| {
+        eframe::App::logic(harness.state_mut(), ctx, &mut eframe::Frame::_new_kittest());
+    });
+}
+
 /// [`transient_app`] started with the files a command line named, on the data
 /// directory `instance_lock` was taken on, which is what decides whether the
 /// run opens anything, with `pending_writes` deciding whether it writes to it

@@ -22,6 +22,7 @@ use super::{self as ui_tests, App};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 
+mod background;
 mod history;
 mod map;
 mod plot;
