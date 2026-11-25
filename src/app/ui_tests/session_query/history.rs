@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
+use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use gt_loaded_files::FileHistory;
 use gt_pending_writes::WriteAccess;
@@ -1302,6 +1303,61 @@ fn history_discovery_reports_when_read_only_startup_has_no_database() {
         Reply::from(ErrorCode::HistoryUnavailable)
     );
     assert!(!store.recordings_path().exists());
+}
+
+#[test]
+fn the_history_toolbar_preserves_the_cursor_on_close_and_expires_it_on_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    {
+        let mut db = store.open_recordings().unwrap();
+        for (identity, start) in [("first", 1_000_000), ("second", 2_000_000)] {
+            recordings::insert_recording_as_one_whole_file_track(
+                &mut db,
+                identity,
+                &recordings::bytes_starting_at(start, 2),
+            );
+        }
+    }
+    let mut harness = self::owner_app(&store);
+    harness.step();
+    harness.get_by_label(ICON_CLOCK_COUNTER_CLOCKWISE).click();
+    harness.run_steps(2);
+    assert!(harness.state().history_window.open);
+
+    let request = ListHistoryRecordings {
+        limit: Some(NonZeroUsize::MIN),
+        ..UNFILTERED
+    };
+    let first = self::await_page(&mut harness, request);
+    let cursor = first.next_cursor.expect("two stored recordings");
+    let continuation = ListHistoryRecordings {
+        cursor: Some(cursor),
+        ..request
+    };
+    let second = self::await_page(&mut harness, continuation);
+
+    harness.get_by_label(ICON_CLOCK_COUNTER_CLOCKWISE).click();
+    harness.run_steps(2);
+    assert!(!harness.state().history_window.open);
+    assert_eq!(
+        session::execute(&mut harness, Request::ListHistoryRecordings(continuation)),
+        Reply::HistoryRecordings { page: second }
+    );
+
+    harness.get_by_label(ICON_CLOCK_COUNTER_CLOCKWISE).click();
+    harness.run_steps(2);
+    assert!(harness.state().history_window.open);
+    assert_eq!(
+        session::execute(&mut harness, Request::ListHistoryRecordings(continuation)),
+        Reply::from(ErrorCode::InvalidHistoryCursor)
+    );
+    let refreshed = self::await_page(&mut harness, request);
+    assert_eq!(refreshed.recordings, first.recordings);
+    assert_ne!(
+        refreshed.next_cursor.expect("two stored recordings"),
+        cursor
+    );
 }
 
 #[rstest]
