@@ -490,8 +490,8 @@ fn name_template_guide_previews_the_loaded_recording() {
     load_recording_with_metadata(&mut harness);
     harness
         .state_mut()
-        .history_window
-        .set_entries(vec![stored_recording_entry(
+        .history_listing
+        .set_entries_for_test(vec![stored_recording_entry(
             "auto:stored.gtd",
             "Stored ride",
         )]);
@@ -527,8 +527,8 @@ fn name_template_guide_previews_a_history_recording() {
         newest.meta.time_range = gt_store::NavPointTimeRange::covering(&[2_000]);
         harness
             .state_mut()
-            .history_window
-            .set_entries(vec![older, newest]);
+            .history_listing
+            .set_entries_for_test(vec![older, newest]);
         harness.state().shared.borrow_mut().recording_name_template =
             "{title} - {identity} - {filename}".to_owned();
     }
@@ -657,8 +657,8 @@ fn snapshot_recording_name_template_guide() {
     harness
         .inner
         .state_mut()
-        .history_window
-        .set_entries(vec![stored_recording_entry(
+        .history_listing
+        .set_entries_for_test(vec![stored_recording_entry(
             "auto:ride.gtd",
             "Morning ride",
         )]);

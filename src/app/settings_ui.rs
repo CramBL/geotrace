@@ -189,10 +189,8 @@ impl App {
             self.setting_to_reveal = None;
             return false;
         }
-        // The name-template preview reads a stored recording from the History
-        // window's cached list when nothing is loaded.
-        self.history_window
-            .request_recording_list_if_missing(&self.history);
+        // The recording name preview uses the latest History entry when no recording is loaded.
+        self.history_listing.request_if_missing(&self.history);
         let mut open = self.settings_open;
         let mut apply = false;
         Window::new("Settings")

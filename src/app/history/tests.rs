@@ -9,8 +9,9 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_pending_writes::{PendingWrites, WriteAccess};
 use gt_store::{
-    ChannelSummary, DatabaseRef, HistoryDatabase as _, NavPointTimeRange, RecordingEntry,
-    RecordingsHandle, StoredLogSettings, StoredYearResolution, TrackRange, TrackState,
+    ChannelSummary, DatabaseRef, DbError, HistoryDatabase as _, HistoryEntries, NavPointTimeRange,
+    RecordingEntry, RecordingsHandle, StoredLogSettings, StoredYearResolution, TrackRange,
+    TrackState,
 };
 use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
@@ -26,10 +27,11 @@ use strum::{EnumCount as _, IntoEnumIterator as _};
 use super::delete_shelved_prompt::{DELETE_SHELVED_TRACKS_LABEL, DELETE_SHELVED_WINDOW_TITLE};
 use super::table::{self, MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL};
 use super::{
-    HISTORY_WINDOW_SIZING, HistorySort, HistoryWindow, OpenShelf, PRUNE_WINDOW_TITLE, ShelfTracks,
-    SortColumn, SortDirection,
+    HISTORY_WINDOW_SIZING, HistorySort, HistoryWindow, HistoryWindowFrame, OpenShelf,
+    PRUNE_WINDOW_TITLE, ShelfTracks, SortColumn, SortDirection,
 };
-use crate::app::history_db::{DeleteShelvedTracksScope, HistoryWorker, Response};
+use crate::app::history_db::{DeleteShelvedTracksScope, HistoryWorker, ListRequestId, Response};
+use crate::app::history_list::{HistoryListCache, RecordingListing};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls::AUTO_STORE_LABEL;
 use crate::app::test_util::listing;
@@ -40,6 +42,7 @@ use crate::app::test_util::recordings;
 /// worker so the list branch renders, and the settings toggles `show` needs.
 struct HistoryHarness {
     window: HistoryWindow,
+    listing: HistoryListCache,
     /// The frame's instant, held still so a confirmation counting down to its
     /// own close keeps the count it opened at.
     now: Instant,
@@ -56,11 +59,33 @@ struct HistoryHarness {
 
 impl HistoryHarness {
     fn load_recordings_before_first_frame(&mut self) {
-        self.window.request_recording_list_if_missing(&self.worker);
+        self.listing.request_if_missing(&self.worker);
         let Response::Listed { request, entries } = recordings::next_response(&self.worker) else {
             panic!("expected the recording list");
         };
-        self.window.accept_recording_list(request, entries);
+        self.accept_listing_response(request, entries);
+    }
+
+    fn accept_listing_response(
+        &mut self,
+        request: ListRequestId,
+        entries: Result<HistoryEntries, DbError>,
+    ) {
+        if let Some(result) = self.listing.accept_response(request, entries) {
+            self.window.apply_listing_result(result);
+        }
+    }
+
+    fn set_entries(&mut self, entries: Vec<RecordingEntry>) {
+        let entries = self.listing.set_entries_for_test(entries);
+        self.window.apply_listing_result(Ok(entries));
+    }
+
+    fn entries(&self) -> Option<&[RecordingEntry]> {
+        match self.listing.view() {
+            RecordingListing::Ready { entries, .. } => Some(entries),
+            RecordingListing::Failed | RecordingListing::Pending => None,
+        }
     }
 }
 
@@ -74,10 +99,9 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
     );
     let mut window = HistoryWindow::new();
     window.open = true;
-    // Populate directly so the list renders without a worker round-trip.
-    window.set_entries(entries);
-    HistoryHarness {
+    let mut harness = HistoryHarness {
         window,
+        listing: HistoryListCache::default(),
         now: Instant::now(),
         worker,
         storage: crate::settings::StorageSettings {
@@ -88,15 +112,21 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
         write_access: WriteAccess::Owner,
         opened_log: None,
         _dir: dir,
-    }
+    };
+    harness.set_entries(entries);
+    harness
 }
 
 fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
+    if s.window.open {
+        s.listing.request_if_missing(&s.worker);
+    }
     s.window.show(
         ui.ctx(),
-        super::HistoryWindowFrame {
+        HistoryWindowFrame {
             now: s.now,
             worker: &s.worker,
+            listing: s.listing.view(),
             loaded_metas: &[],
             storage: &mut s.storage,
             databases_opening: s.databases_opening,
@@ -141,6 +171,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
     window.open = true;
     HistoryHarness {
         window,
+        listing: HistoryListCache::default(),
         now: Instant::now(),
         worker,
         storage: crate::settings::StorageSettings {
@@ -160,17 +191,15 @@ fn stored_log_text(name: &str) -> String {
     format!("2026-05-29 18:48:25 {name}: starting\n")
 }
 
-/// Drive one frame like the app does: drain the worker's responses into the
-/// window (list refresh, mutation acknowledgements, a log read back) and then
-/// render it.
 fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
     for resp in s.worker.poll() {
         if resp.invalidates_recording_list() {
-            s.window.invalidate();
+            s.listing.invalidate();
+            s.window.invalidate_shelf_track_table();
         }
         match resp {
             Response::Listed { request, entries } => {
-                s.window.accept_recording_list(request, entries)
+                s.accept_listing_response(request, entries);
             }
             Response::AttachedLogLoaded { log: Ok(log), .. } => s.opened_log = Some(log),
             Response::StoredTrackTableLoaded { db_ref, tracks } => {
@@ -469,6 +498,7 @@ fn history_harness_with_stored_tracks(tracks: &[TrackRange]) -> HistoryHarness {
     window.open = true;
     HistoryHarness {
         window,
+        listing: HistoryListCache::default(),
         now: Instant::now(),
         worker,
         storage: crate::settings::StorageSettings {
@@ -566,15 +596,14 @@ fn open_shelf_opens_the_window_on_the_recordings_shelved_tracks() {
     );
     let db_ref = h
         .state()
-        .window
-        .entries
-        .as_deref()
+        .entries()
         .and_then(<[_]>::first)
         .map(|entry| entry.db_ref.clone())
         .expect("the listed recording");
     h.state_mut().window.open = false;
     h.state_mut().window.filter_text = "another recording".to_owned();
 
+    h.state_mut().listing.invalidate();
     h.state_mut().window.open_shelf(db_ref);
 
     assert!(h.state().window.open, "the window should open on the shelf");
@@ -671,9 +700,7 @@ fn unshelving_from_the_shelf_leaves_the_tracks_live(
     assert!(
         h.inner.step_until(|h| {
             h.state()
-                .window
-                .entries
-                .as_ref()
+                .entries()
                 .and_then(|entries| entries.first())
                 .is_some_and(|entry| table::track_count_text(entry) == expected_track_count)
         }),
@@ -767,18 +794,15 @@ fn deleting_the_shelved_tracks_from_the_shelf_leaves_the_recording_its_live_trac
     }
     h.inner.get_by_label(DELETE_SHELVED_TRACKS_LABEL).click();
 
-    // The delete re-encodes the recording, which takes longer than one wait:
-    // the listing the window drops on the way is the milestone between the two.
+    // Wait for invalidation before checking the refreshed recording list.
     assert!(
-        h.inner.step_until(|h| h.state().window.entries.is_none()),
-        "the delete should send the window back to the database for a fresh listing"
+        h.inner.step_until(|h| h.state().entries().is_none()),
+        "expected the mutation to invalidate the recording list"
     );
     assert!(
         h.inner.step_until(|h| {
             h.state()
-                .window
-                .entries
-                .as_ref()
+                .entries()
                 .and_then(|entries| entries.first())
                 .is_some_and(|entry| table::track_count_text(entry) == "1")
         }),
@@ -967,6 +991,7 @@ fn history_harness_with_a_shelf_over_more_recordings() -> HistoryHarness {
     window.open = true;
     HistoryHarness {
         window,
+        listing: HistoryListCache::default(),
         now: Instant::now(),
         worker,
         storage: crate::settings::StorageSettings {
@@ -2564,9 +2589,11 @@ fn open_the_delete_shelved_confirmation(
     harness: &mut HistoryHarness,
     scope: DeleteShelvedTracksScope,
 ) {
-    let window = &mut harness.window;
-    let listing = window.entries.as_deref().unwrap_or_default();
-    window.delete_shelved_prompt.open(scope, listing);
+    let listing = match harness.listing.view() {
+        RecordingListing::Ready { entries, .. } => &**entries,
+        RecordingListing::Failed | RecordingListing::Pending => &[],
+    };
+    harness.window.delete_shelved_prompt.open(scope, listing);
 }
 
 #[test]
@@ -2651,13 +2678,11 @@ fn snapshot_delete_shelved_confirmation_with_every_track_live() {
     harness.worker.hide_path();
     open_the_delete_shelved_confirmation(&mut harness, DeleteShelvedTracksScope::EveryRecording);
     // The last shelved track goes while the confirmation is up.
-    harness
-        .window
-        .set_entries(vec![listing::entry_with_shelved_tracks(
-            "auto:ride.gtd",
-            TotalTracks(12),
-            ShelvedTracks(0),
-        )]);
+    harness.set_entries(vec![listing::entry_with_shelved_tracks(
+        "auto:ride.gtd",
+        TotalTracks(12),
+        ShelvedTracks(0),
+    )]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
@@ -2747,7 +2772,7 @@ fn a_window_that_listed_more_rows_than_it_shows_fits_a_short_list_again() {
     h.inner.run_steps(8);
     let grown = h.inner.window_rect("History").expect("the window is shown");
 
-    h.inner.state_mut().window.set_entries(
+    h.inner.state_mut().set_entries(
         (0..SHORT_LIST_ROWS)
             .map(|index| listing::entry_with_identity(&format!("auto:ride{index}.gtd")))
             .collect(),

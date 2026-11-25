@@ -6,8 +6,8 @@ use egui::{Button, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
 use gt_store::{
-    DatabaseRef, DbError, HistoryEntries, NavPointTimeRange, PruneMode, RecordingEntry,
-    RecordingMeta, StoredTrackSnapshot,
+    DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta,
+    StoredTrackSnapshot,
 };
 use gt_types::TravelMode;
 use gt_ui_components::{ToolWindow, ToolWindowSizing};
@@ -16,9 +16,8 @@ use gt_ui_theme::labels::LabelWithHover;
 use strum::{EnumCount, EnumIter};
 
 use crate::app::history::delete_shelved_prompt::DeleteShelvedTracksPrompt;
-use crate::app::history_db::{
-    DeleteReason, DeleteShelvedTracksScope, HistoryWorker, ListRequestId,
-};
+use crate::app::history_db::{DeleteReason, DeleteShelvedTracksScope, HistoryWorker};
+use crate::app::history_list::RecordingListing;
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls;
@@ -415,7 +414,6 @@ fn compare_identities(a: &str, b: &str) -> Ordering {
 
 pub struct HistoryWindow {
     pub open: bool,
-    entries: Option<HistoryEntries>,
     /// Identity substring filter (case-insensitive).
     filter_text: String,
     /// Minimum nav-point count filter (empty = no filter).
@@ -430,8 +428,6 @@ pub struct HistoryWindow {
     error: Option<String>,
     prune: PruneDialog,
     delete_shelved_prompt: DeleteShelvedTracksPrompt,
-    list_pending: Option<ListRequestId>,
-    list_failed: bool,
     /// In-progress inline identity rename, if any.
     rename: Option<RenameEdit>,
     /// The recording whose shelf is open in the listing, if any.
@@ -444,18 +440,6 @@ pub struct HistoryWindow {
     /// known only once they are drawn. `None` before the first of those
     /// frames.
     footer_height_last_frame: Option<f32>,
-    /// Counts the recording lists that have arrived. The listing's measured
-    /// column widths hold until it changes.
-    entries_revision: u64,
-}
-
-pub(super) enum RecordingListing<'a> {
-    Failed,
-    Pending,
-    Ready {
-        revision: u64,
-        entries: &'a HistoryEntries,
-    },
 }
 
 /// What the app hands the History window on the frame it draws.
@@ -464,6 +448,7 @@ pub struct HistoryWindowFrame<'a> {
     /// own close down against.
     pub now: Instant,
     pub worker: &'a HistoryWorker,
+    pub listing: RecordingListing<'a>,
     /// The content fingerprints of the files loaded in the app, which is what
     /// disables re-opening a recording that is already open.
     pub loaded_metas: &'a [RecordingMeta],
@@ -505,7 +490,6 @@ impl HistoryWindow {
     pub fn new() -> Self {
         Self {
             open: false,
-            entries: None,
             filter_text: String::new(),
             filter_min_points: String::new(),
             filter_max_points: String::new(),
@@ -514,13 +498,10 @@ impl HistoryWindow {
             error: None,
             prune: PruneDialog::new(),
             delete_shelved_prompt: DeleteShelvedTracksPrompt::default(),
-            list_pending: None,
-            list_failed: false,
             rename: None,
             shelf: None,
             sort: HistorySort::default(),
             footer_height_last_frame: None,
-            entries_revision: 0,
         }
     }
 
@@ -532,69 +513,19 @@ impl HistoryWindow {
             || !self.filter_date_to.is_empty()
     }
 
-    pub fn request_recording_list_if_missing(&mut self, worker: &HistoryWorker) {
-        if self.entries.is_none() && self.list_pending.is_none() && worker.available() {
-            self.list_pending = worker.list();
-            if self.list_pending.is_none() {
-                self.list_failed = true;
-            }
-        }
-    }
-
-    pub(super) fn recording_listing(&self) -> RecordingListing<'_> {
-        if let Some(entries) = &self.entries {
-            RecordingListing::Ready {
-                revision: self.entries_revision,
-                entries,
-            }
-        } else if self.list_failed {
-            RecordingListing::Failed
-        } else {
-            RecordingListing::Pending
-        }
-    }
-
-    /// The most recently started recording of the cached list, `None` until the
-    /// list has arrived. Equal start times break on the database reference, so
-    /// the result does not depend on the order the backend enumerated the
-    /// groups in.
-    pub fn latest_listed_recording(&self) -> Option<&RecordingEntry> {
-        self.entries.as_ref()?.iter().max_by(|a, b| {
-            a.meta
-                .time_range
-                .map(NavPointTimeRange::start_us)
-                .cmp(&b.meta.time_range.map(NavPointTimeRange::start_us))
-                .then_with(|| a.db_ref.identity.cmp(&b.db_ref.identity))
-                .then_with(|| a.db_ref.group_name.cmp(&b.db_ref.group_name))
-        })
-    }
-
-    /// Call after a mutation to force a list refresh next time the window shows.
-    ///
-    /// An open shelf drops the track table it was showing and the listing reads
-    /// it again, with the states the mutation wrote.
-    pub fn invalidate(&mut self) {
-        self.entries = None;
-        self.list_pending = None;
-        self.list_failed = false;
+    pub(super) fn invalidate_shelf_track_table(&mut self) {
         if let Some(shelf) = &mut self.shelf {
             shelf.tracks = ShelfTracks::Unrequested;
         }
     }
 
-    /// Open the window with `recording`'s shelf open, listing its shelved
-    /// tracks.
-    ///
-    /// The recording has a row for its shelf to open under: this clears the
-    /// listing's filters. The shelf lists the current stored track states:
-    /// this drops the cached recording list.
+    /// Clears the listing's filters to show the recording's row.
     pub fn open_shelf(&mut self, recording: DatabaseRef) {
         self.filter_text.clear();
         self.filter_min_points.clear();
         self.filter_max_points.clear();
         self.filter_date_from.clear();
         self.filter_date_to.clear();
-        self.invalidate();
         self.open = true;
         self.shelf = Some(OpenShelf {
             recording,
@@ -602,42 +533,19 @@ impl HistoryWindow {
         });
     }
 
-    #[cfg(test)]
-    pub fn set_entries(&mut self, entries: Vec<RecordingEntry>) {
-        self.set_recording_list(HistoryEntries::new(entries));
-    }
-
-    /// An open shelf closes when its recording no longer has a shelved track to
-    /// list: the recording was deleted, its identity renamed, or its last
-    /// shelved track unshelved.
-    fn set_recording_list(&mut self, entries: HistoryEntries) {
-        if let Some(shelf) = &self.shelf
-            && !entries
-                .iter()
-                .any(|e| e.db_ref == shelf.recording && e.shelved_tracks > 0)
-        {
-            self.shelf = None;
-        }
-        self.entries = Some(entries);
-        self.entries_revision = self.entries_revision.wrapping_add(1);
-        self.list_pending = None;
-        self.list_failed = false;
-        self.error = None;
-    }
-
-    pub fn accept_recording_list(
-        &mut self,
-        request: ListRequestId,
-        entries: Result<HistoryEntries, DbError>,
-    ) {
-        if self.list_pending != Some(request) {
-            return;
-        }
+    pub(super) fn apply_listing_result(&mut self, entries: Result<&[RecordingEntry], DbError>) {
         match entries {
-            Ok(entries) => self.set_recording_list(entries),
+            Ok(entries) => {
+                if let Some(shelf) = &self.shelf
+                    && !entries
+                        .iter()
+                        .any(|entry| entry.db_ref == shelf.recording && entry.shelved_tracks > 0)
+                {
+                    self.shelf = None;
+                }
+                self.error = None;
+            }
             Err(error) => {
-                self.list_pending = None;
-                self.list_failed = true;
                 self.error = Some(format!("Failed to load history: {error}"));
             }
         }
@@ -680,6 +588,7 @@ impl HistoryWindow {
         HistoryWindowFrame {
             now,
             worker,
+            listing,
             loaded_metas,
             storage,
             databases_opening,
@@ -690,20 +599,13 @@ impl HistoryWindow {
             return;
         }
 
-        // A spinner shows until the list arrives.
-        self.request_recording_list_if_missing(worker);
-
         // Show Prune dialog (a separate window).
         self.prune.show(ctx, worker);
 
-        // Shelving is per track: a shelved track sits inside a recording the
-        // list shows. The sum over every recording is what the toolbar's
-        // "Delete shelved data" action permanently drops, and `None` until the
-        // recording list arrives.
-        let shelved_track_count: Option<usize> = self
-            .entries
-            .as_ref()
-            .map(|entries| entries.iter().map(|e| e.shelved_tracks).sum());
+        let listing: Option<(&[RecordingEntry], u64)> = match listing {
+            RecordingListing::Ready { revision, entries } => Some((entries, revision)),
+            RecordingListing::Failed | RecordingListing::Pending => None,
+        };
 
         let mut open = self.open;
 
@@ -716,17 +618,6 @@ impl HistoryWindow {
         {
             open = false;
         }
-
-        // Take the inline-rename state and the open shelf out so `render_row`
-        // can mutate them while `self.entries` is borrowed immutably for the
-        // list. Restored after.
-        let mut rename = std::mem::take(&mut self.rename);
-        let mut shelf = std::mem::take(&mut self.shelf);
-        let mut footer_height = self.footer_height_last_frame;
-        // The table reports the press of the shelf's delete here, and the
-        // window raises the confirmation once the table has released its borrow
-        // of the listing the confirmation reads its figures from.
-        let mut shelf_raised_the_delete: Option<DatabaseRef> = None;
 
         ToolWindow {
             id: egui::Id::unique(Some(HISTORY_WINDOW_TITLE)),
@@ -759,10 +650,11 @@ impl HistoryWindow {
                 ui.add_space(4.0);
             }
 
-            let Some(shelved_track_count) = shelved_track_count else {
+            let Some((entries, entries_revision)) = listing else {
                 ui.spinner();
                 return;
             };
+            let shelved_track_count = entries.iter().map(|entry| entry.shelved_tracks).sum();
 
             let filter_active = self.any_filter_active();
 
@@ -770,13 +662,10 @@ impl HistoryWindow {
                 ui,
                 storage,
                 write_access,
+                entries,
                 shelved_track_count,
                 filter_active,
             );
-
-            let Some(entries) = &self.entries else {
-                return;
-            };
 
             let filter_identity = self.filter_text.to_lowercase();
             let filter_min_points: Option<u64> = self.filter_min_points.parse().ok();
@@ -823,11 +712,12 @@ impl HistoryWindow {
                 return;
             }
 
-            let footer_room = footer_height.unwrap_or_else(|| {
+            let footer_room = self.footer_height_last_frame.unwrap_or_else(|| {
                 FOOTER_LINES_BEFORE_IT_IS_DRAWN * ui.text_style_height(&egui::TextStyle::Body)
             });
             let max_listing_height = (ui.available_height() - footer_room).max(MIN_LISTING_HEIGHT);
 
+            let mut shelf_raised_the_delete = None;
             ScrollArea::horizontal()
                 .id_salt("history_listing")
                 .show(ui, |ui| {
@@ -837,18 +727,18 @@ impl HistoryWindow {
                             max_listing_height,
                             visible: &visible,
                             entries,
-                            entries_revision: self.entries_revision,
+                            entries_revision,
                             loaded_metas,
                             worker,
-                            rename: &mut rename,
-                            shelf: &mut shelf,
+                            rename: &mut self.rename,
+                            shelf: &mut self.shelf,
                             shelf_raised_the_delete: &mut shelf_raised_the_delete,
                             sort: &mut self.sort,
                             write_access,
                         },
                     );
                 });
-            if let Some(recording) = shelf_raised_the_delete.take() {
+            if let Some(recording) = shelf_raised_the_delete {
                 self.delete_shelved_prompt
                     .open(DeleteShelvedTracksScope::OneRecording(recording), entries);
             }
@@ -880,16 +770,12 @@ impl HistoryWindow {
                 );
             }
 
-            footer_height = Some(ui.min_rect().bottom() - listing_bottom);
+            self.footer_height_last_frame = Some(ui.min_rect().bottom() - listing_bottom);
         });
 
-        self.rename = rename;
-        self.shelf = shelf;
-        self.footer_height_last_frame = footer_height;
-
-        if let Some(scope) = self
-            .delete_shelved_prompt
-            .show(ctx, now, self.entries.as_deref())
+        if let Some(scope) =
+            self.delete_shelved_prompt
+                .show(ctx, now, listing.map(|(entries, _)| entries))
         {
             worker.delete_shelved_tracks(scope);
         }
@@ -907,6 +793,7 @@ impl HistoryWindow {
         ui: &mut egui::Ui,
         storage: &mut StorageSettings,
         write_access: WriteAccess,
+        entries: &[RecordingEntry],
         shelved_track_count: usize,
         filter_active: bool,
     ) {
@@ -943,10 +830,8 @@ impl HistoryWindow {
                             READ_ONLY_RECORDING_HISTORY_HOVER
                         });
                         if delete_shelved.clicked() {
-                            self.delete_shelved_prompt.open(
-                                DeleteShelvedTracksScope::EveryRecording,
-                                self.entries.as_deref().unwrap_or_default(),
-                            );
+                            self.delete_shelved_prompt
+                                .open(DeleteShelvedTracksScope::EveryRecording, entries);
                         }
                         if ui
                             .add_enabled(writes_recordings, Button::new("Prune…"))

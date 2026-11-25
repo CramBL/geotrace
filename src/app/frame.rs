@@ -357,7 +357,7 @@ impl App {
                         .clicked()
                     {
                         self.history_window.open = !self.history_window.open;
-                        self.history_window.invalidate();
+                        self.invalidate_history_listing();
                     }
 
                     self.log_viewer.toolbar_button_ui(ui);
@@ -603,6 +603,7 @@ impl App {
         // The mark counting a recording's shelved tracks opens the History
         // window on its shelf.
         if let Some(recording) = shelf_request {
+            self.invalidate_history_listing();
             self.history_window.open_shelf(recording);
         }
 
