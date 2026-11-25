@@ -507,15 +507,15 @@ fn a_log_stays_unassociated_with_a_changed_history_payload() {
 }
 
 #[rstest]
-#[case::matching_rows(true)]
-#[case::different_rows(false)]
-fn a_detached_log_waits_for_a_verified_history_source(#[case] matching_rows: bool) {
-    let (mut harness, _dir, gtd_path) = if matching_rows {
+#[case::valid_rows(true)]
+#[case::out_of_bounds_range(false)]
+fn a_detached_log_waits_for_a_verified_history_source(#[case] valid_rows: bool) {
+    let (mut harness, _dir, gtd_path) = if valid_rows {
         app_with_a_stored_recording_on_disk()
     } else {
         let [first, last] = ui_tests::two_live_track_ranges();
         app_with_a_stored_recording_of(&[TrackRange {
-            end: last.end,
+            end: last.end + 1,
             ..first
         }])
     };
@@ -570,9 +570,9 @@ fn a_detached_log_waits_for_a_verified_history_source(#[case] matching_rows: boo
     harness.state().history.open(recording);
     assert_eq!(
         step_until_one_recording_is_loaded(&mut harness),
-        if matching_rows { 1 } else { 2 }
+        if valid_rows { 1 } else { 2 }
     );
-    if !matching_rows {
+    if !valid_rows {
         self::assert_log_source(harness.state(), None, None);
         harness.get_by_label("Choose the source in Positions from");
         assert!(

@@ -696,16 +696,33 @@ fn keep_the_last_event_marker_style_per_variant_path(
     kept
 }
 
-/// Segments `points` into tracks and builds a fully-populated `LoadedFile`.
-///
-/// Every fix whose recorded coordinates are out of range is placed between the
-/// fixes that have a recorded position. A recording that holds no such fix
-/// builds tracks with no geometry: they carry every fix the receiver wrote and
-/// are drawn nowhere.
-#[expect(
-    clippy::expect_used,
-    reason = "ranges from segment_tracks are always in-bounds and non-empty"
-)]
+pub struct TrackPartition<'a> {
+    points: &'a [NavPoint],
+    ranges: Vec<Range<usize>>,
+}
+
+impl<'a> TrackPartition<'a> {
+    pub fn segmented(points: &'a [NavPoint], config: &TrackLayoutConfig) -> Self {
+        Self {
+            points,
+            ranges: self::segment_tracks(points, config),
+        }
+    }
+
+    /// Each range must contain fixes, and the ranges must cover all fixes in order.
+    pub fn from_ranges(points: &'a [NavPoint], ranges: Vec<Range<usize>>) -> Option<Self> {
+        let mut end = 0;
+        for range in &ranges {
+            if range.start != end || range.is_empty() {
+                return None;
+            }
+            end = range.end;
+        }
+        (end == points.len()).then_some(Self { points, ranges })
+    }
+}
+
+/// Segments `points` using the track layout configuration.
 #[expect(
     clippy::too_many_arguments,
     reason = "constructor assembles all LoadedFile fields; no natural grouping to extract"
@@ -713,6 +730,41 @@ fn keep_the_last_event_marker_style_per_variant_path(
 pub fn build_loaded_file(
     filename: String,
     points: &[NavPoint],
+    custom_markers: &[CustomMarker],
+    event_markers: Vec<EventMarker>,
+    event_marker_styles: Vec<EventMarkerStyle>,
+    channels: &[Channel],
+    config: &SegmentationConfig,
+    source: FileSource,
+    file_meta: FileMeta,
+    load_warnings: Vec<LoadWarning>,
+) -> LoadedFile {
+    self::build_loaded_file_from_partition(
+        filename,
+        TrackPartition::segmented(points, &config.track_layout),
+        custom_markers,
+        event_markers,
+        event_marker_styles,
+        channels,
+        config,
+        source,
+        file_meta,
+        load_warnings,
+    )
+}
+
+/// A recording without a valid recorded position produces tracks without geometry.
+#[expect(
+    clippy::expect_used,
+    reason = "partition ranges are in bounds and nonempty"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "constructor assembles all LoadedFile fields; no natural grouping to extract"
+)]
+pub fn build_loaded_file_from_partition(
+    filename: String,
+    TrackPartition { points, ranges }: TrackPartition<'_>,
     custom_markers: &[CustomMarker],
     event_markers: Vec<EventMarker>,
     event_marker_styles: Vec<EventMarkerStyle>,
@@ -736,26 +788,24 @@ pub fn build_loaded_file(
     let event_marker_styles =
         keep_the_last_event_marker_style_per_variant_path(event_marker_styles, &mut load_warnings);
 
-    let ranges = segment_tracks(points, &config.track_layout);
-
     let mut loaded_tracks: Vec<LoadedTrack> = ranges
         .into_iter()
         .enumerate()
         .map(|(track_idx, range)| {
             let track_points_slice = points
                 .get(range.clone())
-                .expect("ranges from segment_tracks are in bounds");
+                .expect("partition ranges are in bounds");
 
             let track_points: vec1::Vec1<NavPoint> =
                 vec1::Vec1::try_from_vec(track_points_slice.to_vec())
-                    .expect("segment_tracks produces only non-empty ranges");
+                    .expect("partition ranges are nonempty");
 
             // The fixes the receiver did not measure are placed first: the
             // geometry, the generated markers and the LOD levels below all
             // read the positions they landed at.
             let mut track_placements: FixPlacements = placements
                 .get(range)
-                .expect("ranges from segment_tracks are in bounds")
+                .expect("partition ranges are in bounds")
                 .to_vec();
             place_track_fixes(
                 &track_points,
@@ -776,10 +826,6 @@ pub fn build_loaded_file(
                 .cloned()
                 .collect();
 
-            // Each channel keeps only the samples in this track's time range.
-            // Tracks are time-disjoint, so a sample lands in at most one
-            // track. A channel with no samples here is dropped from this
-            // track.
             let track_channels: Vec<Channel> = channels
                 .iter()
                 .map(|c| c.slice_time_range(track_time_range.start, track_time_range.end))

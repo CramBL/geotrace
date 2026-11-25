@@ -1,5 +1,6 @@
 use std::fmt;
 use std::fs::File;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use geotrace_sdk::{
     MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, NavFileOpenMode, NavFixTime,
     Satellite as SdkSatellite, SatelliteReport, TravelMode as SdkTravelMode,
 };
+use gt_track_builder::{SegmentationConfig, TrackPartition};
 use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
 use gt_types::load_warning;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
@@ -86,21 +88,12 @@ fn to_uom_angle(a: geotrace_sdk::Angle) -> uom::si::f64::Angle {
 /// Load a `.gtd` file from `path`, segment it into tracks, and return a fully
 /// populated `LoadedFile`.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile, LoadError> {
-    load_file_with_progress(
-        path,
-        |_, _| {},
-        &gt_track_builder::SegmentationConfig::default(),
-    )
+    load_file_with_progress(path, |_, _| {}, &SegmentationConfig::default())
 }
 
 /// Parse a `.gtd` file from raw bytes (e.g. delivered via drag-and-drop on Wayland).
 pub fn load_bytes(bytes: &[u8], filename: String) -> Result<LoadedFile, LoadError> {
-    load_bytes_with_progress(
-        bytes,
-        filename,
-        |_, _| {},
-        &gt_track_builder::SegmentationConfig::default(),
-    )
+    load_bytes_with_progress(bytes, filename, |_, _| {}, &SegmentationConfig::default())
 }
 
 /// Like [`load_file`] but calls `progress(fraction, stage)` at key milestones so
@@ -108,7 +101,7 @@ pub fn load_bytes(bytes: &[u8], filename: String) -> Result<LoadedFile, LoadErro
 pub fn load_file_with_progress(
     path: impl AsRef<Path>,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
 ) -> Result<LoadedFile, LoadError> {
     load_gtd_file_with_progress(path, progress, config).map(|loaded| loaded.file)
 }
@@ -116,7 +109,7 @@ pub fn load_file_with_progress(
 pub fn load_gtd_file_with_progress(
     path: impl AsRef<Path>,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
 ) -> Result<LoadedGtd, LoadError> {
     load_gtd_file_with_progress_and_time_repair(path, progress, config, None)
 }
@@ -124,7 +117,7 @@ pub fn load_gtd_file_with_progress(
 pub fn load_gtd_file_with_debug_time_repair_progress(
     path: impl AsRef<Path>,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
     time_repair: DebugTimeRepairConfig,
 ) -> Result<LoadedGtd, LoadError> {
     load_gtd_file_with_progress_and_time_repair(path, progress, config, Some(time_repair))
@@ -133,7 +126,7 @@ pub fn load_gtd_file_with_debug_time_repair_progress(
 fn load_gtd_file_with_progress_and_time_repair(
     path: impl AsRef<Path>,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
     time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
     let path = path.as_ref();
@@ -151,7 +144,15 @@ fn load_gtd_file_with_progress_and_time_repair(
         .map_or(NavFileOpenMode::Regular, NavFileOpenMode::DebugTimeRepair);
     let nav_file = NavFile::read_with_mode(file, open_mode)?;
     let source = FileSource::GtdPath(path.to_path_buf());
-    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
+    build_loaded_gtd(
+        &nav_file,
+        filename,
+        source,
+        progress,
+        config,
+        time_repair,
+        None,
+    )
 }
 
 fn build_loaded_gtd(
@@ -159,8 +160,9 @@ fn build_loaded_gtd(
     filename: String,
     source: FileSource,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
     time_repair: Option<DebugTimeRepairConfig>,
+    track_ranges: Option<Vec<Range<usize>>>,
 ) -> Result<LoadedGtd, LoadError> {
     let debug_time_repair_threshold = time_repair
         .map(|config| config.backward_jump_threshold)
@@ -178,9 +180,13 @@ fn build_loaded_gtd(
         nav_file.meta().device(),
         &filename,
     );
-    let file = gt_track_builder::build_loaded_file(
+    let points = &contents.nav_points;
+    let partition = track_ranges
+        .and_then(|ranges| TrackPartition::from_ranges(points, ranges))
+        .unwrap_or_else(|| TrackPartition::segmented(points, &config.track_layout));
+    let file = gt_track_builder::build_loaded_file_from_partition(
         filename,
-        &contents.nav_points,
+        partition,
         &contents.markers,
         contents.event_markers,
         contents.event_marker_styles,
@@ -230,7 +236,7 @@ pub fn load_bytes_with_progress(
     bytes: &[u8],
     filename: String,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
 ) -> Result<LoadedFile, LoadError> {
     load_gtd_bytes_with_progress(bytes, filename, progress, config).map(|loaded| loaded.file)
 }
@@ -239,7 +245,7 @@ pub fn load_gtd_bytes_with_progress(
     bytes: &[u8],
     filename: String,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
 ) -> Result<LoadedGtd, LoadError> {
     load_gtd_bytes_with_progress_and_time_repair(bytes, filename, progress, config, None)
 }
@@ -248,7 +254,7 @@ pub fn load_gtd_bytes_with_debug_time_repair_progress(
     bytes: &[u8],
     filename: String,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
     time_repair: DebugTimeRepairConfig,
 ) -> Result<LoadedGtd, LoadError> {
     load_gtd_bytes_with_progress_and_time_repair(
@@ -264,11 +270,33 @@ fn load_gtd_bytes_with_progress_and_time_repair(
     bytes: &[u8],
     filename: String,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
     time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
     let source = FileSource::GtdBytes(Arc::from(bytes));
-    load_gtd_contents(bytes, filename, source, progress, config, time_repair)
+    load_gtd_contents(bytes, filename, source, progress, config, time_repair, None)
+}
+
+/// Uses the stored ranges when they partition the decoded fixes in order.
+/// Otherwise the loader segments the fixes using `config`.
+pub fn load_stored_gtd_bytes_with_progress(
+    StoredGtdBytes(bytes): StoredGtdBytes<'_>,
+    filename: String,
+    progress: impl Fn(f32, &'static str),
+    config: &SegmentationConfig,
+    time_repair: Option<DebugTimeRepairConfig>,
+    track_ranges: Vec<Range<usize>>,
+) -> Result<LoadedGtd, LoadError> {
+    let source = FileSource::GtdBytes(Arc::from(bytes));
+    load_gtd_contents(
+        bytes,
+        filename,
+        source,
+        progress,
+        config,
+        time_repair,
+        Some(track_ranges),
+    )
 }
 
 pub fn load_gtd_path_contents(
@@ -276,11 +304,11 @@ pub fn load_gtd_path_contents(
     path: &Path,
     filename: String,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
     time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
     let source = FileSource::GtdPath(path.to_owned());
-    load_gtd_contents(bytes, filename, source, progress, config, time_repair)
+    load_gtd_contents(bytes, filename, source, progress, config, time_repair, None)
 }
 
 fn load_gtd_contents(
@@ -288,8 +316,9 @@ fn load_gtd_contents(
     filename: String,
     source: FileSource,
     progress: impl Fn(f32, &'static str),
-    config: &gt_track_builder::SegmentationConfig,
+    config: &SegmentationConfig,
     time_repair: Option<DebugTimeRepairConfig>,
+    track_ranges: Option<Vec<Range<usize>>>,
 ) -> Result<LoadedGtd, LoadError> {
     progress(0.15, STAGE_PARSING);
     let open_mode = time_repair
@@ -297,7 +326,15 @@ fn load_gtd_contents(
         .transpose()?
         .map_or(NavFileOpenMode::Regular, NavFileOpenMode::DebugTimeRepair);
     let nav_file = NavFile::read_with_mode(bytes, open_mode)?;
-    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
+    build_loaded_gtd(
+        &nav_file,
+        filename,
+        source,
+        progress,
+        config,
+        time_repair,
+        track_ranges,
+    )
 }
 
 pub struct StoredGtdBytes<'a>(pub &'a [u8]);

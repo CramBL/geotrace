@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    ops::Range,
     path::PathBuf,
     sync::{Arc, mpsc},
 };
@@ -16,7 +17,8 @@ use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryAccess, ReadOnlyRecordings, RecordingDebugTag,
     RecordingInsert, Recordings, StoredFixPlacementRule, StoredLogSettings, StoredRecording,
-    StoredTrackSnapshot, StoredTrackSplitRule, TrackLayoutVisibility, TrackRange, TrackState,
+    StoredTrackSnapshot, StoredTrackSplitRule, StoredTrackTable, TrackLayoutVisibility, TrackRange,
+    TrackState,
 };
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
@@ -270,6 +272,7 @@ pub(super) enum RecalculationAuthority {
 
 #[derive(Clone, Debug)]
 pub(super) enum OpenTrackTable {
+    DamagedStored(DatabaseRef),
     DiskMatch {
         database_path: PathBuf,
         snapshot: StoredTrackSnapshot,
@@ -278,9 +281,20 @@ pub(super) enum OpenTrackTable {
 }
 
 impl OpenTrackTable {
-    fn snapshot(&self) -> &StoredTrackSnapshot {
+    pub(super) fn from_stored_recording(
+        table: &StoredTrackTable,
+        snapshot: StoredTrackSnapshot,
+    ) -> Self {
+        match table {
+            StoredTrackTable::Damaged => Self::DamagedStored(snapshot.recording().clone()),
+            StoredTrackTable::Missing | StoredTrackTable::Present(_) => Self::Stored(snapshot),
+        }
+    }
+
+    fn recording(&self) -> &DatabaseRef {
         match self {
-            Self::DiskMatch { snapshot, .. } | Self::Stored(snapshot) => snapshot,
+            Self::DamagedStored(recording) => recording,
+            Self::DiskMatch { snapshot, .. } | Self::Stored(snapshot) => snapshot.recording(),
         }
     }
 }
@@ -299,9 +313,9 @@ impl HistoryOpen {
         }
     }
 
-    fn db_ref(&self) -> &gt_store::DatabaseRef {
+    fn db_ref(&self) -> &DatabaseRef {
         match self {
-            Self::ApplyShelved { track_table, .. } => track_table.snapshot().recording(),
+            Self::ApplyShelved { track_table, .. } => track_table.recording(),
             Self::Recalculate { snapshot, .. } => snapshot.recording(),
         }
     }
@@ -584,15 +598,44 @@ impl LoadJobs {
                 .ok();
                 r_ctx.request_repaint();
             };
-            let loaded = match mode.time_repair_config() {
-                Some(time_repair) => gt_loader::load_gtd_bytes_with_debug_time_repair_progress(
-                    &bytes,
+            let stored_ranges = match &open {
+                Some(HistoryOpen::ApplyShelved {
+                    track_table: OpenTrackTable::Stored(snapshot),
+                    ..
+                }) if !snapshot.rows().is_empty() => self::stored_fix_ranges(snapshot.rows())
+                    .and_then(|ranges| {
+                        ranges
+                            .map(|range| {
+                                Some(
+                                    usize::try_from(range.start).ok()?
+                                        ..usize::try_from(range.end).ok()?,
+                                )
+                            })
+                            .collect()
+                    }),
+                _ => None,
+            };
+            let loaded = match (stored_ranges, mode.time_repair_config()) {
+                (Some(ranges), time_repair) => gt_loader::load_stored_gtd_bytes_with_progress(
+                    StoredGtdBytes(&bytes),
                     filename,
                     report,
                     &config,
                     time_repair,
+                    ranges,
                 ),
-                None => gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config),
+                (None, Some(time_repair)) => {
+                    gt_loader::load_gtd_bytes_with_debug_time_repair_progress(
+                        &bytes,
+                        filename,
+                        report,
+                        &config,
+                        time_repair,
+                    )
+                }
+                (None, None) => {
+                    gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config)
+                }
             };
             let outcome = loaded
                 .map(|loaded| {
@@ -1135,24 +1178,32 @@ fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
         .collect()
 }
 
-fn track_rows_match(file: &LoadedFile, rows: &[TrackRange]) -> bool {
-    let loaded = track_ranges_from_file(file);
-    let mut stored = rows.iter().filter(|row| row.state != TrackState::Deleted);
-    loaded.iter().all(|loaded| {
-        stored
-            .next()
-            .is_some_and(|stored| loaded.start == stored.start && loaded.end == stored.end)
-    }) && stored.next().is_none()
+fn stored_fix_ranges(rows: &[TrackRange]) -> Option<impl Iterator<Item = Range<u64>>> {
+    rows.iter().try_fold(0, |start, row| {
+        let valid_length = match row.state {
+            TrackState::Deleted => row.start == row.end,
+            TrackState::Live | TrackState::Shelved => row.start < row.end,
+        };
+        (row.start == start && valid_length).then_some(row.end)
+    })?;
+    Some(
+        rows.iter()
+            .filter(|row| row.state != TrackState::Deleted)
+            .map(|row| row.start..row.end),
+    )
 }
 
-/// Apply a recording's stored track table to the file just segmented from its
-/// nav points, when it is opened from history. Recomputes the recording's
-/// figures over the tracks that stay, and returns how many are shelved.
-///
-/// Segmentation reproduces one track per listed row of `stored_tracks`, in
-/// order. Each track takes the number of its stored row, and the shelved tracks
-/// are left out of the view. A track after a permanently deleted one keeps its
-/// number.
+fn track_rows_match(file: &LoadedFile, rows: &[TrackRange]) -> bool {
+    self::stored_fix_ranges(rows).is_some_and(|stored| {
+        track_ranges_from_file(file)
+            .into_iter()
+            .map(|row| row.start..row.end)
+            .eq(stored)
+    })
+}
+
+/// The loaded file has one track for each listed row, in row order.
+/// Each live track keeps its stored number, including after a deleted row.
 fn apply_stored_track_table(
     file: &mut LoadedFile,
     stored_tracks: &[gt_store::TrackRange],
@@ -1308,7 +1359,7 @@ impl ParsedRecording<'_> {
             Some(
                 HistoryOpen::Recalculate { .. }
                 | HistoryOpen::ApplyShelved {
-                    track_table: OpenTrackTable::Stored(_),
+                    track_table: OpenTrackTable::Stored(_) | OpenTrackTable::DamagedStored(_),
                     ..
                 },
             ) => RecordingLoadOrigin::History,
@@ -1367,6 +1418,7 @@ impl ParsedRecording<'_> {
             }
             Some(HistoryOpen::ApplyShelved { track_table, .. }) => {
                 let snapshot = match track_table {
+                    OpenTrackTable::DamagedStored(_) => None,
                     OpenTrackTable::Stored(snapshot) => Some(snapshot.clone()),
                     OpenTrackTable::DiskMatch {
                         database_path,
@@ -1382,7 +1434,18 @@ impl ParsedRecording<'_> {
                         })
                     }
                 }
-                .filter(|snapshot| track_rows_match(&file, snapshot.rows()));
+                .filter(|snapshot| {
+                    let matches_rows = track_rows_match(&file, snapshot.rows());
+                    if !matches_rows
+                        && matches!(track_table, OpenTrackTable::Stored(_))
+                        && !snapshot.rows().is_empty()
+                    {
+                        log::warn!(
+                            "Invalid stored track ranges for '{filename}'. Loaded segmented tracks."
+                        );
+                    }
+                    matches_rows
+                });
                 if let Some(snapshot) = &snapshot {
                     shelved_tracks = apply_stored_track_table(&mut file, snapshot.rows());
                 }
@@ -1570,6 +1633,9 @@ fn verify_disk_payload(
     bytes: &[u8],
     (stored, snapshot): (StoredRecording, StoredTrackSnapshot),
 ) -> Option<StoredTrackSnapshot> {
+    if matches!(stored.track_table, StoredTrackTable::Damaged) {
+        return None;
+    }
     match gt_loader::same_recorded_payload(bytes, StoredGtdBytes(&stored.bytes)) {
         Ok(true) => Some(snapshot),
         Ok(false) => None,
