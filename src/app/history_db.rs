@@ -25,14 +25,13 @@ use gt_log_view::{
     LogSaveReceipt, LogSaveRequest,
 };
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
-use gt_session_bridge::{HistoryEntries, HistoryOpenId, HistoryOpenSelection};
 use gt_store::{
-    AttachedLog, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, LogAttachmentEntry,
-    LogAttachmentError, LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _,
-    LogContentHash, LogToAttach, PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _,
-    ReadOnlyRecordings, RecordingUiState, Recordings, RecordingsHandle, StoredLayoutRevision,
-    StoredLogSettings, StoredRecording, StoredTrackSnapshot, StoredTrackTable, TrackRange,
-    TrackState, UiStateVersionReporter,
+    AttachedLog, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, HistoryEntries,
+    HistoryOpenSelection, LogAttachmentEntry, LogAttachmentError, LogAttachmentId,
+    LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
+    ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingUiState,
+    Recordings, RecordingsHandle, StoredLayoutRevision, StoredLogSettings, StoredRecording,
+    StoredTrackSnapshot, StoredTrackTable, TrackRange, TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -223,14 +222,14 @@ enum ReadRequest {
     ScreenRecordingsFromDisk(Vec<RecordingFromDisk>),
 }
 
-struct SessionOpenRead {
+struct CheckedOpenRead {
     selection: HistoryOpenSelection,
     reuse_bytes: Option<Arc<[u8]>>,
 }
 
 enum OpenTarget {
     Address(DatabaseRef),
-    Checked(SessionOpenRead),
+    Checked(CheckedOpenRead),
 }
 
 impl OpenTarget {
@@ -599,16 +598,16 @@ impl HistoryWorker {
         });
     }
 
-    pub(super) fn open_session_recording(
+    pub(super) fn open_checked_recording(
         &self,
-        operation: HistoryOpenId,
+        origin: RecordingOperationOrigin,
         selection: HistoryOpenSelection,
         reuse_bytes: Option<Arc<[u8]>>,
     ) -> bool {
         self.req_tx.as_ref().is_some_and(|tx| {
             tx.send(Request::Read(ReadRequest::Open {
-                origin: RecordingOperationOrigin::SessionHistory(operation),
-                target: OpenTarget::Checked(SessionOpenRead {
+                origin,
+                target: OpenTarget::Checked(CheckedOpenRead {
                     selection,
                     reuse_bytes,
                 }),

@@ -125,7 +125,8 @@ fn current_group_ids_survive_identity_renames_and_legacy_groups_use_identity() {
         legacy
     );
 
-    reference.group_name = format!("1970-01-02T00:00:00Z_{}", Uuid::new_v4());
+    reference.group_name =
+        gt_history_types::make_group_name(UTC_DAY_MICROS, &Uuid::new_v4().to_string());
     let current = HistoryRecordingId::of(database, &entries, &reference);
     reference.identity = "first".to_owned();
     assert_eq!(
@@ -139,9 +140,31 @@ fn current_group_ids_survive_identity_renames_and_legacy_groups_use_identity() {
 }
 
 #[test]
-fn repeated_uuid_groups_have_distinct_ids_across_pages_and_filters() {
+fn the_open_selection_matches_the_selected_reference_and_metadata() {
+    let mut selected = self::entry("second");
+    selected.db_ref.group_name =
+        gt_history_types::make_group_name(UTC_DAY_MICROS, &Uuid::new_v4().to_string());
+    selected.meta.nav_point_count = 2;
+    let entries = HistoryEntries::new(vec![self::entry("first"), selected]);
+    let listing = HistoryListing {
+        database: Path::new("data/history.hdf5"),
+        entries: &entries,
+        revision: 0,
+        session: Uuid::nil(),
+    };
+    let id = HistoryRecordingId::of(listing.database, &entries, &entries[1].db_ref);
+    let observation = listing.select_for_open(id).unwrap();
+
+    assert_eq!(observation.recording(), &entries[1].db_ref);
+    assert!(observation.matches_read_metadata(Some(entries[1].meta)));
+    assert!(!observation.matches_read_metadata(Some(entries[0].meta)));
+}
+
+#[test]
+fn select_for_open_returns_expired_for_each_id_of_a_repeated_group() {
     let mut first = self::entry("first");
-    first.db_ref.group_name = format!("1970-01-02T00:00:00Z_{}", Uuid::new_v4());
+    first.db_ref.group_name =
+        gt_history_types::make_group_name(UTC_DAY_MICROS, &Uuid::new_v4().to_string());
     first.meta.time_range = NavPointTimeRange::covering(&[UTC_DAY_MICROS]);
     let mut second = self::entry("second");
     second.db_ref.group_name = first.db_ref.group_name.clone();
@@ -168,6 +191,12 @@ fn repeated_uuid_groups_have_distinct_ids_across_pages_and_filters() {
     assert_eq!(first_page.recordings[0].identity, "first");
     assert_eq!(second_page.recordings[0].identity, "second");
     assert_ne!(first_page.recordings[0].id, second_page.recordings[0].id);
+    for recording in [&first_page.recordings[0], &second_page.recordings[0]] {
+        assert_eq!(
+            listing.select_for_open(recording.id).err(),
+            Some(ErrorCode::HistorySelectionExpired)
+        );
+    }
 
     let day = NaiveDate::from_ymd_opt(1970, 1, 2).unwrap();
     let filtered = listing

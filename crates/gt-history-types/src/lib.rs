@@ -7,6 +7,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::{Uuid, Version};
 
+pub use history_entries::{HistoryEntries, HistoryOpenSelection, HistoryOpenSelectionError};
 pub use log_attachment::{
     InvalidStoredLogFilterStack, LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment,
     LogAttachmentDecodeError, LogAttachmentDecodeErrorReason, LogAttachmentEntry, LogAttachmentId,
@@ -25,6 +26,7 @@ pub use ui_state::{
 
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures;
+mod history_entries;
 pub mod log_attachment;
 mod track_snapshot;
 pub mod ui_state;

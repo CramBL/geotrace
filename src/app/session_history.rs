@@ -2,19 +2,20 @@ use std::sync::{Arc, Weak};
 
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFilesView, RecordingData};
 use gt_session_bridge::{
-    ErrorCode, GetHistoryOpenStatus, HistoryListing, HistoryOpenId, HistoryOpenSelection,
-    HistoryOpenState, HistoryOpenStatus, HistoryRecordingId, ListHistoryRecordings,
-    OpenHistoryRecording, RecordingReference, Reply,
+    ErrorCode, GetHistoryOpenStatus, HistoryListing, HistoryOpenId, HistoryOpenState,
+    HistoryOpenStatus, HistoryRecordingId, ListHistoryRecordings, OpenHistoryRecording,
+    RecordingReference, Reply,
 };
 use gt_store::{
-    DbError, RecordingDebugTag, RecordingUiState, StoredLayoutRevision, StoredSegmentation,
-    StoredTrackSnapshot,
+    DbError, HistoryOpenSelection, RecordingDebugTag, RecordingUiState, StoredLayoutRevision,
+    StoredSegmentation, StoredTrackSnapshot,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_types::{FileSource, Generation};
 use uuid::Uuid;
 
 use super::App;
+use super::association_batches::RecordingOperationOrigin;
 use super::history::RecordingListing;
 use super::history_db::OpenedRecording;
 use super::history_open::ResegmentChoice;
@@ -513,10 +514,11 @@ impl App {
             Phase::Reading(Some(ready)) => ready.bytes.upgrade(),
             _ => None,
         };
-        if !self
-            .history
-            .open_session_recording(operation.id, selection, reuse_bytes)
-        {
+        if !self.history.open_checked_recording(
+            RecordingOperationOrigin::SessionHistory(operation.id),
+            selection,
+            reuse_bytes,
+        ) {
             operation.phase = Phase::Terminal(OpenStop::Failed(ErrorCode::HistoryUnavailable));
         }
         self.session_history.operation = Some(operation);
