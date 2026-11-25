@@ -357,7 +357,9 @@ impl App {
                         .clicked()
                     {
                         self.history_window.open = !self.history_window.open;
-                        self.invalidate_history_listing();
+                        if self.history_window.open {
+                            self.invalidate_history_listing();
+                        }
                     }
 
                     self.log_viewer.toolbar_button_ui(ui);
