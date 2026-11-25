@@ -1,7 +1,6 @@
 use std::ops::Range;
 
-use gt_query::lexer::{self, TokenClass};
-use gt_query::{ChannelSchema, CheckedQuery, Diagnostic, Span};
+use gt_query::{ChannelSchema, CheckedQuery, Diagnostic, Span, TokenClass};
 
 use crate::run::RunKind;
 use crate::session::MIXED_CHANNEL_MESSAGE;
@@ -26,7 +25,7 @@ impl QueryChunk {
             return None;
         }
         let source = text.get(self.range.clone())?;
-        let first = lexer::tokenize(source).into_iter().next()?;
+        let first = gt_query::tokenize(source).into_iter().next()?;
         Some(self.document_span(first.span))
     }
 }
@@ -55,7 +54,7 @@ pub fn check_chunks<'a>(
         // Comment-only via the highlighter's classes: the parsing
         // tokenizer drops rejected characters, which must still be checked
         // and reported.
-        let comment_only = lexer::highlight_classes(src)
+        let comment_only = gt_query::highlight_classes(src)
             .iter()
             .all(|(_, class)| *class == TokenClass::Comment);
         if comment_only {

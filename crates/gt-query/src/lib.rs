@@ -32,7 +32,7 @@ pub use eval::{
     ChannelSamples, ChannelTimeline, MetricProvider, RunOutput, RunSummary, TrackInput,
     TrackMatches, derived_accel, run, run_cancellable,
 };
-pub use lexer::channel_reference;
+pub use lexer::{Tok, Token, TokenClass, channel_reference, highlight_classes, tokenize};
 pub use metric::{MetricSource, Quantity, QueryMetric};
 pub use parser::parse;
 pub use pipeline::{DrawContribution, PipelineOutput, QueryOutput, run_pipeline};
@@ -48,7 +48,7 @@ pub mod construct;
 mod dimension;
 mod eval;
 mod fmt;
-pub mod lexer;
+mod lexer;
 mod metric;
 mod parser;
 mod pipeline;

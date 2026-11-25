@@ -1788,15 +1788,13 @@ fn write_pure_db_with_a_track_table(
     });
 }
 
-type TrackTableColumns = &'static [(&'static str, &'static [u64])];
-
-const EMPTY_TRACK_TABLE: TrackTableColumns = &[
+const EMPTY_TRACK_TABLE: &[(&str, &[u64])] = &[
     (TRACK_START_DATASET, &[]),
     (TRACK_END_DATASET, &[]),
     (TRACK_STATE_DATASET, &[]),
 ];
-const INCOMPLETE_TRACK_TABLE: TrackTableColumns = &[(TRACK_START_DATASET, &[])];
-const INCONSISTENT_TRACK_TABLE: TrackTableColumns = &[
+const INCOMPLETE_TRACK_TABLE: &[(&str, &[u64])] = &[(TRACK_START_DATASET, &[])];
+const INCONSISTENT_TRACK_TABLE: &[(&str, &[u64])] = &[
     (TRACK_START_DATASET, &[0, 1]),
     (TRACK_END_DATASET, &[1]),
     (TRACK_STATE_DATASET, &[0, 1]),
@@ -1808,7 +1806,7 @@ const INCONSISTENT_TRACK_TABLE: TrackTableColumns = &[
 #[case::incomplete(Some(INCOMPLETE_TRACK_TABLE), StoredTrackTable::Damaged)]
 #[case::inconsistent(Some(INCONSISTENT_TRACK_TABLE), StoredTrackTable::Damaged)]
 fn loading_a_recording_distinguishes_damaged_and_empty_track_tables(
-    #[case] columns: Option<TrackTableColumns>,
+    #[case] columns: Option<&[(&str, &[u64])]>,
     #[case] expected: StoredTrackTable,
 ) {
     let dir = tempfile::tempdir().unwrap();

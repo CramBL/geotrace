@@ -11,9 +11,9 @@ use proptest::prelude::*;
 
 use super::{EligibilityWithheld, MapEligibilityResult, PointVisibility};
 use crate::display_mask::{DisplayCategory, DisplayMask};
-use crate::highlight::{MapElementRef, MapHighlight};
 use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::test_util::{self, ScopeFixture};
+use crate::{MapElementRef, MapHighlight};
 
 #[derive(Clone, Copy, Debug)]
 enum ElementCase {
