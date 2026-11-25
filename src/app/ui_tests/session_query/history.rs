@@ -33,6 +33,7 @@ use crate::app::archive_recovery::UnavailableArchives;
 use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::auto_prune::AutoPruneOutcome;
 use crate::app::history_db::{DbOp, DeleteReason, HistoryWorker, Response};
+use crate::app::history_list::RecordingListing;
 use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
 use crate::app::storage::OpenStorage;
 use crate::app::test_util::harness::{self, TestDroppedFile};
@@ -1161,25 +1162,62 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
         request,
         entries: Err(DbError::Busy),
     });
-    assert_eq!(
-        super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
-        Reply::from(ErrorCode::HistoryListingFailed)
-    );
+    {
+        let _access = HistoryAccess::lock();
+        assert_eq!(
+            super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
+            Reply::from(ErrorCode::HistoryListingFailed)
+        );
+        harness.state_mut().history_window.open = true;
+        harness.run_steps(3);
+        harness.get_by_label_contains("Failed to load history");
+        harness.state_mut().history_window.open = false;
+    }
 
-    let app = harness.state_mut();
-    let obsolete = recordings::next_response(&app.history);
-    app.history_window.invalidate();
-    app.handle_history_response(obsolete);
-    assert_eq!(
-        super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
-        Reply::from(ErrorCode::HistoryNotReady)
-    );
+    let obsolete = recordings::next_response(&harness.state().history);
+    harness.state_mut().invalidate_history_listing();
+    {
+        let _access = HistoryAccess::lock();
+        assert_eq!(
+            super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
+            Reply::from(ErrorCode::HistoryNotReady)
+        );
+        harness.state_mut().handle_history_response(obsolete);
+        assert!(matches!(
+            harness.state().history_listing.view(),
+            RecordingListing::Pending
+        ));
+        harness.state_mut().history_window.open = true;
+        harness.run_steps(3);
+        harness.get_by_label_contains("Failed to load history");
+        harness.state_mut().history_window.open = false;
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !matches!(
+        harness.state().history_listing.view(),
+        RecordingListing::Ready { .. }
+    ) {
+        harness::step_minimized_logic(&mut harness);
+        assert!(Instant::now() < deadline, "timed out listing History");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert_eq!(
         self::await_page(&mut harness, UNFILTERED),
         HistoryRecordings {
             recordings: Vec::new(),
             next_cursor: None
         }
+    );
+
+    let _access = HistoryAccess::lock();
+    harness.state_mut().history_window.open = true;
+    harness.run_steps(3);
+    harness.get_by_label("No recordings in history yet");
+    assert!(
+        harness
+            .query_by_label_contains("Failed to load history")
+            .is_none()
     );
 }
 

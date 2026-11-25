@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 use super::App;
 use super::association_batches::RecordingOperationOrigin;
-use super::history::RecordingListing;
 use super::history_db::OpenedRecording;
+use super::history_list::RecordingListing;
 use super::history_open::ResegmentChoice;
 use super::loader::{LoadCompletion, LoadedRecordingResult};
 
@@ -402,7 +402,7 @@ impl App {
         match result {
             Ok(result) => {
                 let Some(display) = self.session_history.accept_recording(operation, result) else {
-                    self.history_window.invalidate();
+                    self.invalidate_history_listing();
                     return HistoryLoadAdoption::Skip;
                 };
                 match display {
@@ -437,7 +437,7 @@ impl App {
         session: Uuid,
         request: ListHistoryRecordings,
     ) -> Result<Reply, ErrorCode> {
-        self.history_listing(session)
+        self.session_history_listing(session)
             .and_then(|listing| listing.page(request))
             .map(|page| Reply::HistoryRecordings { page })
             .map_err(|error| {
@@ -485,7 +485,7 @@ impl App {
             });
         drop(files);
         let selection = self
-            .history_listing(session)?
+            .session_history_listing(session)?
             .select_for_open(request.recording)?;
         let operation = Operation {
             id: HistoryOpenId {
@@ -542,7 +542,7 @@ impl App {
             .ok_or(ErrorCode::HistoryOpenNotFound)
     }
 
-    fn history_listing(&mut self, session: Uuid) -> Result<HistoryListing<'_>, ErrorCode> {
+    fn session_history_listing(&mut self, session: Uuid) -> Result<HistoryListing<'_>, ErrorCode> {
         if self.shutdown_requested() {
             return Err(ErrorCode::ShuttingDown);
         }
@@ -552,9 +552,8 @@ impl App {
             return Err(ErrorCode::HistoryNotReady);
         }
         let database = self.history.path().ok_or(ErrorCode::HistoryUnavailable)?;
-        self.history_window
-            .request_recording_list_if_missing(&self.history);
-        match self.history_window.recording_listing() {
+        self.history_listing.request_if_missing(&self.history);
+        match self.history_listing.view() {
             RecordingListing::Ready { revision, entries } => Ok(HistoryListing {
                 database,
                 entries,

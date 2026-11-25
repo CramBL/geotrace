@@ -6,17 +6,21 @@ use egui::{Button, Grid, Label, RichText};
 use gt_loaded_files::LoadedFileId;
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
 use gt_session_bridge::ErrorCode;
-use gt_store::{DatabaseRef, DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
+use gt_store::{
+    DatabaseRef, DbError, HistoryEntries, RecordingMeta, StoredFixPlacementRule,
+    StoredTrackSplitRule, TrackState,
+};
 use gt_ui_components::HeldBodyLines;
 
 use super::anchored_dialog::AnchoredDialogKind;
 use super::association_batches::RecordingOperationOrigin;
 use super::auto_prune::AutoPruneOutcome;
-use super::history_db::{OpenedRecording, SessionRestoration};
+use super::history::{self, HistoryWindowFrame};
+use super::history_db::{ListRequestId, OpenedRecording, SessionRestoration};
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
 use super::loader::{AttachedLogRequester, LoadedRecordingPlacement, RecalculationAuthority};
 use super::session_history::OpenStop;
-use super::{App, ResegmentPrompt, history, history_db, loader, modals, storage};
+use super::{App, ResegmentPrompt, history_db, loader, modals, storage};
 
 fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
     match stored.debug_tag {
@@ -162,13 +166,13 @@ impl App {
         let previous = std::mem::replace(&mut self.history, worker);
         previous.shutdown();
         self.sync_db_path();
-        self.history_window.invalidate();
+        self.invalidate_history_listing();
         self.store_the_hidden_tracks_the_settings_file_lists();
     }
 
     pub(super) fn expire_stale_history_settings(&mut self) {
         if let Some(operation) = self.session_history.expire_stale_settings_decision() {
-            self.history_window.invalidate();
+            self.invalidate_history_listing();
             let is_expired =
                 |prompt: &ResegmentPrompt| prompt.origin.session_history() == Some(operation);
             self.pending_resegment.take_if(|prompt| is_expired(prompt));
@@ -539,7 +543,7 @@ impl App {
                 if let Some(id) = operation
                     && !opened.track_snapshot.is_current_with_membership()
                 {
-                    self.history_window.invalidate();
+                    self.invalidate_history_listing();
                     self.session_history.finish(id, OpenStop::Expired);
                     return;
                 }
@@ -550,7 +554,7 @@ impl App {
                 if let Some(id) = operation {
                     let state = match e {
                         DbError::StoredTrackLayoutChanged => {
-                            self.history_window.invalidate();
+                            self.invalidate_history_listing();
                             OpenStop::Expired
                         }
                         DbError::StoredTrackTableDamaged => {
@@ -583,11 +587,11 @@ impl App {
     pub(super) fn handle_history_response(&mut self, resp: history_db::Response) {
         use history_db::Response;
         if resp.invalidates_recording_list() {
-            self.history_window.invalidate();
+            self.invalidate_history_listing();
         }
         match resp {
             Response::Listed { request, entries } => {
-                self.history_window.accept_recording_list(request, entries);
+                self.apply_history_listing_response(request, entries);
             }
             Response::Opened {
                 origin,
@@ -737,17 +741,37 @@ impl App {
         copies.next().is_some_and(|entry| entry.id() == file) && copies.next().is_none()
     }
 
+    pub(super) fn invalidate_history_listing(&mut self) {
+        self.history_listing.invalidate();
+        self.history_window.invalidate_shelf_track_table();
+    }
+
+    fn apply_history_listing_response(
+        &mut self,
+        request: ListRequestId,
+        entries: Result<HistoryEntries, DbError>,
+    ) {
+        if let Some(result) = self.history_listing.accept_response(request, entries) {
+            self.history_window.apply_listing_result(result);
+        }
+    }
+
     pub(super) fn show_history_window(&mut self, ui: &egui::Ui) {
+        if !self.history_window.open {
+            return;
+        }
+        self.history_listing.request_if_missing(&self.history);
         let storage_before_edit = self.storage_settings;
-        let loaded_metas: Vec<gt_store::RecordingMeta> = {
+        let loaded_metas: Vec<RecordingMeta> = {
             let s = self.shared.borrow();
             s.loaded_files.view().recording_metas()
         };
         self.history_window.show(
             ui.ctx(),
-            history::HistoryWindowFrame {
+            HistoryWindowFrame {
                 now: Instant::now(),
                 worker: &self.history,
+                listing: self.history_listing.view(),
                 loaded_metas: &loaded_metas,
                 storage: &mut self.storage_settings,
                 databases_opening: self.storage_open.databases_pending().is_some(),

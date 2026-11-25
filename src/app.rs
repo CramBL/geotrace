@@ -43,6 +43,7 @@ use snap_state::{PendingSnapRequest, SnapErrorCache, SnapReplacePrompt, SnapScop
 use strum::IntoEnumIterator;
 
 use crate::app::frame::PendingTrackDataDetach;
+use crate::app::history_list::HistoryListCache;
 use crate::settings::InitialPositionSourcePolicy;
 use crate::termination_signal;
 
@@ -71,6 +72,7 @@ mod flares;
 mod frame;
 mod history;
 mod history_db;
+mod history_list;
 mod history_open;
 mod instance_wait;
 mod jamming;
@@ -363,6 +365,7 @@ pub struct App {
     /// Background worker that owns the history database. All reads and edits go
     /// through it so the UI thread never blocks on disk I/O.
     history: history_db::HistoryWorker,
+    history_listing: HistoryListCache,
     /// The hidden tracks the settings file lists. An earlier version of
     /// GeoTrace kept them there, before the history database held them.
     /// Stored with their recordings once a database is open, and empty from
@@ -726,6 +729,7 @@ impl App {
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             history: history_db::HistoryWorker::disabled(),
+            history_listing: HistoryListCache::default(),
             hidden_tracks_in_the_settings_file,
             warned_that_a_newer_version_stored_ui_state: false,
             history_failure: None,
@@ -827,8 +831,8 @@ impl App {
             .get(0)
             .map(TemplatePreviewRecording::from_loaded_file);
         loaded.or_else(|| {
-            self.history_window
-                .latest_listed_recording()
+            self.history_listing
+                .latest_recording()
                 .map(TemplatePreviewRecording::from_history_entry)
         })
     }
@@ -1002,7 +1006,7 @@ impl App {
         } = &completed.completion
             && recording.history_write_attempted
         {
-            self.history_window.invalidate();
+            self.invalidate_history_listing();
         }
         let Some(completed) = self.complete_load_retry(completed) else {
             return;
