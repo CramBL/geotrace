@@ -129,6 +129,7 @@ Use the returned `next_after` as `after` to continue, and stop when `next_after`
 
 Pass a recording's returned `id` as `recording` to `get_recording`.
 It returns the recording summary and up to 100 track references per page.
+Recording summaries set `metadata_truncated` to true when the bridge shortens text metadata for the reply.
 Pass its `next_after` as `after` to continue.
 Pass a track reference as `track` to `get_track` for its recorded time range and counts, or to `get_range_details` for points in recorded order.
 `get_track` reports distance and bounds from the map geometry when available.

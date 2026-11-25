@@ -742,6 +742,7 @@ fn recording_page() -> Reply {
                 filename: "survey.gtd".to_owned(),
                 title: None,
                 device: None,
+                metadata_truncated: false,
                 time_range: None,
                 track_count: 2,
             }],

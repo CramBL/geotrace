@@ -172,10 +172,12 @@ mod tests {
 
     use geotrace_sdk::{Meta, NavFileBuilder};
     use gt_fmt::{NameFields, Token};
-    use gt_loaded_files::{FileHistory, ListRecordings, LoadedFiles};
+    use gt_loaded_files::{FileHistory, LoadedFiles};
+    use gt_session_bridge::{Inspection, InspectionRequest, ListRecordings, Reply};
     use gt_track_builder::SegmentationConfig;
     use rstest::rstest;
     use strum::IntoEnumIterator as _;
+    use uuid::Uuid;
 
     use super::{STRUCTURE_FIELDS, TOKEN_LIMIT_EXAMPLE_CHARS};
 
@@ -223,7 +225,14 @@ mod tests {
             ),
         );
 
-        let page = ListRecordings::new(None, NonZeroUsize::MIN).execute(files.view(), "{identity}");
+        let view = Inspection::new(files.view(), "{identity}", Uuid::nil());
+        let list = InspectionRequest::ListRecordings(ListRecordings {
+            after: None,
+            limit: Some(NonZeroUsize::MIN),
+        });
+        let Reply::Recordings { page } = view.execute(list).expect("recording page") else {
+            panic!("expected a recording page");
+        };
 
         let summary = page.recordings.first().expect("one recording");
         assert_eq!(summary.display_name, expected_name);

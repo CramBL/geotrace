@@ -3086,8 +3086,11 @@ version = "0.19.0"
 dependencies = [
  "chrono",
  "futures-util",
+ "geotrace-sdk",
+ "gt-fmt",
  "gt-history-types",
  "gt-loaded-files",
+ "gt-loader",
  "gt-query",
  "gt-query-run",
  "gt-test-utils",

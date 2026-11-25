@@ -4,7 +4,10 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta};
-use gt_loaded_files::{FileHistory, LoadedFiles};
+use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
+use gt_history_types::RecordingMeta;
+use gt_loaded_files::{FileHistory, LoadedFiles, MAX_RECORDINGS_PER_PAGE};
+use gt_loader::LoadedGtd;
 use gt_query::{ConstructKind, MetricSource, Span};
 use gt_test_utils::fixtures;
 use gt_types::PointIdx;
@@ -224,6 +227,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
                     filename: "receiver.gtd".to_owned(),
                     title: Some("Survey".to_owned()),
                     device: None,
+                    metadata_truncated: false,
                     time_range: None,
                     track_count: 0,
                 }],
@@ -430,6 +434,231 @@ fn metric_discovery_pages_channel_metadata_and_conflicts() {
     assert_eq!(dotted_name.name, "accel.x");
     assert_eq!(dotted_name.reference, None);
     assert_eq!(page.next_channel_start, None);
+}
+
+#[tokio::test]
+async fn a_recording_with_oversized_sdk_metadata_fits_in_a_single_entry_page() {
+    let text = format!("Grøn{JSON_CONTROL_CHARACTER}\"\\🛰").repeat(MAX_REPLY_BYTES / 8);
+    let mut files = LoadedFiles::new();
+    let LoadedGtd { file, identity } = self::load_recording_with_metadata(&text);
+    assert_eq!(file.metadata.title.as_deref(), Some(text.as_str()));
+    assert_eq!(file.metadata.device.as_deref(), Some(text.as_str()));
+    assert_eq!(identity, text);
+    let file_history = FileHistory::recording(identity, RecordingMeta::default(), None);
+    files.push(file, file_history);
+    let mut ordinary = gt_test_utils::loaded_file_with_tracks(Vec::new());
+    ordinary.metadata.filename = "morning.gtd".to_owned();
+    files.push(ordinary, FileHistory::None);
+
+    let view = Inspection::new(files.view(), IDENTITY_NAME_TEMPLATE, Uuid::nil());
+    let first = ListRecordings {
+        after: None,
+        limit: Some(NonZeroUsize::MIN),
+    };
+    let page = self::framed_recording_page(&view, first).await;
+    let [recording] = page.recordings.as_slice() else {
+        panic!("Expected one recording");
+    };
+    let recording_id = recording.id;
+    assert!(recording.metadata_truncated);
+    assert!(recording.display_name.starts_with("Grøn"));
+    assert!(text.starts_with(&recording.display_name));
+    assert!(recording.filename.starts_with("receiver-é"));
+    assert_eq!(
+        recording.title.as_deref(),
+        Some(recording.display_name.as_str())
+    );
+    assert_eq!(recording.device, recording.title);
+    assert_eq!(recording.track_count, 2);
+    assert_eq!(page.next_after, Some(recording_id));
+
+    let second = ListRecordings {
+        after: page.next_after,
+        ..first
+    };
+    let page = self::framed_recording_page(&view, second).await;
+    let [last] = page.recordings.as_slice() else {
+        panic!("Expected one more recording");
+    };
+    assert_ne!(last.id, recording_id);
+    assert_eq!(last.display_name, "morning.gtd");
+    assert!(!last.metadata_truncated);
+    assert_eq!(page.next_after, None);
+
+    let first = GetRecording {
+        recording: recording_id,
+        after: None,
+        limit: Some(NonZeroUsize::MIN),
+    };
+    let Reply::Recording { details } =
+        self::framed_inspection_reply(&view, InspectionRequest::GetRecording(first)).await
+    else {
+        panic!("Expected recording details");
+    };
+    assert_eq!(details.recording, *recording);
+    let [track] = details.tracks.as_slice() else {
+        panic!("Expected one track");
+    };
+    assert_eq!(track.recording, recording_id);
+    assert_eq!(track.index, 0);
+    assert_eq!(details.next_after, Some(*track));
+    let second = GetRecording {
+        after: details.next_after,
+        ..first
+    };
+    let Reply::Recording { details } =
+        self::framed_inspection_reply(&view, InspectionRequest::GetRecording(second)).await
+    else {
+        panic!("Expected the next track page");
+    };
+    assert_eq!(details.recording, *recording);
+    assert_eq!(details.tracks.first().unwrap().index, 1);
+    assert_eq!(details.next_after, None);
+}
+
+#[tokio::test]
+async fn display_names_use_the_original_fields_before_the_reply_budget() {
+    let padded_title = format!("{}Summit", " ".repeat(600));
+    let source_identity = "Ridge".repeat(200);
+    for (raw_title, template, expected_name, expected_truncation) in [
+        (None, "{filename}", "ridge.gtd", false),
+        (None, "{identity:4}", "Ridg…", false),
+        (Some(padded_title.as_str()), "{title}", "Summit", true),
+    ] {
+        let mut file = gt_test_utils::loaded_file_with_tracks(Vec::new());
+        file.metadata.filename = "ridge.gtd".to_owned();
+        file.metadata.title = raw_title.map(str::to_owned);
+        let mut files = LoadedFiles::new();
+        files.push(
+            file,
+            FileHistory::recording(source_identity.clone(), RecordingMeta::default(), None),
+        );
+        let view = Inspection::new(files.view(), template, Uuid::nil());
+        let page = self::framed_recording_page(
+            &view,
+            ListRecordings {
+                after: None,
+                limit: None,
+            },
+        )
+        .await;
+        let [recording] = page.recordings.as_slice() else {
+            panic!("Expected one recording");
+        };
+        assert_eq!(recording.display_name, expected_name);
+        assert_eq!(recording.metadata_truncated, expected_truncation);
+    }
+}
+
+#[tokio::test]
+async fn the_bridge_flags_a_truncated_rendered_name() {
+    let mut file = gt_test_utils::loaded_file_with_tracks(Vec::new());
+    file.metadata.filename = "morning.gtd".to_owned();
+    let mut files = LoadedFiles::new();
+    files.push(file, FileHistory::None);
+    let template = "{filename}".repeat(1024);
+    let view = Inspection::new(files.view(), &template, Uuid::nil());
+    let page = self::framed_recording_page(
+        &view,
+        ListRecordings {
+            after: None,
+            limit: None,
+        },
+    )
+    .await;
+    let [recording] = page.recordings.as_slice() else {
+        panic!("Expected one recording");
+    };
+    assert!(recording.metadata_truncated);
+    assert_eq!(recording.filename, "morning.gtd");
+    assert!(recording.display_name.starts_with("morning.gtd"));
+    assert!(recording.display_name.len() < "morning.gtd".len() * 1024);
+}
+
+#[tokio::test]
+async fn a_full_recording_page_with_escaped_metadata_fits_the_frame() {
+    let metadata = format!("{JSON_CONTROL_CHARACTER}\"é📍").repeat(300);
+    let mut file = gt_test_utils::segmented_recording(1);
+    file.metadata.filename = format!("C:\\private\\receiver-{metadata}");
+    file.metadata.title = Some(metadata.clone());
+    file.metadata.device = Some(metadata);
+    let identity = format!("auto:{}", file.metadata.filename);
+    let mut files = LoadedFiles::new();
+    for _ in 0..=MAX_RECORDINGS_PER_PAGE {
+        files.push(
+            file.clone(),
+            FileHistory::recording(identity.clone(), RecordingMeta::default(), None),
+        );
+    }
+    let view = Inspection::new(files.view(), IDENTITY_NAME_TEMPLATE, Uuid::nil());
+    let page = self::framed_recording_page(
+        &view,
+        ListRecordings {
+            after: None,
+            limit: None,
+        },
+    )
+    .await;
+    assert_eq!(page.recordings.len(), MAX_RECORDINGS_PER_PAGE);
+    assert_eq!(
+        page.next_after,
+        page.recordings.last().map(|recording| recording.id)
+    );
+    assert!(page.recordings.iter().all(|recording| {
+        recording.metadata_truncated
+            && recording.display_name == recording.filename
+            && recording.display_name.starts_with("receiver-")
+    }));
+}
+
+async fn framed_recording_page(view: &Inspection<'_>, request: ListRecordings) -> Recordings {
+    match self::framed_inspection_reply(view, InspectionRequest::ListRecordings(request)).await {
+        Reply::Recordings { page } => page,
+        reply => panic!("Expected a recording page, received {reply:?}"),
+    }
+}
+
+async fn framed_inspection_reply(view: &Inspection<'_>, request: InspectionRequest) -> Reply {
+    let reply = view.execute(request).unwrap();
+    let mut bytes = Vec::new();
+    Frame::encode(&reply, MAX_REPLY_BYTES)
+        .unwrap()
+        .write(&mut bytes)
+        .await
+        .unwrap();
+    framing::read(&mut bytes.as_slice(), MAX_REPLY_BYTES)
+        .await
+        .unwrap()
+}
+
+fn load_recording_with_metadata(text: &str) -> LoadedGtd {
+    let mut recorder = NavFileBuilder::new()
+        .with_title(text)
+        .unwrap()
+        .with_device(text)
+        .unwrap()
+        .with_identity(text)
+        .unwrap()
+        .open();
+    for offset in [TimeDelta::zero(), TimeDelta::hours(1)] {
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(NavFixTime::Receiver(DateTime::UNIX_EPOCH + offset))
+                .lat(Angle::degrees(55.7))
+                .lon(Angle::degrees(12.6))
+                .build(),
+        );
+    }
+    let mut bytes = Vec::new();
+    recorder.finish().unwrap().write(&mut bytes).unwrap();
+    let name_fragment = format!("é{JSON_CONTROL_CHARACTER}\"📍").repeat(1024);
+    gt_loader::load_gtd_bytes_with_progress(
+        &bytes,
+        format!("/private/recordings/receiver-{name_fragment}.gtd"),
+        |_, _| {},
+        &Default::default(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -879,3 +1108,5 @@ const EMPTY_RECORDINGS: Reply = Reply::Recordings {
 
 const BRIDGE_TEST_TIMEOUT: Duration = Duration::from_secs(1);
 const FRAME_TEST_LIMIT: u8 = 32;
+const IDENTITY_NAME_TEMPLATE: &str = "{identity}";
+const JSON_CONTROL_CHARACTER: char = '\x01';

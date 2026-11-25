@@ -71,8 +71,8 @@ impl<'a> Inspection<'a> {
             .map(|reference| reference.number_in(self.session))
             .transpose()?;
         let page = ListLoadedRecordings::new(after, limit.unwrap_or(NonZeroUsize::MAX))
-            .execute(self.files, self.name_template);
-        Ok(Recordings::new(page, self.session))
+            .execute(self.files);
+        Ok(Recordings::new(&page, self.session, self.name_template))
     }
 
     fn recording_details(
@@ -113,8 +113,9 @@ impl<'a> Inspection<'a> {
         };
         Ok(RecordingDetails {
             recording: Recording::new(
-                RecordingSummary::new(entry, self.name_template),
+                &RecordingSummary::new(entry),
                 self.session,
+                self.name_template,
             ),
             tracks,
             next_after,
