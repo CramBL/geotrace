@@ -7,14 +7,47 @@ use std::time::{Duration, Instant};
 use chrono::DateTime;
 use gt_pending_writes::PendingWrites;
 use gt_store::{
-    DatabaseRef, HistoryDatabase as _, RecordingEntry, Recordings, RecordingsHandle,
-    StoredFixPlacementRule, StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
+    DatabaseRef, HistoryAccess, HistoryDatabase as _, ReadOnlyRecordings, RecordingEntry,
+    RecordingUiState, Recordings, RecordingsHandle, StoredFixPlacementRule, StoredRecording,
+    StoredSegmentation, StoredTrackSnapshot, StoredTrackSplitRule, TrackRange, TrackState,
 };
 use gt_test_utils::SyntheticGtdSpec;
+use gt_test_utils::history_fixtures::StoredTrackTableFixture;
 
 use crate::app::App;
 use crate::app::association_batches::AssociationSubmission;
-use crate::app::history_db::{HistoryWorker, Response};
+use crate::app::history_db::{HistoryWorker, OpenedRecording, Response};
+
+pub fn track_snapshot(path: &Path, recording: &DatabaseRef) -> StoredTrackSnapshot {
+    let access = HistoryAccess::lock();
+    let db = ReadOnlyRecordings::open_existing_read_only(path).expect("open history");
+    access
+        .read_track_snapshot(&db, recording)
+        .expect("read stored track table")
+}
+
+pub fn worker_track_snapshot(
+    worker: &HistoryWorker,
+    recording: &DatabaseRef,
+) -> StoredTrackSnapshot {
+    track_snapshot(worker.path().expect("history path"), recording)
+}
+
+pub fn synthetic_track_snapshot(
+    recording: &DatabaseRef,
+    rows: &[TrackRange],
+) -> StoredTrackSnapshot {
+    let fixture = StoredTrackTableFixture::new(recording, rows);
+    track_snapshot(&fixture.path(), recording)
+}
+
+pub fn opened_recording(recording: &DatabaseRef, stored: StoredRecording) -> OpenedRecording {
+    OpenedRecording {
+        track_snapshot: synthetic_track_snapshot(recording, &stored.tracks),
+        stored,
+        ui_state: Ok(RecordingUiState::default()),
+    }
+}
 
 impl App {
     pub(in crate::app) fn recording_submission_for_test(&mut self) -> AssociationSubmission {

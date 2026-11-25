@@ -95,12 +95,13 @@ impl OversizedAppWindow {
                 ));
             }
             Self::TrackSettingsDiffer => {
+                let db_ref = gt_store::DatabaseRef {
+                    identity: long.clone(),
+                    group_name: long.clone(),
+                };
                 app.pending_resegment = Some(crate::app::ResegmentPrompt {
                     origin: RecordingOperationOrigin::Independent,
-                    db_ref: gt_store::DatabaseRef {
-                        identity: long.clone(),
-                        group_name: long.clone(),
-                    },
+                    db_ref: db_ref.clone(),
                     filename: long,
                     bytes: std::sync::Arc::from(Vec::<u8>::new()),
                     stored: gt_store::StoredSegmentation {
@@ -111,7 +112,7 @@ impl OversizedAppWindow {
                         detect_clock_discontinuities: false,
                         clock_discontinuity_sigmas: 4.0,
                     },
-                    stored_tracks: Vec::new(),
+                    track_snapshot: test_util::recordings::synthetic_track_snapshot(&db_ref, &[]),
                     marker_settings_changed: false,
                     mode: crate::app::loader::GtdLoadMode::Regular,
                     placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,

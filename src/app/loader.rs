@@ -8,12 +8,15 @@ use std::{
 use chrono::{DateTime, Duration, Utc};
 use egui::Context;
 use gt_loaded_files::FileHistory;
+use gt_loader::StoredGtdBytes;
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog, YearResolution};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{
-    AttachedLog, DatabaseRef, StoredFixPlacementRule, StoredLogSettings, StoredTrackSplitRule,
+    AttachedLog, DatabaseRef, HistoryAccess, ReadOnlyRecordings, RecordingInsert,
+    StoredFixPlacementRule, StoredLogSettings, StoredRecording, StoredTrackSnapshot,
+    StoredTrackSplitRule, TrackRange, TrackState,
 };
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
@@ -220,8 +223,7 @@ pub(super) enum HistoryOpen {
     /// track by the stored row from which it was reproduced, and leave the
     /// shelved ones out. The stored table is left unchanged.
     ApplyShelved {
-        db_ref: gt_store::DatabaseRef,
-        stored_tracks: Vec<gt_store::TrackRange>,
+        track_table: OpenTrackTable,
         applied_current_marker_settings: bool,
         placement: LoadedRecordingPlacement,
     },
@@ -229,10 +231,27 @@ pub(super) enum HistoryOpen {
     /// a fresh segmentation under the load config (recalculation), which makes
     /// every track of the new table live.
     Recalculate {
-        db_ref: gt_store::DatabaseRef,
+        snapshot: StoredTrackSnapshot,
         applied_current_marker_settings: bool,
         placement: LoadedRecordingPlacement,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum OpenTrackTable {
+    DiskMatch {
+        database_path: PathBuf,
+        snapshot: StoredTrackSnapshot,
+    },
+    Stored(StoredTrackSnapshot),
+}
+
+impl OpenTrackTable {
+    fn snapshot(&self) -> &StoredTrackSnapshot {
+        match self {
+            Self::DiskMatch { snapshot, .. } | Self::Stored(snapshot) => snapshot,
+        }
+    }
 }
 
 impl HistoryOpen {
@@ -251,7 +270,8 @@ impl HistoryOpen {
 
     fn db_ref(&self) -> &gt_store::DatabaseRef {
         match self {
-            Self::ApplyShelved { db_ref, .. } | Self::Recalculate { db_ref, .. } => db_ref,
+            Self::ApplyShelved { track_table, .. } => track_table.snapshot().recording(),
+            Self::Recalculate { snapshot, .. } => snapshot.recording(),
         }
     }
 
@@ -425,33 +445,26 @@ impl LoadJobs {
                 .ok();
                 r_ctx.request_repaint();
             };
-            let loaded = match mode.time_repair_config() {
-                Some(time_repair) => gt_loader::load_gtd_file_with_debug_time_repair_progress(
-                    &path,
-                    report,
-                    &config,
-                    time_repair,
-                ),
-                None => gt_loader::load_gtd_file_with_progress(&path, report, &config),
-            };
+            report(0.05, STAGE_READING);
+            let loaded = std::fs::read(&path)
+                .map_err(gt_loader::LoadError::from)
+                .and_then(|bytes| {
+                    gt_loader::load_gtd_path_contents(
+                        &bytes,
+                        &path,
+                        filename,
+                        report,
+                        &config,
+                        mode.time_repair_config(),
+                    )
+                    .map(|loaded| (loaded, bytes))
+                });
             let outcome = loaded
-                .map(|loaded| {
-                    // Read the bytes once for both the content fingerprint
-                    // and the optional history insert.
-                    let bytes = match std::fs::read(&path) {
-                        Ok(bytes) => Some(bytes),
-                        Err(e) => {
-                            log::warn!(
-                                "Could not reread '{log_name}' for history storage from {}: {e}",
-                                path.display()
-                            );
-                            None
-                        }
-                    };
+                .map(|(loaded, bytes)| {
                     ParsedRecording {
                         loaded,
                         db_path: db_path.as_deref(),
-                        bytes: bytes.as_deref(),
+                        bytes: &bytes,
                         config: &config,
                         filename: &log_name,
                         pending_writes: &pending_writes,
@@ -555,7 +568,7 @@ impl LoadJobs {
                     ParsedRecording {
                         loaded,
                         db_path: db_path.as_deref(),
-                        bytes: Some(&bytes),
+                        bytes: &bytes,
                         config: &config,
                         filename: &log_name,
                         pending_writes: &pending_writes,
@@ -1091,6 +1104,16 @@ fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
         .collect()
 }
 
+fn track_rows_match(file: &LoadedFile, rows: &[TrackRange]) -> bool {
+    let loaded = track_ranges_from_file(file);
+    let mut stored = rows.iter().filter(|row| row.state != TrackState::Deleted);
+    loaded.iter().all(|loaded| {
+        stored
+            .next()
+            .is_some_and(|stored| loaded.start == stored.start && loaded.end == stored.end)
+    }) && stored.next().is_none()
+}
+
 /// Apply a recording's stored track table to the file just segmented from its
 /// nav points, when it is opened from history. Recomputes the recording's
 /// figures over the tracks that stay, and returns how many are shelved.
@@ -1138,12 +1161,12 @@ fn apply_stored_track_table(
 /// attempted a writable open of History.
 fn recalculate_stored_tracks(
     db_path: &std::path::Path,
-    db_ref: &gt_store::DatabaseRef,
+    expected: &StoredTrackSnapshot,
     file: &LoadedFile,
     config: &SegmentationConfig,
     filename: &str,
     pending_writes: &PendingWrites,
-) -> bool {
+) -> TrackRecalculation {
     use gt_store::HistoryDatabase;
     let _write = match pending_writes.try_begin(
         format!("Recalculating the stored tracks of {filename}"),
@@ -1152,28 +1175,39 @@ fn recalculate_stored_tracks(
         Ok(write) => write,
         Err(rejection) => {
             log::debug!("Not recalculating the stored tracks of '{filename}': {rejection}");
-            return false;
+            return TrackRecalculation::Skipped;
         }
     };
     let tracks = track_ranges_from_file(file);
     let settings = stored_segmentation_from_config(config);
-    match gt_store::Recordings::open_or_create(db_path) {
-        Ok(mut db) => match db.set_tracks(db_ref, &tracks, settings) {
-            Ok(()) => log::info!(
+    let access = HistoryAccess::lock();
+    let db_ref = expected.recording();
+    let result = gt_store::Recordings::open_or_create(db_path)
+        .and_then(|mut db| access.replace_track_layout(&mut db, expected, tracks, settings));
+    match result {
+        Ok(snapshot) => {
+            log::info!(
                 "Recalculated stored tracks for {}/{} ({} track(s))",
                 db_ref.identity,
                 db_ref.group_name,
-                tracks.len()
-            ),
-            Err(e) => log::warn!(
+                snapshot.rows().len()
+            );
+            TrackRecalculation::Attempted(Some(snapshot))
+        }
+        Err(e) => {
+            log::warn!(
                 "Failed to recalculate stored tracks for {}/{}: {e}",
                 db_ref.identity,
                 db_ref.group_name
-            ),
-        },
-        Err(e) => log::warn!("Could not open history database to recalculate tracks: {e}"),
+            );
+            TrackRecalculation::Attempted(None)
+        }
     }
-    true
+}
+
+enum TrackRecalculation {
+    Attempted(Option<StoredTrackSnapshot>),
+    Skipped,
 }
 
 /// One parsed recording on its load thread, with everything the thread needs
@@ -1182,9 +1216,7 @@ struct ParsedRecording<'a> {
     loaded: gt_loader::LoadedGtd,
     /// `None` when storage is unavailable: nothing is stored then.
     db_path: Option<&'a std::path::Path>,
-    /// The `.gtd` bytes as they were read, `None` where the load thread could
-    /// not read them.
-    bytes: Option<&'a [u8]>,
+    bytes: &'a [u8],
     config: &'a SegmentationConfig,
     filename: &'a str,
     pending_writes: &'a PendingWrites,
@@ -1212,56 +1244,100 @@ impl ParsedRecording<'_> {
             mode,
         } = self;
         let mut file = loaded.file;
-        let meta = match bytes.map(gt_store::extract_meta) {
-            Some(Ok(mut meta)) => {
+        let meta = match gt_store::extract_meta(bytes) {
+            Ok(mut meta) => {
                 meta.debug_tag = mode.debug_tag();
                 Some(meta)
             }
-            Some(Err(e)) => {
+            Err(e) => {
                 log::warn!("Could not extract history metadata from '{filename}': {e}");
                 None
             }
-            None => None,
         };
         log::debug!("Parsed '{filename}': {} track(s)", file.tracks.len());
         // Store first (de-duplicates against the existing recording, keeping
         // its stored track table) while the freshly segmented tracks are still
         // in stored order.
-        let insertion = HistoryInsert {
-            db_path,
-            file: &file,
-            identity: &loaded.identity,
-            meta: meta.as_ref(),
-            config,
-            bytes,
-            filename,
-            pending_writes,
-        }
-        .store();
-        let (stored_db_ref, mut history_write_attempted) = match insertion {
-            HistoryInsertOutcome::Attempted(db_ref) => (db_ref, true),
-            HistoryInsertOutcome::Skipped => (None, false),
+        let insertion = match &open {
+            Some(
+                HistoryOpen::Recalculate { .. }
+                | HistoryOpen::ApplyShelved {
+                    track_table: OpenTrackTable::Stored(_),
+                    ..
+                },
+            ) => HistoryInsertOutcome::Skipped,
+            _ => HistoryInsert {
+                db_path,
+                file: &file,
+                identity: &loaded.identity,
+                meta: meta.as_ref(),
+                config,
+                bytes,
+                filename,
+                pending_writes,
+            }
+            .store(),
+        };
+        let (stored_db_ref, inserted_snapshot, mut history_write_attempted) = match insertion {
+            HistoryInsertOutcome::Attempted(recording) => (
+                recording.as_ref().map(|stored| stored.recording.clone()),
+                recording.and_then(|stored| stored.snapshot),
+                true,
+            ),
+            HistoryInsertOutcome::Skipped => (None, None, false),
         };
         let db_ref = stored_db_ref.or_else(|| open.as_ref().map(HistoryOpen::db_ref).cloned());
         let mut shelved_tracks = 0;
-        match &open {
-            Some(HistoryOpen::Recalculate { db_ref, .. }) => {
-                if let Some(path) = db_path {
-                    history_write_attempted |= recalculate_stored_tracks(
+        let track_snapshot = match &open {
+            Some(HistoryOpen::Recalculate { snapshot, .. }) => {
+                match db_path.map_or(TrackRecalculation::Skipped, |path| {
+                    recalculate_stored_tracks(
                         path,
-                        db_ref,
+                        snapshot,
                         &file,
                         config,
                         filename,
                         pending_writes,
-                    );
+                    )
+                }) {
+                    TrackRecalculation::Attempted(snapshot) => {
+                        history_write_attempted = true;
+                        snapshot
+                    }
+                    TrackRecalculation::Skipped => None,
                 }
             }
-            Some(HistoryOpen::ApplyShelved { stored_tracks, .. }) => {
-                shelved_tracks = apply_stored_track_table(&mut file, stored_tracks);
+            Some(HistoryOpen::ApplyShelved { track_table, .. }) => {
+                let snapshot = match track_table {
+                    OpenTrackTable::Stored(snapshot) => Some(snapshot.clone()),
+                    OpenTrackTable::DiskMatch {
+                        database_path,
+                        snapshot: screened,
+                    } => {
+                        let observed = if history_write_attempted {
+                            inserted_snapshot
+                        } else {
+                            observe_read_only_recording(database_path, screened.recording(), bytes)
+                        };
+                        observed.filter(|snapshot| {
+                            screened.same_observation(snapshot) && snapshot.is_current()
+                        })
+                    }
+                }
+                .filter(|snapshot| track_rows_match(&file, snapshot.rows()));
+                if let Some(snapshot) = &snapshot {
+                    shelved_tracks = apply_stored_track_table(&mut file, snapshot.rows());
+                }
+                snapshot
             }
-            None => {}
-        }
+            None => inserted_snapshot.filter(|snapshot| {
+                snapshot
+                    .rows()
+                    .iter()
+                    .all(|row| row.state != TrackState::Deleted)
+                    && track_rows_match(&file, snapshot.rows())
+            }),
+        };
         // Build the plot series after any shelved track is dropped, so the
         // series matches the tracks the view holds.
         report_plotting();
@@ -1273,6 +1349,7 @@ impl ParsedRecording<'_> {
                 db_ref,
                 shelved_tracks,
             )
+            .with_track_snapshot(track_snapshot)
         });
         LoadedRecordingResult {
             file,
@@ -1297,21 +1374,25 @@ struct HistoryInsert<'a> {
     identity: &'a str,
     meta: Option<&'a gt_store::RecordingMeta>,
     config: &'a SegmentationConfig,
-    /// The `.gtd` bytes as they were read, stored alongside the recording.
-    bytes: Option<&'a [u8]>,
+    bytes: &'a [u8],
     filename: &'a str,
     pending_writes: &'a PendingWrites,
 }
 
 enum HistoryInsertOutcome {
     /// The backend can repair recordings during a writable open.
-    Attempted(Option<DatabaseRef>),
+    Attempted(Option<InsertedRecording>),
     Skipped,
+}
+
+struct InsertedRecording {
+    recording: DatabaseRef,
+    snapshot: Option<StoredTrackSnapshot>,
 }
 
 impl HistoryInsert<'_> {
     fn store(self) -> HistoryInsertOutcome {
-        use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase};
+        use gt_store::HistoryDatabase as _;
 
         let Self {
             db_path,
@@ -1328,7 +1409,7 @@ impl HistoryInsert<'_> {
             log::debug!("Storage disabled; not storing '{filename}' in history");
             return HistoryInsertOutcome::Skipped;
         };
-        let (Some(meta), Some(bytes)) = (meta, bytes) else {
+        let Some(meta) = meta else {
             log::warn!("No recording metadata for '{filename}'; not storing in history");
             return HistoryInsertOutcome::Skipped;
         };
@@ -1367,43 +1448,79 @@ impl HistoryInsert<'_> {
             meta.nav_point_count,
             tracks.len()
         );
-        let db_ref = match db.insert(identity, meta, &tracks, settings, bytes) {
-            Ok(db_ref) => {
-                match db.contains(&db_ref) {
-                    Ok(true) => {
-                        log::info!(
-                            "Stored '{filename}' in history as identity={:?}, group={:?} ({} track(s))",
-                            db_ref.identity,
-                            db_ref.group_name,
-                            tracks.len()
-                        );
-                    }
-                    Ok(false) => {
-                        log::error!(
-                            "Stored '{filename}' in history as identity={:?}, group={:?}, but the database has no such group",
-                            db_ref.identity,
-                            db_ref.group_name
-                        );
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Stored '{filename}' in history as identity={:?}, group={:?}, but reading the database back for it failed: {e}",
-                            db_ref.identity,
-                            db_ref.group_name
-                        );
-                    }
+        let access = HistoryAccess::lock();
+        let (recording, snapshot, stored) = match db
+            .insert_with_outcome(identity, meta, &tracks, settings, bytes)
+        {
+            Ok(RecordingInsert::Created(recording)) => {
+                let snapshot = access.read_track_snapshot(&db, &recording);
+                (recording, snapshot, None)
+            }
+            Ok(RecordingInsert::Existing(recording)) => {
+                match access.load_recording_with_snapshot(&db, &recording) {
+                    Ok((stored, snapshot)) => (recording, Ok(snapshot), Some(stored)),
+                    Err(error) => (recording, Err(error), None),
                 }
-                Some(db_ref)
             }
             Err(e) => {
                 log::warn!(
                     "Failed to store '{filename}' in history at {} with identity={identity:?}: {e}",
                     path.display()
                 );
+                return HistoryInsertOutcome::Attempted(None);
+            }
+        };
+        drop(access);
+        let snapshot = match (snapshot, stored) {
+            (Ok(snapshot), Some(stored)) => verify_disk_payload(bytes, (stored, snapshot)),
+            (Ok(snapshot), None) => Some(snapshot),
+            (Err(error), _) => {
+                log::warn!(
+                    "Could not read the stored recording at {recording} after importing '{filename}': {error}"
+                );
                 None
             }
         };
-        HistoryInsertOutcome::Attempted(db_ref)
+        let recording = Some(InsertedRecording {
+            recording,
+            snapshot,
+        });
+        HistoryInsertOutcome::Attempted(recording)
+    }
+}
+
+fn observe_read_only_recording(
+    path: &std::path::Path,
+    recording: &DatabaseRef,
+    bytes: &[u8],
+) -> Option<StoredTrackSnapshot> {
+    let access = HistoryAccess::lock();
+    let observation = ReadOnlyRecordings::open_existing_read_only(path)
+        .and_then(|db| access.load_recording_with_snapshot(&db, recording));
+    drop(access);
+    match observation {
+        Ok(observation) => verify_disk_payload(bytes, observation),
+        Err(error) => {
+            log::warn!("Could not read the stored recording at {recording}: {error}");
+            None
+        }
+    }
+}
+
+fn verify_disk_payload(
+    bytes: &[u8],
+    (stored, snapshot): (StoredRecording, StoredTrackSnapshot),
+) -> Option<StoredTrackSnapshot> {
+    match gt_loader::same_recorded_payload(bytes, StoredGtdBytes(&stored.bytes)) {
+        Ok(true) => Some(snapshot),
+        Ok(false) => None,
+        Err(error) => {
+            log::warn!(
+                "Could not compare the imported recording with {}: {error}",
+                snapshot.recording()
+            );
+            None
+        }
     }
 }
 
@@ -1883,8 +2000,12 @@ mod tests {
                     SegmentationConfig::default(),
                     GtdLoadMode::Regular,
                     Some(HistoryOpen::ApplyShelved {
-                        db_ref: FAILING_ATTACHMENT.recording.clone(),
-                        stored_tracks: Vec::new(),
+                        track_table: OpenTrackTable::Stored(
+                            crate::app::test_util::recordings::synthetic_track_snapshot(
+                                &FAILING_ATTACHMENT.recording,
+                                &[],
+                            ),
+                        ),
                         applied_current_marker_settings: false,
                         placement: LoadedRecordingPlacement::ReplaceTheLoadedEntry,
                     }),
@@ -2233,9 +2354,10 @@ mod tests {
             ..SegmentationConfig::default()
         };
 
+        let snapshot = crate::app::test_util::recordings::track_snapshot(&db_path, &db_ref);
         recalculate_stored_tracks(
             &db_path,
-            &db_ref,
+            &snapshot,
             &file,
             &config,
             "sample.gtd",
@@ -2262,9 +2384,10 @@ mod tests {
         let pending_writes = PendingWrites::default();
         pending_writes.begin_shutdown();
 
+        let snapshot = crate::app::test_util::recordings::track_snapshot(&db_path, &db_ref);
         recalculate_stored_tracks(
             &db_path,
-            &db_ref,
+            &snapshot,
             &file,
             &config,
             "sample.gtd",

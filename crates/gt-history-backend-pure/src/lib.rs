@@ -7,9 +7,9 @@ use gt_history_types::{
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
     GTD_META_TRAVEL_MODE_ATTR, HISTORY_LOCK as DB_LOCK, HistoryAccess, HistoryDatabase,
     LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
-    ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState,
-    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, TrackState,
-    UiStateVersionReporter,
+    ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingInsert, RecordingMeta,
+    RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
+    TrackState, UiStateVersionReporter,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -283,14 +283,14 @@ impl HistoryDatabase for PureDb {
         Ok(())
     }
 
-    fn insert(
+    fn insert_with_outcome(
         &mut self,
         identity: &str,
         meta: &RecordingMeta,
         tracks: &[TrackRange],
         settings: StoredSegmentation,
         gtd_bytes: &[u8],
-    ) -> Result<DatabaseRef, DbError> {
+    ) -> Result<RecordingInsert, DbError> {
         let _guard = DB_LOCK.lock();
         copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
             .map_err(Into::into)

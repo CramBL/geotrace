@@ -1,4 +1,5 @@
 use egui_kittest::kittest::Queryable as _;
+use gt_test_utils::HarnessInteraction as _;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 
 use crate::app::ui_tests;
@@ -32,7 +33,10 @@ fn plot_legend_follows_the_recording_name_template() {
 /// way every other surface does.
 #[test]
 fn shelve_confirmation_follows_the_recording_name_template() {
-    let mut harness = ui_tests::harness_with_three_files_loaded();
+    let (mut harness, _dir, recording) =
+        super::shelved_tracks::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    harness.state().history.open(recording);
+    assert!(harness.step_until(|harness| !harness.state().shared.borrow().loaded_files.is_empty()));
     {
         let mut shared = harness.state_mut().shared.borrow_mut();
         shared.recording_name_template = "Rec: {filename}".to_owned();
@@ -46,5 +50,5 @@ fn shelve_confirmation_follows_the_recording_name_template() {
     }
     harness.run_steps(3);
 
-    harness.get_by_label_contains("Rec: overlap_a.gtd / #1");
+    harness.get_by_label_contains("Rec: dev / #1");
 }

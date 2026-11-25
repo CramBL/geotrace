@@ -1263,21 +1263,15 @@ impl App {
                 modals::show_shelve_confirmation(
                     ui,
                     &mut s.tree,
-                    &mut s.loaded_files,
+                    &s.loaded_files,
                     recording_names,
                     logs,
                 )
             });
-            let outcome = outcome.flatten();
-            if outcome.is_some() {
-                s.plot_state.rebuild_all(&s.loaded_files);
-            }
-            outcome
+            outcome.flatten()
         };
         if let Some(outcome) = shelve_outcome {
-            self.unload_logs_and_forget_attachments_of(&outcome.removed_recordings);
-            self.on_track_indices_changed();
-            self.apply_shelve_outcome(&outcome);
+            self.apply_shelve_outcome(outcome);
         }
     }
 }

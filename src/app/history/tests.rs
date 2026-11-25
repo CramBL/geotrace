@@ -2869,8 +2869,11 @@ fn responsive_columns_preserve_identity_and_header_row_alignment(
     let recording = entry.db_ref.clone();
     let mut harness = history_harness(vec![entry]);
     harness.window.shelf = Some(OpenShelf {
+        tracks: ShelfTracks::Read(recordings::synthetic_track_snapshot(
+            &recording,
+            &one_live_a_tombstone_and_two_shelved_tracks(),
+        )),
         recording,
-        tracks: ShelfTracks::Read(one_live_a_tombstone_and_two_shelved_tracks()),
     });
     let mut h = TestHarness::builder()
         .size(egui::vec2(viewport_width, 700.0))
@@ -3041,8 +3044,11 @@ fn compact_shelf_actions_preserve_read_only_recovery_and_delete_controls() {
     let mut harness = history_harness(vec![entry]);
     harness.write_access = WriteAccess::ReadOnly;
     harness.window.shelf = Some(OpenShelf {
+        tracks: ShelfTracks::Read(recordings::synthetic_track_snapshot(
+            &recording,
+            &one_live_a_tombstone_and_two_shelved_tracks(),
+        )),
         recording,
-        tracks: ShelfTracks::Read(one_live_a_tombstone_and_two_shelved_tracks()),
     });
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 700.0))

@@ -233,18 +233,26 @@ impl<'a> PanelContext<'a> {
         self.loaded_files.file_stored_in_history(file)
     }
 
-    /// The hover text that grays out a shelve control over the tracks of
-    /// `files`, and `None` while the control acts. A read-only session grays
-    /// every shelve control out, as does a set of files that all sit outside
-    /// the recording history.
-    fn shelve_unavailable_hover(&self, mut files: impl Iterator<Item = FileIdx>) -> Option<&str> {
+    fn shelve_unavailable_hover(&self, files: impl Iterator<Item = FileIdx>) -> Option<&str> {
         if let Some(read_only) = self.read_only_recording_history_hover {
-            Some(read_only)
-        } else if files.any(|file| self.file_stored_in_history(file)) {
-            None
-        } else {
-            Some(ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER)
+            return Some(read_only);
         }
+        let mut has_stored_recording = false;
+        for entry in files.filter_map(|file| self.loaded_files.entry_for(file)) {
+            let history = entry.history();
+            if history
+                .track_snapshot()
+                .is_some_and(|snapshot| snapshot.is_current())
+            {
+                return None;
+            }
+            has_stored_recording |= history.is_stored();
+        }
+        Some(if has_stored_recording {
+            STALE_STORED_TRACKS_HOVER
+        } else {
+            ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER
+        })
     }
 
     /// The recording identity for a file, or `None` if it has none. Used by the
@@ -2108,18 +2116,19 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
     Some((lat.as_degrees(), lon.as_degrees()))
 }
 
-/// Label of the button that shelves every track that the filter excludes,
+/// Label of the button that shelves stored tracks excluded by the filter,
 /// without the icon before it or the `…` suffix after it.
 pub const SHELVE_FILTERED_DATA_LABEL: &str = "Shelve filtered data";
 
-const SHELVE_FILTERED_DATA_HOVER: &str = "Takes every track that the filter excludes out of the \
-                                          view and shelves it in the recording history";
+const SHELVE_FILTERED_DATA_HOVER: &str =
+    "Shelves stored tracks excluded by the filter and takes them out of the view";
 
 /// Hover text of the shelve button while the filter excludes nothing.
 pub const EVERY_TRACK_PASSES_THE_FILTER_HOVER: &str = "Every loaded track passes the filter";
 
-/// Hover text of every shelve control while the tracks it would act on sit
-/// outside the recording history.
+pub const STALE_STORED_TRACKS_HOVER: &str =
+    "Open the recording from History to use its current stored tracks";
+
 pub const ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER: &str =
     "Only a track stored in the recording history can be shelved";
 
@@ -2130,9 +2139,8 @@ const SHELVE_TRACK_HOVER: &str = "Shelves this track in the recording history an
 
 pub const SHELVE_SELECTED_TRACKS_LABEL: &str = "Shelve selected…";
 
-const SHELVE_SELECTED_TRACKS_HOVER: &str = "Shelves the selected tracks in the recording \
-                                            history and takes them out of the view. Opening a \
-                                            recording again leaves its shelved tracks shelved.";
+const SHELVE_SELECTED_TRACKS_HOVER: &str =
+    "Shelves selected tracks from History and takes them out of the view";
 
 const PROGRESS_BAR_HEIGHT: f32 = 4.0;
 

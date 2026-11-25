@@ -1,7 +1,8 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::ops::{Deref, Index, IndexMut};
 
-use gt_history_types::{DatabaseRef, RecordingMeta};
+use gt_history_types::{DatabaseRef, RecordingMeta, StoredTrackSnapshot, TrackState};
 use gt_types::{
     AddressedFix, FileIdx, FixRef, Generation, LoadedFile, LoadedTrack, NavPoint, PointIdx,
     TrackIdx, TrackRef, Versionable, Versioned,
@@ -55,6 +56,7 @@ pub enum FileHistory {
         identity: String,
         meta: RecordingMeta,
         db_ref: Option<DatabaseRef>,
+        track_snapshot: Option<Box<StoredTrackSnapshot>>,
         /// How many of the recording's stored tracks are shelved. The open
         /// from history leaves those tracks out of the [`LoadedFile`], and a
         /// recording loaded from disk has none.
@@ -62,14 +64,14 @@ pub enum FileHistory {
     },
 }
 
+pub struct StoredTrackSnapshotUpdate {
+    pub before: StoredTrackSnapshot,
+    pub after: StoredTrackSnapshot,
+}
+
 impl FileHistory {
     pub fn recording(identity: String, meta: RecordingMeta, db_ref: Option<DatabaseRef>) -> Self {
-        Self::Recording {
-            identity,
-            meta,
-            db_ref,
-            shelved_tracks: 0,
-        }
+        Self::recording_with_shelved_tracks(identity, meta, db_ref, 0)
     }
 
     pub fn recording_with_shelved_tracks(
@@ -82,8 +84,23 @@ impl FileHistory {
             identity,
             meta,
             db_ref,
+            track_snapshot: None,
             shelved_tracks,
         }
+    }
+
+    pub fn with_track_snapshot(mut self, snapshot: Option<StoredTrackSnapshot>) -> Self {
+        if let Self::Recording {
+            db_ref,
+            track_snapshot,
+            ..
+        } = &mut self
+        {
+            *track_snapshot = snapshot
+                .filter(|snapshot| Some(snapshot.recording()) == db_ref.as_ref())
+                .map(Box::new);
+        }
+        self
     }
 
     pub fn is_stored(&self) -> bool {
@@ -109,6 +126,13 @@ impl FileHistory {
     pub fn meta(&self) -> Option<RecordingMeta> {
         match self {
             Self::Recording { meta, .. } => Some(*meta),
+            Self::None => None,
+        }
+    }
+
+    pub fn track_snapshot(&self) -> Option<&StoredTrackSnapshot> {
+        match self {
+            Self::Recording { track_snapshot, .. } => track_snapshot.as_deref(),
             Self::None => None,
         }
     }
@@ -452,13 +476,84 @@ impl LoadedFiles {
         debug_assert_eq!(storage.files().len(), storage.ids.len());
     }
 
+    /// `resegment` partitions the file's existing fixes in their original order.
+    pub fn resegment_files(
+        &mut self,
+        mut resegment: impl FnMut(&LoadedFile) -> Option<LoadedFile>,
+    ) {
+        let IndexAlignedFiles { files, history, .. } = self.storage.get_mut();
+        for (file, history) in files.get_mut().0.iter_mut().zip(history) {
+            let Some(resegmented) = resegment(file) else {
+                continue;
+            };
+            let same_rows = file.tracks.len() == resegmented.tracks.len()
+                && file
+                    .tracks
+                    .iter()
+                    .zip(&resegmented.tracks)
+                    .all(|(before, after)| {
+                        before.metadata.index == after.metadata.index
+                            && before.points.len() == after.points.len()
+                    });
+            if !same_rows && let FileHistory::Recording { track_snapshot, .. } = history {
+                *track_snapshot = None;
+            }
+            *file = resegmented;
+        }
+    }
+
+    /// A later compaction can invalidate an intermediate snapshot before the view receives it.
+    pub fn apply_track_snapshot_updates(&mut self, updates: &[StoredTrackSnapshotUpdate]) {
+        if updates.is_empty() {
+            return;
+        }
+        let mut updates_by_recording: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for update in updates {
+            updates_by_recording
+                .entry(update.before.recording())
+                .or_default()
+                .push(update);
+        }
+        let IndexAlignedFiles { files, history, .. } = self.storage.get_mut();
+        for (file, history) in files.get().0.iter().zip(history) {
+            let FileHistory::Recording {
+                track_snapshot: Some(snapshot),
+                ..
+            } = history
+            else {
+                continue;
+            };
+            let Some(updates) = updates_by_recording.get(snapshot.recording()) else {
+                continue;
+            };
+            for update in updates {
+                if update.after.recording() == snapshot.recording()
+                    && snapshot.same_observation(&update.before)
+                    && file.tracks.iter().all(|track| {
+                        track
+                            .metadata
+                            .index
+                            .checked_sub(1)
+                            .and_then(|row| update.after.rows().get(row))
+                            .is_some_and(|row| row.state != TrackState::Deleted)
+                    })
+                {
+                    **snapshot = update.after.clone();
+                }
+            }
+        }
+    }
+
     /// Re-point loaded recordings after their history identity was renamed from
     /// `old` to `new`. Only the identity changes. The recording `group_name`
     /// is stable across a rename, so the [`DatabaseRef`] stays valid.
     pub fn rename_identity(&mut self, old: &str, new: &str) {
         for history in &mut self.storage.get_mut().history {
             if let FileHistory::Recording {
-                identity, db_ref, ..
+                identity,
+                db_ref,
+                track_snapshot,
+                ..
             } = history
                 && identity == old
             {
@@ -467,6 +562,7 @@ impl LoadedFiles {
                 if let Some(db_ref) = db_ref {
                     db_ref.identity = new.to_owned();
                 }
+                *track_snapshot = None;
             }
         }
     }

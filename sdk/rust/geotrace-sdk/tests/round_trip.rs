@@ -758,8 +758,10 @@ fn a_vector_channel_preserves_nan_holes() -> Result<(), Box<dyn std::error::Erro
             .values(vec![1.0, f64::NAN, f64::NAN, 4.0])
             .build()?,
     );
-    let rt = test_util::round_trip(&recorder.finish()?)?;
+    let source = recorder.finish()?;
+    let rt = test_util::round_trip(&source)?;
     let values = rt.channels()[0].values();
+    assert!(source.equals_ignoring_build_provenance(&rt));
     // NaN != NaN, so compare finiteness and the finite values explicitly.
     assert!(values[0] == 1.0 && values[3] == 4.0);
     assert!(values[1].is_nan() && values[2].is_nan());

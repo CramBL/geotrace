@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use gt_history_types::{
     CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HISTORY_LOCK as DB_LOCK, HistoryAccess,
     HistoryDatabase, LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
-    ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR,
-    StoredRecording, StoredSegmentation, TrackRange, UiStateVersionReporter, log_attachment,
+    ReadOnlyHistoryDatabase, RecordingEntry, RecordingInsert, RecordingMeta, RecordingUiState,
+    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, UiStateVersionReporter,
+    log_attachment,
 };
 
 pub mod copy;
@@ -310,14 +311,14 @@ impl HistoryDatabase for SysDb {
         Ok(())
     }
 
-    fn insert(
+    fn insert_with_outcome(
         &mut self,
         identity: &str,
         meta: &RecordingMeta,
         tracks: &[TrackRange],
         settings: StoredSegmentation,
         gtd_bytes: &[u8],
-    ) -> Result<DatabaseRef, DbError> {
+    ) -> Result<RecordingInsert, DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
             .map_err(Into::into)

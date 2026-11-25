@@ -18,6 +18,7 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
+use gt_history::{HistoryAccess, ReadOnlyDatabase};
 use gt_history_types::RecordingMeta;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_side_panel::{
@@ -2502,6 +2503,23 @@ fn stored_recording_ref() -> gt_history_types::DatabaseRef {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "The scenario requires a readable History fixture"
+)]
+fn stored_history(db_ref: Option<gt_history_types::DatabaseRef>) -> FileHistory {
+    let snapshot = db_ref.as_ref().map(|reference| {
+        let fixture = gt_test_utils::history_fixtures::StoredTrackTableFixture::new(reference, &[]);
+        let db = ReadOnlyDatabase::open_existing_read_only(&fixture.path())
+            .expect("open History fixture");
+        HistoryAccess::lock()
+            .read_track_snapshot(&db, reference)
+            .expect("read track table")
+    });
+    FileHistory::recording("auto:ride".to_owned(), RecordingMeta::default(), db_ref)
+        .with_track_snapshot(snapshot)
+}
+
 /// A recording of two tracks a day apart, the first of 59 seconds and the
 /// second of four. A minimum duration of half a minute excludes the second.
 ///
@@ -2513,10 +2531,7 @@ fn state_with_two_tracks(db_ref: Option<gt_history_types::DatabaseRef>) -> State
         FileParts::default(),
     );
     let mut files = LoadedFiles::new();
-    files.push(
-        file,
-        FileHistory::recording("auto:ride".to_owned(), RecordingMeta::default(), db_ref),
-    );
+    files.push(file, stored_history(db_ref));
     make_state_from_files(files)
 }
 
@@ -2631,14 +2646,7 @@ fn state_with_a_short_unmarked_second_track() -> State {
         },
     );
     let mut files = LoadedFiles::new();
-    files.push(
-        file,
-        FileHistory::recording(
-            "auto:ride".to_owned(),
-            RecordingMeta::default(),
-            Some(stored_recording_ref()),
-        ),
-    );
+    files.push(file, stored_history(Some(stored_recording_ref())));
     make_state_from_files(files)
 }
 

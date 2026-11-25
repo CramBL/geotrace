@@ -699,12 +699,13 @@ fn snapshot_history_busy_dialog() {
 /// A re-segment prompt for the recording named `filename`, stored with a split
 /// rule and a placement rule that both differ from the current ones.
 fn resegment_prompt_named(filename: &str) -> crate::app::ResegmentPrompt {
+    let db_ref = gt_store::DatabaseRef {
+        identity: format!("auto:{filename}"),
+        group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
+    };
     crate::app::ResegmentPrompt {
         origin: RecordingOperationOrigin::Independent,
-        db_ref: gt_store::DatabaseRef {
-            identity: format!("auto:{filename}"),
-            group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
-        },
+        db_ref: db_ref.clone(),
         filename: filename.to_owned(),
         bytes: std::sync::Arc::from(Vec::<u8>::new()),
         stored: gt_store::StoredSegmentation {
@@ -714,7 +715,7 @@ fn resegment_prompt_named(filename: &str) -> crate::app::ResegmentPrompt {
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 4.0,
         },
-        stored_tracks: Vec::new(),
+        track_snapshot: test_util::recordings::synthetic_track_snapshot(&db_ref, &[]),
         marker_settings_changed: false,
         mode: crate::app::loader::GtdLoadMode::Regular,
         placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
@@ -763,7 +764,10 @@ fn app_showing_the_resegment_prompt_with(
         .eframe(test_util::harness::build_app);
     harness.inner.step();
     let mut prompt = resegment_prompt_named("ride.gtd");
-    prompt.stored_tracks = stored_track_table_with_shelved_tracks(marks.shelved_tracks);
+    prompt.track_snapshot = test_util::recordings::synthetic_track_snapshot(
+        &prompt.db_ref,
+        &stored_track_table_with_shelved_tracks(marks.shelved_tracks),
+    );
     harness
         .inner
         .state_mut()

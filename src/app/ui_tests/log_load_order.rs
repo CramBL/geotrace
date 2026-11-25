@@ -9,15 +9,15 @@ use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey
 use gt_logfile::{LogParseError, ParsedLog};
 use gt_plot::AnalysisConfig;
 use gt_store::{
-    DatabaseRef, DbError, LogAttachmentId, RecordingUiState, Store, StoredLogFilter,
-    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterStack, StoredLogSettings,
-    StoredRecording, StoredYearResolution,
+    DatabaseRef, DbError, LogAttachmentId, Store, StoredLogFilter, StoredLogFilterCondition,
+    StoredLogFilterEffects, StoredLogFilterStack, StoredLogSettings, StoredRecording,
+    StoredYearResolution,
 };
 use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
 
 use crate::app::association_batches::RecordingOperationOrigin;
-use crate::app::history_db::{self, OpenedRecording};
+use crate::app::history_db;
 use crate::app::load_failures::{
     LoadFailure, LoadFailureCause, LoadReadRequest, LoadRecovery, LoadSource,
 };
@@ -861,11 +861,14 @@ fn cancelling_the_history_recording_prompt_releases_pending_logs() {
                         content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                         mode: loader::GtdLoadMode::Regular,
                     },
-                    db_ref: DatabaseRef {
-                        identity: "stored".to_owned(),
-                        group_name: "recording".to_owned(),
-                    },
-                    stored_tracks: Vec::new(),
+                    history_path: Default::default(),
+                    track_snapshot: test_util::recordings::synthetic_track_snapshot(
+                        &DatabaseRef {
+                            identity: "stored".to_owned(),
+                            group_name: "recording".to_owned(),
+                        },
+                        &[],
+                    ),
                 }],
                 new_to_history: Vec::new(),
             },
@@ -923,11 +926,14 @@ fn successive_history_screening_responses_preserve_every_recording_before_associ
                         content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                         mode: loader::GtdLoadMode::Regular,
                     },
-                    db_ref: DatabaseRef {
-                        identity: "stored".to_owned(),
-                        group_name: name.to_owned(),
-                    },
-                    stored_tracks: ui_tests::two_live_track_ranges().to_vec(),
+                    history_path: Default::default(),
+                    track_snapshot: test_util::recordings::synthetic_track_snapshot(
+                        &DatabaseRef {
+                            identity: "stored".to_owned(),
+                            group_name: name.to_owned(),
+                        },
+                        &ui_tests::two_live_track_ranges(),
+                    ),
                 }],
                 new_to_history: Vec::new(),
             }),
@@ -1257,17 +1263,19 @@ fn resegment_decisions_complete_every_recording_operation(
         loader::stored_segmentation_from_config(&harness.state().processing_config);
     segmentation.track_split_gap_us += 1;
     for (name, arrival) in ["first.gtd", "second.gtd"].into_iter().zip(operations) {
+        let recording = DatabaseRef {
+            identity: name.to_owned(),
+            group_name: name.to_owned(),
+        };
         harness
             .state_mut()
             .handle_history_response(history_db::Response::Opened {
                 origin: RecordingOperationOrigin::Arrival(arrival),
-                db_ref: DatabaseRef {
-                    identity: name.to_owned(),
-                    group_name: name.to_owned(),
-                },
+                db_ref: recording.clone(),
                 placement: LoadedRecordingPlacement::AddAnEntry,
-                result: Ok(OpenedRecording {
-                    stored: StoredRecording {
+                result: Ok(test_util::recordings::opened_recording(
+                    &recording,
+                    StoredRecording {
                         bytes: if readable {
                             ui_tests::minimal_gtd_bytes()
                         } else {
@@ -1277,8 +1285,7 @@ fn resegment_decisions_complete_every_recording_operation(
                         segmentation: Some(segmentation),
                         debug_tag: None,
                     },
-                    ui_state: Ok(RecordingUiState::default()),
-                }),
+                )),
             });
     }
     harness.run_steps(2);

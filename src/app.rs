@@ -193,9 +193,7 @@ struct ResegmentPrompt {
     bytes: std::sync::Arc<[u8]>,
     /// Settings the stored tracks were built with.
     stored: gt_store::StoredSegmentation,
-    /// The recording's stored track table, applied to the view when the user
-    /// keeps the stored tracks.
-    stored_tracks: Vec<gt_store::TrackRange>,
+    track_snapshot: gt_store::StoredTrackSnapshot,
     /// Whether marker-generation settings differ from the stored/default marker
     /// settings and will be rebuilt from the current app settings when opened.
     marker_settings_changed: bool,
@@ -936,7 +934,7 @@ impl App {
         {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            for file in s.loaded_files.files_mut() {
+            s.loaded_files.resegment_files(|file| {
                 let all_points: Vec<gt_types::NavPoint> = file
                     .tracks
                     .iter()
@@ -944,7 +942,7 @@ impl App {
                     .cloned()
                     .collect();
                 if all_points.is_empty() {
-                    continue;
+                    return None;
                 }
                 let all_custom_markers: Vec<gt_types::CustomMarker> = file
                     .tracks
@@ -965,7 +963,7 @@ impl App {
                 let filename = file.metadata.filename.clone();
                 let source = file.source.clone();
                 let file_meta = gt_track_builder::FileMeta::from(&file.metadata);
-                *file = gt_track_builder::build_loaded_file(
+                Some(gt_track_builder::build_loaded_file(
                     filename,
                     &all_points,
                     &all_custom_markers,
@@ -976,8 +974,8 @@ impl App {
                     source,
                     file_meta,
                     file.load_warnings.clone(),
-                );
-            }
+                ))
+            });
             s.plot_state.rebuild_all(&s.loaded_files);
             s.tree.reset_for_resegmented_files(s.loaded_files.view());
         }
@@ -1055,6 +1053,7 @@ impl App {
                 };
                 let fi = match replaced {
                     Some(replaced) => {
+                        s.tree.cancel_shelve_confirmation_for_file(replaced);
                         s.loaded_files
                             .replace_file(replaced.as_usize(), file, history);
                         replaced.as_usize()
@@ -1292,20 +1291,9 @@ impl App {
         self.logs.reassociate_all(&s.loaded_files.view());
     }
 
-    /// Sends the confirmed action to the history worker, which reports it
-    /// through [`Self::handle_history_response`] and its toast.
-    fn apply_shelve_outcome(&self, outcome: &modals::ShelveOutcome) {
-        for removal in &outcome.affected {
-            match outcome.action {
-                modals::StoredTrackAction::Shelve => self.history.set_tracks_shelved(
-                    removal.db_ref.clone(),
-                    removal.track_rows.clone(),
-                    true,
-                ),
-                modals::StoredTrackAction::DeletePermanently => self
-                    .history
-                    .delete_tracks(removal.db_ref.clone(), removal.track_rows.clone()),
-            }
+    fn apply_shelve_outcome(&self, outcome: modals::ShelveOutcome) {
+        for removal in outcome.affected {
+            self.history.remove_loaded_tracks(outcome.action, removal);
         }
     }
 }

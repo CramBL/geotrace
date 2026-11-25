@@ -384,6 +384,7 @@ gt-jam-store = { path = "crates/external_environmental_data/gt-jam-store" }
 gt-log-view = { path = "crates/gt-log-view", features = ["test-util"] }
 gt-test-utils = { path = "crates/gt-test-utils", features = [
     "archive",
+    "history",
     "ionex",
     "snapshot",
 ] }

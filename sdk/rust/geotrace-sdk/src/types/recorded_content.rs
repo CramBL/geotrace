@@ -1,8 +1,9 @@
-use crate::{Angle, Meta, NavFile, NavFix, NavPoint};
+use crate::{Angle, Channel, Meta, NavFile, NavFix, NavPoint};
 
 impl NavFile {
-    /// Compares recorded facts, excluding SDK build stamps and NaN encodings of absent positions.
+    /// Compares recorded facts, excluding SDK build stamps.
     /// An absent position requires two NaN coordinates, explicit state and unreported origin.
+    /// Paired absent positions and paired missing channel samples compare equal.
     /// Derived `PartialEq` and other floating-point fields retain ordinary IEEE equality.
     pub fn equals_ignoring_build_provenance(&self, other: &Self) -> bool {
         let Self {
@@ -24,7 +25,11 @@ impl NavFile {
             && *markers == other.markers
             && *event_markers == other.event_markers
             && *event_marker_styles == other.event_marker_styles
-            && *channels == other.channels
+            && channels.len() == other.channels.len()
+            && channels
+                .iter()
+                .zip(&other.channels)
+                .all(|(channel, other)| channel.equals_recorded_content(other))
     }
 }
 
@@ -80,5 +85,31 @@ impl NavFix {
             compared.lon = Angle::degrees(0.0);
         }
         recorded == compared
+    }
+}
+
+impl Channel {
+    #[expect(clippy::float_cmp, reason = "Recorded samples use exact equality")]
+    fn equals_recorded_content(&self, other: &Self) -> bool {
+        let Self {
+            name,
+            unit,
+            period,
+            description,
+            components,
+            times,
+            values,
+        } = self;
+        *name == other.name
+            && *unit == other.unit
+            && *period == other.period
+            && *description == other.description
+            && *components == other.components
+            && *times == other.times
+            && values.len() == other.values.len()
+            && values
+                .iter()
+                .zip(&other.values)
+                .all(|(sample, other)| sample == other || (sample.is_nan() && other.is_nan()))
     }
 }
