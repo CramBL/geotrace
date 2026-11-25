@@ -11,8 +11,9 @@ use uuid::Uuid;
 use crate::endpoint::{BoundListener, Endpoint};
 use crate::framing::{Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
 pub use crate::history::{
-    HistoryCursor, HistoryDates, HistoryEntries, HistoryListing, HistoryRecording,
-    HistoryRecordingId, HistoryRecordings, ListHistoryRecordings,
+    GetHistoryOpenStatus, HistoryCursor, HistoryDates, HistoryEntries, HistoryListing,
+    HistoryOpenId, HistoryOpenSelection, HistoryOpenState, HistoryOpenStatus, HistoryRecording,
+    HistoryRecordingId, HistoryRecordings, ListHistoryRecordings, OpenHistoryRecording,
 };
 use crate::inspection::Inspection;
 pub use crate::inspection::{

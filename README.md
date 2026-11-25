@@ -258,6 +258,23 @@ Recording IDs remain stable across app restarts with the same History database c
 GeoTrace returns up to 32 recordings per page and sets `metadata_truncated` when it shortens a title or identity.
 If GeoTrace is preparing History, retry the listing.
 
+Pass a History recording ID as `recording` to `open_history_recording`.
+Poll `get_history_open_status` with the returned `operation` until GeoTrace reports `ready`, `cancelled`, `expired` or `failed`.
+Use the `recording` reference in a ready result with `get_recording` and other loaded session tools.
+If GeoTrace cannot reproduce the stored track layout, the operation reports `history_track_layout_unavailable`.
+For a recording with stored tracks, the operation expires if local processing changes the loaded track layout.
+Unloading a track from that recording also expires the operation.
+If the status is `awaiting_track_settings`, make the choice in the GeoTrace desktop dialog.
+Recalculation through this dialog requires writable History with recording storage enabled.
+GeoTrace accepts one active History open and returns the same operation for repeat requests for that recording while it is active.
+A new accepted open replaces the previous operation status.
+GeoTrace checks the stored recording again before reusing a loaded result.
+Open older History recordings in the desktop History window when GeoTrace cannot verify their identity.
+When the database is writable and the stored tracks still match, GeoTrace applies saved track visibility before reporting `ready`.
+GeoTrace restores saved logs and snap runs in the background.
+If several loaded copies share the History entry, unload them and open the entry again to restore its saved logs.
+Use the History window to restore saved logs, display settings, and snap runs from a read-only database.
+
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.

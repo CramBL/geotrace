@@ -8,8 +8,8 @@ use gt_history_types::{
     GTD_META_TRAVEL_MODE_ATTR, HISTORY_LOCK as DB_LOCK, HistoryAccess, HistoryDatabase,
     LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
     ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingInsert, RecordingMeta,
-    RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
-    TrackState, UiStateVersionReporter,
+    RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
+    TrackLayoutVisibility, TrackRange, TrackState, UiStateVersionReporter,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -310,11 +310,12 @@ impl HistoryDatabase for PureDb {
             .map_err(Into::into)
     }
 
-    fn set_tracks(
+    fn set_track_layout(
         &mut self,
         db_ref: &DatabaseRef,
         tracks: &[TrackRange],
         settings: StoredSegmentation,
+        visibility: TrackLayoutVisibility,
     ) -> Result<(), DbError> {
         let access = HistoryAccess::lock();
         access.invalidate_track_snapshots(self, db_ref)?;
@@ -324,6 +325,7 @@ impl HistoryDatabase for PureDb {
             &db_ref.group_name,
             tracks,
             settings,
+            visibility,
         )
         .map_err(Into::into)
     }
@@ -334,7 +336,8 @@ impl HistoryDatabase for PureDb {
         rows: &[usize],
         shelved: bool,
     ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
+        let access = HistoryAccess::lock();
+        access.invalidate_track_membership(self, db_ref)?;
         copy::set_tracks_shelved(
             &self.path,
             &db_ref.identity,

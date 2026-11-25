@@ -43,9 +43,10 @@ pub fn synthetic_track_snapshot(
 
 pub fn opened_recording(recording: &DatabaseRef, stored: StoredRecording) -> OpenedRecording {
     OpenedRecording {
-        track_snapshot: synthetic_track_snapshot(recording, &stored.tracks),
+        track_snapshot: synthetic_track_snapshot(recording, stored.track_rows()),
         stored,
-        ui_state: Ok(RecordingUiState::default()),
+        ui_state: Some(Ok(RecordingUiState::default())),
+        matches_reuse_payload: false,
     }
 }
 

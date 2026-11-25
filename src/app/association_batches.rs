@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use gt_loaded_files::LoadedFileId;
+use gt_session_bridge::HistoryOpenId;
 use gt_ui_types::LoadedLogId;
 
 use super::load_failures::LoadRetryAttempt;
@@ -95,6 +96,16 @@ pub enum RecordingOperationOrigin {
     Arrival(RecordingArrival),
     Independent,
     Retry(LoadRetryAttempt),
+    SessionHistory(HistoryOpenId),
+}
+
+impl RecordingOperationOrigin {
+    pub(super) fn session_history(&self) -> Option<HistoryOpenId> {
+        match self {
+            Self::SessionHistory(id) => Some(*id),
+            _ => None,
+        }
+    }
 }
 
 /// The app transfers each recording operation through screening, prompts and loading.

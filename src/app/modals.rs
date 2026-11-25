@@ -2776,7 +2776,7 @@ mod tests {
         let states: Vec<TrackState> = result
             .expect("the recording opens")
             .stored
-            .tracks
+            .track_rows()
             .iter()
             .map(|track| track.state)
             .collect();

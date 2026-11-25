@@ -10,8 +10,8 @@ use geotrace_sdk::{
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, LogAttachment, LogAttachmentId,
     LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingMeta,
-    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
-    TrackState,
+    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    StoredTrackTable, TrackLayoutVisibility, TrackRange, TrackState,
 };
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
@@ -1259,14 +1259,28 @@ fn set_tracks_shelved_shelves_tracks_and_is_reversible() {
     let entries = db.list_recordings().expect("list");
     assert_eq!(entries[0].total_tracks, 2);
     assert_eq!(entries[0].shelved_tracks, 0, "a new track is live");
+    let before = HistoryAccess::lock()
+        .read_track_snapshot(&db, &db_ref)
+        .expect("read track snapshot");
 
     // Shelve the first track: the recording stays, with one shelved track.
     db.set_tracks_shelved(&db_ref, &[0], true).expect("shelve");
     let entries = db.list_recordings().expect("list after the shelve");
     assert_eq!(entries[0].shelved_tracks, 1);
     let stored = db.load_full(&db_ref).expect("load");
-    assert_eq!(stored.tracks[0].state, TrackState::Shelved);
-    assert_eq!(stored.tracks[1].state, TrackState::Live);
+    assert_eq!(stored.track_rows()[0].state, TrackState::Shelved);
+    assert_eq!(stored.track_rows()[1].state, TrackState::Live);
+    let access = HistoryAccess::lock();
+    let after = access
+        .read_track_snapshot(&db, &db_ref)
+        .expect("read shelved tracks");
+    assert!(before.is_current());
+    assert!(!before.is_current_with_membership());
+    assert!(after.is_current_with_membership());
+    access
+        .verify_track_snapshot(&before, &after)
+        .expect("shelving preserves row coordinates");
+    drop(access);
 
     // The recording's data still round-trips after the shelve.
     let file = hdf5_pure::File::from_bytes(stored.bytes).expect("parse loaded");
@@ -1689,9 +1703,9 @@ fn set_tracks_shelved_shelves_only_the_given_tracks() {
         .expect("shelve 0 and 2");
 
     let stored = db.load_full(&db_ref).expect("load");
-    assert_eq!(stored.tracks[0].state, TrackState::Shelved);
-    assert_eq!(stored.tracks[1].state, TrackState::Live);
-    assert_eq!(stored.tracks[2].state, TrackState::Shelved);
+    assert_eq!(stored.track_rows()[0].state, TrackState::Shelved);
+    assert_eq!(stored.track_rows()[1].state, TrackState::Live);
+    assert_eq!(stored.track_rows()[2].state, TrackState::Shelved);
     assert_eq!(db.list_recordings().expect("list")[0].shelved_tracks, 2);
 }
 
@@ -1774,6 +1788,49 @@ fn write_pure_db_with_a_track_table(
     });
 }
 
+type TrackTableColumns = &'static [(&'static str, &'static [u64])];
+
+const EMPTY_TRACK_TABLE: TrackTableColumns = &[
+    (TRACK_START_DATASET, &[]),
+    (TRACK_END_DATASET, &[]),
+    (TRACK_STATE_DATASET, &[]),
+];
+const INCOMPLETE_TRACK_TABLE: TrackTableColumns = &[(TRACK_START_DATASET, &[])];
+const INCONSISTENT_TRACK_TABLE: TrackTableColumns = &[
+    (TRACK_START_DATASET, &[0, 1]),
+    (TRACK_END_DATASET, &[1]),
+    (TRACK_STATE_DATASET, &[0, 1]),
+];
+
+#[rstest]
+#[case::missing(None, StoredTrackTable::Missing)]
+#[case::empty(Some(EMPTY_TRACK_TABLE), StoredTrackTable::Present(Vec::new()))]
+#[case::incomplete(Some(INCOMPLETE_TRACK_TABLE), StoredTrackTable::Damaged)]
+#[case::inconsistent(Some(INCONSISTENT_TRACK_TABLE), StoredTrackTable::Damaged)]
+fn loading_a_recording_distinguishes_damaged_and_empty_track_tables(
+    #[case] columns: Option<TrackTableColumns>,
+    #[case] expected: StoredTrackTable,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("history.h5");
+    write_pure_db_with_a_recording(&database, CURRENT_SCHEMA_VERSION, 2, |recording| {
+        if let Some(columns) = columns {
+            let mut tracks = recording.create_group(TRACKS_GROUP);
+            for (name, values) in columns {
+                tracks
+                    .create_dataset(name)
+                    .with_shape(&[values.len() as u64])
+                    .with_u64_data(values);
+            }
+            recording.add_group(tracks.finish());
+        }
+    });
+    let db = Database::open_or_create(&database).unwrap();
+    let entry = &db.list_recordings().unwrap()[0];
+    let stored = db.load(&entry.db_ref).unwrap();
+    assert_eq!(stored.track_table, expected);
+}
+
 /// Write a database holding one recording whose UI state group holds
 /// `datasets`, with the version attribute set to `ui_state_version` where that
 /// is `Some`.
@@ -1812,8 +1869,19 @@ fn a_schema_version_0_database_reads_its_legacy_hidden_column() {
     };
     assert_eq!(entry.total_tracks, 3);
     assert_eq!(entry.shelved_tracks, 1);
+    let sibling = db_path.with_extension("load_tmp.h5");
+    std::fs::write(&sibling, b"another history read").expect("write sibling");
     let stored = db.load(&entry.db_ref).expect("load");
-    let states: Vec<TrackState> = stored.tracks.iter().map(|track| track.state).collect();
+    assert_eq!(stored.meta, Some(entry.meta));
+    assert_eq!(
+        std::fs::read(&sibling).expect("read sibling"),
+        b"another history read"
+    );
+    let states: Vec<TrackState> = stored
+        .track_rows()
+        .iter()
+        .map(|track| track.state)
+        .collect();
     assert_eq!(
         states,
         vec![TrackState::Live, TrackState::Shelved, TrackState::Live]
@@ -1905,7 +1973,7 @@ fn stored_track_table_returns_every_row_with_the_tombstones_in_place() {
             },
         ]
     );
-    assert_eq!(table, db.load(&db_ref).expect("load").tracks);
+    assert_eq!(table, db.load(&db_ref).expect("load").track_rows());
 }
 
 /// A permanently deleted track leaves a tombstone row in the stored table. The
@@ -1931,7 +1999,11 @@ fn a_deleted_row_of_the_track_table_is_no_track_the_history_window_counts() {
     assert_eq!(entry.total_tracks, 2);
     assert_eq!(entry.shelved_tracks, 1);
     let stored = db.load(&entry.db_ref).expect("load");
-    let states: Vec<TrackState> = stored.tracks.iter().map(|track| track.state).collect();
+    let states: Vec<TrackState> = stored
+        .track_rows()
+        .iter()
+        .map(|track| track.state)
+        .collect();
     assert_eq!(
         states,
         vec![TrackState::Live, TrackState::Deleted, TrackState::Shelved]
@@ -2374,7 +2446,7 @@ fn many_recordings_support_list_read_shelve_and_delete() {
     // Read a sampling and confirm the stored tracks cover exactly the recording.
     for (db_ref, n) in refs.iter().step_by(37) {
         let stored = db.load_full(db_ref).expect("load");
-        let covered: u64 = stored.tracks.iter().map(|t| t.end - t.start).sum();
+        let covered: u64 = stored.track_rows().iter().map(|t| t.end - t.start).sum();
         assert_eq!(covered, *n, "track ranges must cover all nav points");
     }
 
@@ -2411,7 +2483,11 @@ fn many_recordings_support_list_read_shelve_and_delete() {
     assert_eq!(survivors.len(), N / 2);
     let survivor_ref = survivors[0].db_ref.clone();
     let stored = db.load_full(&survivor_ref).expect("load survivor");
-    assert_eq!(stored.tracks.len(), 2, "a survivor keeps its track table");
+    assert_eq!(
+        stored.track_rows().len(),
+        2,
+        "a survivor keeps its track table"
+    );
 }
 
 /// Insert 40 recordings, then run 4 delete-all + refill cycles, returning
@@ -2665,7 +2741,7 @@ fn set_tracks_replaces_the_table_and_settings() {
 
     let stored = db.load_full(&db_ref).expect("load");
     assert_eq!(
-        stored.tracks,
+        stored.track_rows(),
         three.to_vec(),
         "the old two-track table is fully replaced"
     );
@@ -2719,7 +2795,13 @@ fn a_stored_track_snapshot_expires_after_a_track_table_or_recording_replacement(
         Err(DbError::StoredTrackLayoutChanged)
     ));
     let updated = access
-        .replace_track_layout(&mut db, &initial, merged.to_vec(), settings)
+        .replace_track_layout(
+            &mut db,
+            &initial,
+            merged.to_vec(),
+            settings,
+            TrackLayoutVisibility::Preserve,
+        )
         .expect("recalculate the same payload again");
 
     let other_directory = dir.path().join("nested");
@@ -2741,7 +2823,13 @@ fn a_stored_track_snapshot_expires_after_a_track_table_or_recording_replacement(
         Err(DbError::StoredTrackLayoutChanged)
     ));
     assert!(matches!(
-        access.replace_track_layout(&mut db, &initial, merged.to_vec(), settings),
+        access.replace_track_layout(
+            &mut db,
+            &initial,
+            merged.to_vec(),
+            settings,
+            TrackLayoutVisibility::Preserve
+        ),
         Err(DbError::StoredTrackLayoutChanged)
     ));
 }
@@ -2907,6 +2995,7 @@ fn a_legacy_identity_with_an_encoded_spelling_resolves_by_its_declared_identity(
             &original,
             original.rows().to_vec(),
             fixtures::default_segmentation(),
+            TrackLayoutVisibility::Preserve,
         )
         .expect("update legacy tracks");
     assert!(!original.is_current());
@@ -3116,7 +3205,7 @@ fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference(
     .expect("replace");
 
     let stored = db.load_full(&db_ref).expect("load");
-    assert_eq!(stored.tracks, tracks.to_vec());
+    assert_eq!(stored.track_rows(), tracks.to_vec());
     assert_eq!(stored.segmentation, Some(fixtures::default_segmentation()));
     let reconstructed = gt_history::extract_meta(&stored.bytes).expect("meta");
     assert_eq!(reconstructed.nav_point_count, 25);
@@ -3456,7 +3545,7 @@ fn replacing_a_recording_with_bytes_that_are_not_a_recording_keeps_the_stored_on
     );
 
     let stored = db.load_full(&db_ref).expect("load");
-    assert_eq!(stored.tracks.len(), 2);
+    assert_eq!(stored.track_rows().len(), 2);
     assert_eq!(
         gt_history::extract_meta(&stored.bytes)
             .expect("meta")
@@ -3800,6 +3889,49 @@ fn stored_ui_state_group(
 struct StoredUiStateGroup {
     version: Option<i64>,
     datasets: Vec<(String, Vec<u64>)>,
+}
+
+#[rstest]
+#[case::current(CURRENT_UI_STATE_VERSION, false)]
+#[case::newer(CURRENT_UI_STATE_VERSION + 1, true)]
+fn track_layout_replacement_clears_visibility_for_recognized_ui_state(
+    #[case] version: i64,
+    #[case] retains_hidden_tracks: bool,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("geotrace.h5");
+    write_pure_db_with_a_ui_state_group(
+        &path,
+        Some(version),
+        &[(HIDDEN_TRACKS_DATASET, &[1]), ("map_viewport", &[9, 9])],
+    );
+    let mut db = Database::open_or_create(&path).expect("open");
+    let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
+    let access = HistoryAccess::lock();
+    let expected = access
+        .read_track_snapshot(&db, &db_ref)
+        .expect("read tracks");
+    access
+        .replace_track_layout(
+            &mut db,
+            &expected,
+            expected.rows().to_vec(),
+            fixtures::default_segmentation(),
+            TrackLayoutVisibility::Clear,
+        )
+        .expect("replace layout");
+    let mut datasets = Vec::new();
+    if retains_hidden_tracks {
+        datasets.push((HIDDEN_TRACKS_DATASET.to_owned(), vec![1]));
+    }
+    datasets.push(("map_viewport".to_owned(), vec![9, 9]));
+    assert_eq!(
+        stored_ui_state_group(&path, &db_ref),
+        Some(StoredUiStateGroup {
+            version: Some(version),
+            datasets
+        })
+    );
 }
 
 /// A write stores the hidden track numbers ascending and each of them once,
@@ -5012,7 +5144,7 @@ fn boot_clock_readings_and_reference_survive_history_reopening_and_shelving(
     };
     let database = Database::open_or_create(&path).unwrap();
     let stored = database.load_full(&reference).unwrap();
-    assert_eq!(stored.tracks[0].state, TrackState::Shelved);
+    assert_eq!(stored.track_rows()[0].state, TrackState::Shelved);
     let exported = NavFile::read(stored.bytes.as_slice()).unwrap();
     assert_eq!(exported.nav_points(), original.nav_points());
     let reopened = gt_loader::load_bytes(&stored.bytes, "boot.gtd".to_owned()).unwrap();

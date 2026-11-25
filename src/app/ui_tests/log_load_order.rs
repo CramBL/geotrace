@@ -11,7 +11,7 @@ use gt_plot::AnalysisConfig;
 use gt_store::{
     DatabaseRef, DbError, LogAttachmentId, Store, StoredLogFilter, StoredLogFilterCondition,
     StoredLogFilterEffects, StoredLogFilterStack, StoredLogSettings, StoredRecording,
-    StoredYearResolution,
+    StoredTrackTable, StoredYearResolution,
 };
 use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
@@ -1276,12 +1276,15 @@ fn resegment_decisions_complete_every_recording_operation(
                 result: Ok(test_util::recordings::opened_recording(
                     &recording,
                     StoredRecording {
+                        meta: None,
                         bytes: if readable {
                             ui_tests::minimal_gtd_bytes()
                         } else {
                             Vec::new()
                         },
-                        tracks: ui_tests::two_live_track_ranges().to_vec(),
+                        track_table: StoredTrackTable::Present(
+                            ui_tests::two_live_track_ranges().to_vec(),
+                        ),
                         segmentation: Some(segmentation),
                         debug_tag: None,
                     },

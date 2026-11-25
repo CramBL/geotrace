@@ -16,6 +16,12 @@ pub struct HistoryAccess {
     _guard: ReentrantMutexGuard<'static, ()>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrackLayoutVisibility {
+    Clear,
+    Preserve,
+}
+
 impl HistoryAccess {
     pub fn lock() -> Self {
         Self {
@@ -42,7 +48,7 @@ impl HistoryAccess {
         require_recording_group(recording)?;
         let identity = Handle::from_path(database.path())?;
         let stored = database.load(recording)?;
-        let snapshot = self.snapshot(identity, recording.clone(), stored.tracks.clone());
+        let snapshot = self.snapshot(identity, recording.clone(), stored.track_rows().to_vec());
         Ok((stored, snapshot))
     }
 
@@ -52,6 +58,7 @@ impl HistoryAccess {
         expected: &StoredTrackSnapshot,
         rows: Vec<TrackRange>,
         settings: StoredSegmentation,
+        visibility: TrackLayoutVisibility,
     ) -> Result<StoredTrackSnapshot, DbError> {
         let identity = Handle::from_path(database.path())?;
         let recording = expected.recording();
@@ -63,7 +70,7 @@ impl HistoryAccess {
         if !current.is_some_and(|current| Arc::ptr_eq(&current, &expected.payload_revision)) {
             return Err(DbError::StoredTrackLayoutChanged);
         }
-        database.set_tracks(recording, &rows, settings)?;
+        database.set_track_layout(recording, &rows, settings, visibility)?;
         let identity = Handle::from_path(database.path())?;
         Ok(self.snapshot(identity, recording.clone(), rows))
     }
@@ -101,6 +108,26 @@ impl HistoryAccess {
                     revision.invalidate();
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub fn invalidate_track_membership(
+        &self,
+        database: &impl ReadOnlyHistoryDatabase,
+        recording: &DatabaseRef,
+    ) -> Result<(), DbError> {
+        require_recording_group(recording)?;
+        let identity = Handle::from_path(database.path())?;
+        if let Some(revision) = REVISIONS
+            .lock()
+            .get_mut(&identity)
+            .and_then(|database| database.get_mut(recording))
+        {
+            if let Some(membership) = revision.membership.upgrade() {
+                membership.store(false, Ordering::Release);
+            }
+            revision.membership = Weak::new();
         }
         Ok(())
     }
@@ -159,6 +186,26 @@ impl HistoryAccess {
         }
     }
 
+    pub fn verify_layout_revision(
+        &self,
+        database: &impl ReadOnlyHistoryDatabase,
+        expected: &StoredLayoutRevision,
+    ) -> Result<(), DbError> {
+        let identity = Handle::from_path(database.path())?;
+        let current = REVISIONS
+            .lock()
+            .get(&identity)
+            .and_then(|revisions| revisions.get(expected.recording()))
+            .and_then(|revision| revision.layout.upgrade());
+        if expected.is_current()
+            && current.is_some_and(|current| Arc::ptr_eq(&current, &expected.revision))
+        {
+            Ok(())
+        } else {
+            Err(DbError::StoredTrackLayoutChanged)
+        }
+    }
+
     fn snapshot(
         &self,
         identity: Handle,
@@ -167,7 +214,9 @@ impl HistoryAccess {
     ) -> StoredTrackSnapshot {
         let mut revisions = REVISIONS.lock();
         revisions.retain(|_, database| {
-            database.retain(|_, revision| revision.payload.strong_count() > 0);
+            database.retain(|_, revision| {
+                revision.payload.strong_count() > 0 || revision.layout.strong_count() > 0
+            });
             !database.is_empty()
         });
         let revision = revisions
@@ -176,25 +225,54 @@ impl HistoryAccess {
             .entry(recording.clone())
             .or_default();
         StoredTrackSnapshot {
-            recording,
+            layout: StoredLayoutRevision {
+                recording,
+                revision: current_revision(&mut revision.layout, || AtomicBool::new(true)),
+            },
             rows: rows.into(),
-            layout_revision: current_revision(&mut revision.layout, || AtomicBool::new(true)),
+            membership_revision: current_revision(&mut revision.membership, || {
+                AtomicBool::new(true)
+            }),
             payload_revision: current_revision(&mut revision.payload, || ()),
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct StoredTrackSnapshot {
+pub struct StoredLayoutRevision {
     recording: DatabaseRef,
+    revision: Arc<AtomicBool>,
+}
+
+impl StoredLayoutRevision {
+    pub fn recording(&self) -> &DatabaseRef {
+        &self.recording
+    }
+
+    pub fn is_current(&self) -> bool {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    pub fn same_observation(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.revision, &other.revision)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StoredTrackSnapshot {
+    layout: StoredLayoutRevision,
     rows: Arc<[TrackRange]>,
-    layout_revision: Arc<AtomicBool>,
+    membership_revision: Arc<AtomicBool>,
     payload_revision: Arc<()>,
 }
 
 impl StoredTrackSnapshot {
     pub fn recording(&self) -> &DatabaseRef {
-        &self.recording
+        self.layout.recording()
+    }
+
+    pub fn layout(&self) -> &StoredLayoutRevision {
+        &self.layout
     }
 
     pub fn rows(&self) -> &[TrackRange] {
@@ -204,17 +282,27 @@ impl StoredTrackSnapshot {
     /// Returns false after this process invalidates the snapshot.
     /// Check a fresh observation under the same [HistoryAccess] lock as the write.
     pub fn is_current(&self) -> bool {
-        self.layout_revision.load(Ordering::Acquire)
+        self.layout.is_current()
+    }
+
+    /// Shelving invalidates the membership revision and preserves the layout revision.
+    pub fn is_current_with_membership(&self) -> bool {
+        self.is_current() && self.membership_revision.load(Ordering::Acquire)
     }
 
     pub fn same_observation(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.layout_revision, &other.layout_revision)
+        self.layout.same_observation(&other.layout)
+    }
+
+    pub fn same_payload_revision(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.payload_revision, &other.payload_revision)
     }
 }
 
 #[derive(Default)]
 struct TrackRevisions {
     layout: Weak<AtomicBool>,
+    membership: Weak<AtomicBool>,
     payload: Weak<()>,
 }
 

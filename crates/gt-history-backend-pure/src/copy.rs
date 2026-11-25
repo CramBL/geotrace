@@ -18,11 +18,12 @@ use gt_history_types::{
     HIDDEN_TRACKS_DATASET, LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError,
     RecordingInsert, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET,
     SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
-    StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET,
-    TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
-    UiStateVersionReporter, log_attachment,
+    StoredTrackTable, StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET,
+    TRACK_STATE_DATASET, TRACKS_GROUP, TrackLayoutVisibility, TrackRange, TrackState,
+    UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, UnreadableTrackColumn,
+    log_attachment,
 };
-use hdf5_pure::{AttrValue, DType, DeflateLevel, FileBuilder, Group, GroupBuilder};
+use hdf5_pure::{AttrValue, DType, DeflateLevel, FileBuilder, FormatError, Group, GroupBuilder};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -79,6 +80,15 @@ struct GroupNode {
     attrs: Vec<(String, AttrValue)>,
     datasets: Vec<DatasetNode>,
     groups: Vec<GroupNode>,
+}
+
+impl GroupNode {
+    fn ui_state_version(&self) -> Option<i64> {
+        self.attrs
+            .iter()
+            .find(|(name, _)| name == UI_STATE_VERSION_ATTR)
+            .and_then(|(_, value)| value.as_i64())
+    }
 }
 
 fn attr_string(attrs: &[(String, AttrValue)], name: &str) -> Option<String> {
@@ -803,7 +813,7 @@ pub(crate) fn set_tracks_shelved(
         && let Some(recording) =
             find_recording_group(&by_id, identity, RecordingGroupName(group_name))?
     {
-        stored_track_table(&recording)
+        stored_track_table(&recording).into_present_rows()
     } else {
         None
     };
@@ -844,6 +854,7 @@ pub(crate) fn set_tracks(
     group_name: &str,
     tracks: &[TrackRange],
     settings: StoredSegmentation,
+    visibility: TrackLayoutVisibility,
 ) -> Result<(), InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
@@ -856,6 +867,20 @@ pub(crate) fn set_tracks(
     )? {
         rec.groups.retain(|g| g.name != TRACKS_GROUP);
         rec.groups.push(track_table_node(tracks));
+        if visibility == TrackLayoutVisibility::Clear
+            && let Some(ui_state) = rec
+                .groups
+                .iter_mut()
+                .find(|group| group.name == UI_STATE_GROUP)
+            && !matches!(
+                StoredUiStateVersion::from_attribute_value(ui_state.ui_state_version()),
+                StoredUiStateVersion::Newer(_)
+            )
+        {
+            ui_state
+                .datasets
+                .retain(|dataset| dataset.name != HIDDEN_TRACKS_DATASET);
+        }
         let debug_tag = recording_debug_tag(rec);
         rec.attrs.retain(|(k, _)| {
             k != ATTR_SEG_GAP_US
@@ -1034,13 +1059,7 @@ pub(crate) fn set_recording_ui_state(
         .position(|group| group.name == UI_STATE_GROUP);
     let stored_version = stored_index
         .and_then(|index| rec.groups.get(index))
-        .and_then(|group| {
-            group
-                .attrs
-                .iter()
-                .find(|(name, _)| name == UI_STATE_VERSION_ATTR)
-                .and_then(|(_, value)| value.as_i64())
-        });
+        .and_then(GroupNode::ui_state_version);
 
     let kept_datasets = match StoredUiStateVersion::from_attribute_value(stored_version) {
         StoredUiStateVersion::Newer(found) => {
@@ -1082,7 +1101,9 @@ pub(crate) fn stored_track_table_of_recording(
     let root = file.root();
     let by_id = root.group("by_identity")?;
     let rec_grp = open_recording_group(&by_id, identity, RecordingGroupName(group_name))?;
-    Ok(stored_track_table(&rec_grp).unwrap_or_default())
+    Ok(stored_track_table(&rec_grp)
+        .into_present_rows()
+        .unwrap_or_default())
 }
 
 /// Every log attached to a recording, in the order
@@ -1189,16 +1210,29 @@ pub(crate) fn delete_log_attachment_attribute(
     Ok(())
 }
 
-/// Every row of a recording's stored track table, tombstones and all.
-fn stored_track_table(rec_grp: &Group) -> Option<Vec<TrackRange>> {
-    let grp = rec_grp.group(TRACKS_GROUP).ok()?;
-    gt_history_types::stored_track_table(|name| grp.dataset(name).and_then(|d| d.read_u64()).ok())
+fn stored_track_table(rec_grp: &Group) -> StoredTrackTable {
+    let group = match rec_grp.group(TRACKS_GROUP) {
+        Ok(group) => group,
+        Err(hdf5_pure::Error::Format(FormatError::PathNotFound(_))) => {
+            return StoredTrackTable::Missing;
+        }
+        Err(_) => return StoredTrackTable::Damaged,
+    };
+    StoredTrackTable::decode_present(|name| match group.dataset(name) {
+        Ok(dataset) => dataset
+            .read_u64()
+            .map(Some)
+            .map_err(|_| UnreadableTrackColumn),
+        Err(hdf5_pure::Error::Format(FormatError::PathNotFound(_))) => Ok(None),
+        Err(_) => Err(UnreadableTrackColumn),
+    })
 }
 
 /// The tracks a recording has: its [`stored_track_table`] without the
 /// [`TrackState::Deleted`] tombstones a permanent delete leaves.
 pub(crate) fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
     stored_track_table(rec_grp)
+        .into_present_rows()
         .unwrap_or_default()
         .into_iter()
         .filter(|track| track.state != TrackState::Deleted)
@@ -1291,7 +1325,7 @@ pub(crate) fn load_recording(
     let by_id = db.root().group("by_identity")?;
     let rec_grp = open_recording_group(&by_id, identity, RecordingGroupName(group_name))?;
 
-    let tracks = stored_track_table(&rec_grp).unwrap_or_default();
+    let track_table = stored_track_table(&rec_grp);
 
     // Snapshot all child data groups (`nav_points`, `sat_reports`, etc.) and
     // write them as a fresh GTD-format HDF5 file.
@@ -1303,6 +1337,7 @@ pub(crate) fn load_recording(
     // Fall back to geotrace_version="1" for recordings stored by older code that
     // predates attribute preservation.
     let rec_attrs = rec_grp.attrs()?;
+    let meta = crate::recording_meta_from_attrs(&rec_attrs);
     let segmentation = read_segmentation(&rec_attrs);
     let debug_tag = gt_history_types::RecordingDebugTag::from_attribute_value(
         rec_attrs.get(ATTR_DEBUG_TAG).and_then(AttrValue::as_u64),
@@ -1343,15 +1378,10 @@ pub(crate) fn load_recording(
         fb.add_group(gb.finish());
     }
 
-    // hdf5-pure can only write to a path. Write a sibling temp file then read
-    // it back into memory before removing it.
-    let tmp_path = db_path.with_extension("load_tmp.h5");
-    fb.write(&tmp_path)?;
-    let bytes = std::fs::read(&tmp_path)?;
-    std::fs::remove_file(&tmp_path).ok();
     Ok(StoredRecording {
-        bytes,
-        tracks,
+        bytes: fb.finish()?,
+        meta,
+        track_table,
         segmentation,
         debug_tag,
     })

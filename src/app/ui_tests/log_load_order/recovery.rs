@@ -419,8 +419,11 @@ fn a_recording_retry_settings_prompt_completes_or_cancels_its_attempt(
             result: Ok(test_util::recordings::opened_recording(
                 &recording,
                 StoredRecording {
+                    meta: None,
                     bytes: ui_tests::minimal_gtd_bytes(),
-                    tracks: ui_tests::two_live_track_ranges().to_vec(),
+                    track_table: StoredTrackTable::Present(
+                        ui_tests::two_live_track_ranges().to_vec(),
+                    ),
                     segmentation: Some(segmentation),
                     debug_tag: None,
                 },

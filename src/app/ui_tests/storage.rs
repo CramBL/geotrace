@@ -705,7 +705,6 @@ fn resegment_prompt_named(filename: &str) -> crate::app::ResegmentPrompt {
     };
     crate::app::ResegmentPrompt {
         origin: RecordingOperationOrigin::Independent,
-        db_ref: db_ref.clone(),
         filename: filename.to_owned(),
         bytes: std::sync::Arc::from(Vec::<u8>::new()),
         stored: gt_store::StoredSegmentation {
@@ -765,7 +764,7 @@ fn app_showing_the_resegment_prompt_with(
     harness.inner.step();
     let mut prompt = resegment_prompt_named("ride.gtd");
     prompt.track_snapshot = test_util::recordings::synthetic_track_snapshot(
-        &prompt.db_ref,
+        prompt.track_snapshot.recording(),
         &stored_track_table_with_shelved_tracks(marks.shelved_tracks),
     );
     harness
@@ -774,7 +773,10 @@ fn app_showing_the_resegment_prompt_with(
         .shared
         .borrow_mut()
         .tree
-        .set_hidden_tracks_of_recording(prompt.db_ref.clone(), (1..=marks.hidden_tracks).collect());
+        .apply_stored_hidden_tracks(
+            prompt.track_snapshot.layout().clone(),
+            (1..=marks.hidden_tracks).collect(),
+        );
     harness.inner.state_mut().pending_resegment = Some(prompt);
     harness.run();
     harness

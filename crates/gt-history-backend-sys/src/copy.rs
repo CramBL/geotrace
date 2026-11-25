@@ -13,9 +13,10 @@ use gt_history_types::{
     HIDDEN_TRACKS_DATASET, HistoryAccess, LogAttachmentId, LogAttachmentListingEntry,
     LogAttachmentReadError, NavPointTimeRange, RecordingDebugTag, RecordingEntry, RecordingInsert,
     RecordingMeta, RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
-    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
-    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredTrackTable,
+    StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET,
+    TRACKS_GROUP, TrackLayoutVisibility, TrackRange, TrackState, UI_STATE_GROUP,
+    UI_STATE_VERSION_ATTR, UiStateVersionReporter, UnreadableTrackColumn,
 };
 use hdf5::Group;
 use thiserror::Error;
@@ -965,11 +966,22 @@ fn write_track_table(rec_grp: &Group, tracks: &[TrackRange]) -> Result<(), Inter
     Ok(())
 }
 
-/// Every row of a recording's stored track table, tombstones and all.
-fn stored_track_table(rec_grp: &Group) -> Option<Vec<TrackRange>> {
-    let grp = rec_grp.group(TRACKS_GROUP).ok()?;
-    gt_history_types::stored_track_table(|name| {
-        grp.dataset(name).and_then(|d| d.read_raw::<u64>()).ok()
+fn stored_track_table(rec_grp: &Group) -> StoredTrackTable {
+    if !rec_grp.link_exists(TRACKS_GROUP) {
+        return StoredTrackTable::Missing;
+    }
+    let Ok(group) = rec_grp.group(TRACKS_GROUP) else {
+        return StoredTrackTable::Damaged;
+    };
+    StoredTrackTable::decode_present(|name| {
+        if !group.link_exists(name) {
+            return Ok(None);
+        }
+        group
+            .dataset(name)
+            .and_then(|dataset| dataset.read_raw::<u64>())
+            .map(Some)
+            .map_err(|_| UnreadableTrackColumn)
     })
 }
 
@@ -977,6 +989,7 @@ fn stored_track_table(rec_grp: &Group) -> Option<Vec<TrackRange>> {
 /// [`TrackState::Deleted`] tombstones a permanent delete leaves.
 fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
     stored_track_table(rec_grp)
+        .into_present_rows()
         .unwrap_or_default()
         .into_iter()
         .filter(|track| track.state != TrackState::Deleted)
@@ -1295,13 +1308,14 @@ pub(crate) fn load_recording(
     // byte-range lock for as long as any handle to the file is open, so reading a
     // locked range otherwise fails with ERROR_LOCK_VIOLATION. The enclosing scope
     // drops every handle before the read.
-    let (tracks, segmentation, debug_tag) = {
+    let (meta, track_table, segmentation, debug_tag) = {
         let db = hdf5::File::open(db_path)?;
         let by_id = db.group("by_identity")?;
         let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
         let rec_grp = id_grp.group(group_name)?;
 
-        let tracks = stored_track_table(&rec_grp).unwrap_or_default();
+        let meta = read_recording_meta(&rec_grp);
+        let track_table = stored_track_table(&rec_grp);
         let segmentation = read_segmentation(&rec_grp);
         let debug_tag = rec_grp
             .attr(ATTR_DEBUG_TAG)
@@ -1336,12 +1350,13 @@ pub(crate) fn load_recording(
         }
 
         out.flush().map_err(InternalError::Hdf5)?;
-        (tracks, segmentation, debug_tag)
+        (meta, track_table, segmentation, debug_tag)
     };
 
     Ok(StoredRecording {
         bytes: std::fs::read(tmp.path())?,
-        tracks,
+        meta,
+        track_table,
         segmentation,
         debug_tag,
     })
@@ -1354,13 +1369,28 @@ pub(crate) fn set_tracks(
     group_name: &str,
     tracks: &[TrackRange],
     settings: StoredSegmentation,
+    visibility: TrackLayoutVisibility,
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
     let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
+    let reset_group = if visibility == TrackLayoutVisibility::Clear
+        && rec_grp.link_exists(UI_STATE_GROUP)
+    {
+        let group = rec_grp.group(UI_STATE_GROUP)?;
+        let version = StoredUiStateVersion::from_attribute_value(stored_ui_state_version(&group));
+        (group.link_exists(HIDDEN_TRACKS_DATASET)
+            && !matches!(version, StoredUiStateVersion::Newer(_)))
+        .then_some(group)
+    } else {
+        None
+    };
     write_track_table(&rec_grp, tracks)?;
     write_segmentation_attrs(&rec_grp, settings)?;
+    if let Some(group) = reset_group {
+        group.unlink(HIDDEN_TRACKS_DATASET)?;
+    }
     Ok(())
 }
 
@@ -1515,7 +1545,9 @@ pub(crate) fn stored_track_table_of_recording(
     let by_id = file.group("by_identity")?;
     let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
-    Ok(stored_track_table(&rec_grp).unwrap_or_default())
+    Ok(stored_track_table(&rec_grp)
+        .into_present_rows()
+        .unwrap_or_default())
 }
 
 /// Every log attached to a recording, in the order
@@ -1636,7 +1668,7 @@ pub(crate) fn set_tracks_shelved(
     let by_id = file.group("by_identity")?;
     let id_grp = open_identity_group(&by_id, identity, Some(group_name))?;
     let rec_grp = id_grp.group(group_name)?;
-    let Some(mut tracks) = stored_track_table(&rec_grp) else {
+    let Some(mut tracks) = stored_track_table(&rec_grp).into_present_rows() else {
         log::warn!("Shelving tracks of {identity}/{group_name}, which has no track table");
         return Ok(());
     };

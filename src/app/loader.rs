@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::PathBuf,
     sync::{Arc, mpsc},
@@ -7,16 +7,16 @@ use std::{
 
 use chrono::{DateTime, Duration, Utc};
 use egui::Context;
-use gt_loaded_files::{FileHistory, RecordingLoadOrigin};
+use gt_loaded_files::{FileHistory, LoadedFileId, RecordingLoadOrigin};
 use gt_loader::StoredGtdBytes;
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog, YearResolution};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{
-    AttachedLog, DatabaseRef, HistoryAccess, ReadOnlyRecordings, RecordingInsert,
-    StoredFixPlacementRule, StoredLogSettings, StoredRecording, StoredTrackSnapshot,
-    StoredTrackSplitRule, TrackRange, TrackState,
+    AttachedLog, DatabaseRef, DbError, HistoryAccess, ReadOnlyRecordings, RecordingInsert,
+    Recordings, StoredFixPlacementRule, StoredLogSettings, StoredRecording, StoredTrackSnapshot,
+    StoredTrackSplitRule, TrackLayoutVisibility, TrackRange, TrackState,
 };
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
@@ -131,6 +131,8 @@ pub(super) enum AttachedLogRequester {
     /// every log that recording holds.
     RecordingLoad,
 
+    SessionHistoryRecording(LoadedFileId),
+
     /// The user, on the attachment's row in the log viewer's list or in the
     /// history window.
     UserOpenedTheAttachment,
@@ -231,10 +233,17 @@ pub(super) enum HistoryOpen {
     /// a fresh segmentation under the load config (recalculation), which makes
     /// every track of the new table live.
     Recalculate {
+        authority: RecalculationAuthority,
         snapshot: StoredTrackSnapshot,
         applied_current_marker_settings: bool,
         placement: LoadedRecordingPlacement,
     },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum RecalculationAuthority {
+    SelectedLayout,
+    StoredPayload,
 }
 
 #[derive(Clone, Debug)]
@@ -306,6 +315,7 @@ pub(super) struct LoadJobs {
     next_id: u64,
     retries: BTreeMap<u64, LoadRetryAttempt>,
     file_dialogs: Vec<PendingFileDialog>,
+    session_attachments: BTreeSet<u64>,
     /// Path to the history database file, forwarded to background load threads
     /// so they can insert recordings after parsing.  `None` when storage is
     /// unavailable (DB failed to open at startup).
@@ -331,6 +341,7 @@ impl LoadJobs {
             next_id: 0,
             retries: BTreeMap::new(),
             file_dialogs: Vec::new(),
+            session_attachments: BTreeSet::new(),
             db_path: None,
             analysis_config: AnalysisConfig::default(),
             pending_writes,
@@ -698,6 +709,12 @@ impl LoadJobs {
         requested_by: AttachedLogRequester,
     ) -> u64 {
         let id = self.alloc_id();
+        if matches!(
+            requested_by,
+            AttachedLogRequester::SessionHistoryRecording(_)
+        ) {
+            self.session_attachments.insert(id);
+        }
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
             id,
@@ -816,6 +833,7 @@ impl LoadJobs {
                     }
                 }
                 LoadMessage::Completed { id, completion } => {
+                    self.session_attachments.remove(&id);
                     let Some(index) = self.loading_jobs.iter().position(|job| job.id == id) else {
                         log::warn!("Completed load {id} has no registered job");
                         continue;
@@ -831,6 +849,10 @@ impl LoadJobs {
             }
         }
         completed
+    }
+
+    pub(super) fn restoring_session_attachments(&self) -> bool {
+        !self.session_attachments.is_empty()
     }
 
     /// Remove the entries from `finishing_jobs` that have fully faded. `now` is
@@ -1166,6 +1188,7 @@ fn recalculate_stored_tracks(
     config: &SegmentationConfig,
     filename: &str,
     pending_writes: &PendingWrites,
+    authority: RecalculationAuthority,
 ) -> TrackRecalculation {
     use gt_store::HistoryDatabase;
     let _write = match pending_writes.try_begin(
@@ -1182,8 +1205,25 @@ fn recalculate_stored_tracks(
     let settings = stored_segmentation_from_config(config);
     let access = HistoryAccess::lock();
     let db_ref = expected.recording();
-    let result = gt_store::Recordings::open_or_create(db_path)
-        .and_then(|mut db| access.replace_track_layout(&mut db, expected, tracks, settings));
+    let requires_current_layout = matches!(authority, RecalculationAuthority::SelectedLayout);
+    let result = if requires_current_layout
+        && (!expected.is_current_with_membership() || !db_path.is_file())
+    {
+        Err(DbError::StoredTrackLayoutChanged)
+    } else {
+        Recordings::open_or_create(db_path).and_then(|mut db| {
+            if requires_current_layout && !expected.is_current_with_membership() {
+                return Err(DbError::StoredTrackLayoutChanged);
+            }
+            access.replace_track_layout(
+                &mut db,
+                expected,
+                tracks,
+                settings,
+                TrackLayoutVisibility::Clear,
+            )
+        })
+    };
     match result {
         Ok(snapshot) => {
             log::info!(
@@ -1293,7 +1333,11 @@ impl ParsedRecording<'_> {
         let db_ref = stored_db_ref.or_else(|| open.as_ref().map(HistoryOpen::db_ref).cloned());
         let mut shelved_tracks = 0;
         let track_snapshot = match &open {
-            Some(HistoryOpen::Recalculate { snapshot, .. }) => {
+            Some(HistoryOpen::Recalculate {
+                authority,
+                snapshot,
+                ..
+            }) => {
                 match db_path.map_or(TrackRecalculation::Skipped, |path| {
                     recalculate_stored_tracks(
                         path,
@@ -1302,6 +1346,7 @@ impl ParsedRecording<'_> {
                         config,
                         filename,
                         pending_writes,
+                        *authority,
                     )
                 }) {
                     TrackRecalculation::Attempted(snapshot) => {
@@ -1439,7 +1484,7 @@ impl HistoryInsert<'_> {
         );
         let settings = stored_segmentation_from_config(config);
 
-        let mut db = match gt_store::Recordings::open_or_create(path) {
+        let mut db = match Recordings::open_or_create(path) {
             Ok(db) => db,
             Err(e) => {
                 log::warn!("Could not open history database at {}: {e}", path.display());
@@ -2367,6 +2412,7 @@ mod tests {
             &config,
             "sample.gtd",
             &PendingWrites::default(),
+            RecalculationAuthority::StoredPayload,
         );
 
         assert_eq!(stored_track_split_gap_us(&db_path, &db_ref), 42_500_000);
@@ -2397,6 +2443,7 @@ mod tests {
             &config,
             "sample.gtd",
             &pending_writes,
+            RecalculationAuthority::StoredPayload,
         );
 
         assert_eq!(stored_track_split_gap_us(&db_path, &db_ref), stored_before);
@@ -2522,17 +2569,17 @@ mod tests {
         let mut db = Recordings::open_or_create(&db_path).expect("open db");
         let stored = db.load(&db_ref).expect("load stored recording");
         assert!(
-            !stored.tracks.is_empty(),
+            !stored.track_rows().is_empty(),
             "the loaded recording must store a track table"
         );
 
         // Shelve every track (as removing all filtered data would).
-        let all: Vec<usize> = (0..stored.tracks.len()).collect();
+        let all: Vec<usize> = (0..stored.track_rows().len()).collect();
         db.set_tracks_shelved(&db_ref, &all, true).expect("shelve");
         let entries = db.list_recordings().expect("list");
         assert_eq!(
             entries.first().map(|e| e.shelved_tracks),
-            Some(stored.tracks.len()),
+            Some(stored.track_rows().len()),
             "every track should now be shelved"
         );
     }

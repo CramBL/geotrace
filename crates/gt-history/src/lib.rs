@@ -3,13 +3,14 @@ pub use gt_history_types::{
     InvalidStoredLogFilterStack, LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry,
     LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError, LogContentHash,
     NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry,
-    RecordingInsert, RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter,
-    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
+    RecordingInsert, RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLayoutRevision,
+    StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
     StoredLogSettings, StoredRecording, StoredSegmentation, StoredTrackSnapshot,
-    StoredTrackSplitRule, StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter,
-    UiStateVersionTooNew, format_count_suffix, identity_from_group_name, identity_group_name,
-    listed_track_rows, log_attachment, logs_directory_for_database, make_group_name,
+    StoredTrackSplitRule, StoredTrackTable, StoredYearResolution, TrackLayoutVisibility,
+    TrackRange, TrackState, UiStateVersionReporter, UiStateVersionTooNew, format_count_suffix,
+    identity_from_group_name, identity_group_name, listed_track_rows, log_attachment,
+    logs_directory_for_database, make_group_name,
 };
 
 #[cfg(feature = "backend-pure")]

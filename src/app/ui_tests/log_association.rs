@@ -1996,9 +1996,11 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
             RestoredLogAttachment { entry, log }
         })
         .collect();
-    harness
-        .state_mut()
-        .restore_attached_logs(&recording, Ok(restored));
+    harness.state_mut().restore_attached_logs(
+        &recording,
+        Ok(restored),
+        AttachedLogRequester::RecordingLoad,
+    );
     assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
     harness.run_steps(3);
     assert_eq!(
@@ -2640,7 +2642,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
         .to_stored_stack();
 
     match requested_by {
-        AttachedLogRequester::RecordingLoad => {
+        AttachedLogRequester::RecordingLoad | AttachedLogRequester::SessionHistoryRecording(_) => {
             restore_the_stored_attachment(&mut harness, &db_path, &second_recording)
         }
         AttachedLogRequester::UserOpenedTheAttachment => {
@@ -2672,7 +2674,10 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
     assert_eq!(
         harness.state().log_viewer.selected_log(),
         Some(match requested_by {
-            AttachedLogRequester::RecordingLoad => first_id,
+            AttachedLogRequester::RecordingLoad
+            | AttachedLogRequester::SessionHistoryRecording(_) => {
+                first_id
+            }
             AttachedLogRequester::UserOpenedTheAttachment => second_id,
         })
     );

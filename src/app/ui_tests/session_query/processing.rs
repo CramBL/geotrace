@@ -344,7 +344,7 @@ fn applying_processing_to_a_stored_recording_keeps_its_history_track_table() {
         db.load(&db_ref).unwrap()
     };
     let before = read_history();
-    assert_eq!(before.tracks, ui_tests::two_live_track_ranges());
+    assert_eq!(before.track_rows(), ui_tests::two_live_track_ranges());
     self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(
         super::execute(&mut harness, Request::ApplyProcessing),
@@ -352,7 +352,7 @@ fn applying_processing_to_a_stored_recording_keeps_its_history_track_table() {
     );
     harness.run_steps(3);
     let after = read_history();
-    assert_eq!(after.tracks, before.tracks);
+    assert_eq!(after.track_rows(), before.track_rows());
     assert_eq!(after.segmentation, before.segmentation);
     let shared = harness.state().shared.borrow();
     assert_eq!(shared.loaded_files[0].tracks.len(), 1);

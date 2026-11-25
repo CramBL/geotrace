@@ -9,7 +9,10 @@ use gt_types::{TimeRange as LoadedTimeRange, TrackIdx, TrackRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::history::{HistoryRecordings, ListHistoryRecordings};
+use crate::history::{
+    GetHistoryOpenStatus, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings,
+    OpenHistoryRecording,
+};
 use crate::inspection::{RangeDetails, RecordingDetails, TrackDetails};
 use crate::metrics::Metrics;
 use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
@@ -24,6 +27,7 @@ pub enum Request {
     CancelQuery(QueryJobRequest),
     CheckQuery(QueryText),
     DescribeSetting(SettingSelection),
+    GetHistoryOpenStatus(GetHistoryOpenStatus),
     GetQueryResults(GetQueryResults),
     GetQueryStatus(QueryJobRequest),
     GetRangeDetails(GetRangeDetails),
@@ -33,6 +37,7 @@ pub enum Request {
     ListHistoryRecordings(ListHistoryRecordings),
     ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
+    OpenHistoryRecording(OpenHistoryRecording),
     OpenPoint(OpenPoint),
     OpenQuery(QueryText),
     OpenSetting(SettingSelection),
@@ -213,6 +218,7 @@ impl TrackReference {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Reply {
     Error { code: ErrorCode },
+    HistoryOpen { operation: HistoryOpenStatus },
     HistoryRecordings { page: HistoryRecordings },
     MapPresentationQueued,
     Metrics { page: Metrics },
@@ -243,6 +249,11 @@ pub enum ErrorCode {
     Busy,
     HistoryListingFailed,
     HistoryNotReady,
+    HistoryOpenFailed,
+    HistoryOpenNotFound,
+    HistorySelectionExpired,
+    HistorySelectionRequiresDesktop,
+    HistoryTrackLayoutUnavailable,
     HistoryUnavailable,
     InactiveSetting,
     InvalidHistoryCursor,

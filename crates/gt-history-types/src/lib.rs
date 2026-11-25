@@ -15,7 +15,9 @@ pub use log_attachment::{
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
     StoredLogSettings, StoredYearResolution, logs_directory_for_database,
 };
-pub use track_snapshot::{HISTORY_LOCK, HistoryAccess, StoredTrackSnapshot};
+pub use track_snapshot::{
+    HISTORY_LOCK, HistoryAccess, StoredLayoutRevision, StoredTrackSnapshot, TrackLayoutVisibility,
+};
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,
     UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, UiStateVersionTooNew,
@@ -449,32 +451,52 @@ pub fn set_state_of_stored_rows(
     rows_left_alone
 }
 
-/// Decode a recording's stored track table, tombstones and all, from the
-/// columns `read_column` reads.
-///
-/// `read_column` reads one dataset of [`TRACKS_GROUP`] and returns `None` for a
-/// dataset the recording's table holds none of. A table written before
-/// [`TRACK_STATE_DATASET`] decodes by its [`LEGACY_TRACK_HIDDEN_DATASET`]
-/// column.
-///
-/// `None` for a table whose columns are inconsistent, which the caller treats
-/// as absent and recomputes the recording's tracks from its nav points.
-pub fn stored_track_table(
-    read_column: impl Fn(&str) -> Option<Vec<u64>>,
-) -> Option<Vec<TrackRange>> {
-    let starts = read_column(TRACK_START_DATASET).unwrap_or_default();
-    let ends = read_column(TRACK_END_DATASET).unwrap_or_default();
-    let state_column = read_column(TRACK_STATE_DATASET);
-    let legacy_column = read_column(LEGACY_TRACK_HIDDEN_DATASET);
-    let states = match &state_column {
-        Some(values) => TrackStateColumn::State(values),
-        None => TrackStateColumn::LegacyHidden(legacy_column.as_deref().unwrap_or_default()),
-    };
-    let table = track_ranges_from_columns(&starts, &ends, states);
-    if table.is_none() {
-        log::warn!("Inconsistent track table; ignoring it (tracks will be recomputed)");
+#[derive(Clone, Copy, Debug)]
+pub struct UnreadableTrackColumn;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum StoredTrackTable {
+    Damaged,
+    Missing,
+    Present(Vec<TrackRange>),
+}
+
+impl StoredTrackTable {
+    pub fn decode_present(
+        read_column: impl Fn(&str) -> Result<Option<Vec<u64>>, UnreadableTrackColumn>,
+    ) -> Self {
+        let decode = || {
+            let starts = read_column(TRACK_START_DATASET).ok()??;
+            let ends = read_column(TRACK_END_DATASET).ok()??;
+            match read_column(TRACK_STATE_DATASET).ok()? {
+                Some(states) => {
+                    track_ranges_from_columns(&starts, &ends, TrackStateColumn::State(&states))
+                }
+                None => {
+                    let hidden = read_column(LEGACY_TRACK_HIDDEN_DATASET).ok()??;
+                    track_ranges_from_columns(
+                        &starts,
+                        &ends,
+                        TrackStateColumn::LegacyHidden(&hidden),
+                    )
+                }
+            }
+        };
+        match decode() {
+            Some(rows) => Self::Present(rows),
+            None => {
+                log::warn!("Could not decode the stored track table");
+                Self::Damaged
+            }
+        }
     }
-    table
+
+    pub fn into_present_rows(self) -> Option<Vec<TrackRange>> {
+        match self {
+            Self::Present(rows) => Some(rows),
+            Self::Missing | Self::Damaged => None,
+        }
+    }
 }
 
 /// The time a recording's nav points cover, in microseconds since epoch UTC:
@@ -653,18 +675,29 @@ pub struct RecordingEntry {
 /// A recording read back from history: the reconstructed GTD bytes plus the
 /// stored per-track ranges and the segmentation settings they were built with.
 ///
-/// `tracks` holds every row of the stored track table, including the
+/// The backend reads `meta` from the same group as `bytes`.
+///
+/// The track table includes every row, including the
 /// [`TrackState::Deleted`] tombstones of the tracks that the user deleted
 /// permanently. `bytes` holds the nav points of the listed rows alone (see
 /// [`listed_track_rows`]).
 ///
-/// `tracks`/`segmentation` are empty/`None` for recordings stored before
-/// per-track storage existed. The caller recomputes tracks from `bytes` then.
+/// Recordings from before per-track storage have a missing table and no segmentation settings.
 pub struct StoredRecording {
     pub bytes: Vec<u8>,
-    pub tracks: Vec<TrackRange>,
+    pub meta: Option<RecordingMeta>,
+    pub track_table: StoredTrackTable,
     pub segmentation: Option<StoredSegmentation>,
     pub debug_tag: Option<RecordingDebugTag>,
+}
+
+impl StoredRecording {
+    pub fn track_rows(&self) -> &[TrackRange] {
+        match &self.track_table {
+            StoredTrackTable::Present(rows) => rows,
+            StoredTrackTable::Missing | StoredTrackTable::Damaged => &[],
+        }
+    }
 }
 
 /// Criteria for selecting recordings to prune.
@@ -696,6 +729,8 @@ pub enum DbError {
         "the stored recording or its track layout changed. Reopen the recording before changing its tracks"
     )]
     StoredTrackLayoutChanged,
+    #[error("the stored track table is damaged")]
+    StoredTrackTableDamaged,
     #[error("track {index} of the recording was already deleted permanently")]
     TrackAlreadyDeleted { index: usize },
     #[error(
@@ -927,6 +962,16 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
         db_ref: &DatabaseRef,
         tracks: &[TrackRange],
         settings: StoredSegmentation,
+    ) -> Result<(), DbError> {
+        self.set_track_layout(db_ref, tracks, settings, TrackLayoutVisibility::Preserve)
+    }
+
+    fn set_track_layout(
+        &mut self,
+        db_ref: &DatabaseRef,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+        visibility: TrackLayoutVisibility,
     ) -> Result<(), DbError>;
 
     /// Shelve the tracks in the stored table rows `rows` of a recording, or

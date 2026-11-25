@@ -5,8 +5,9 @@ use std::time::Duration;
 use chrono::{DateTime, NaiveDate, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    AnalysisSettingKey, GetQueryResults, GetRangeDetails, HistoryDates, HistoryRecordings,
-    ListHistoryRecordings, ListMetrics, ListRecordings, Metrics, OpenPoint, PointDetails,
+    AnalysisSettingKey, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails, HistoryDates,
+    HistoryOpenId, HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings,
+    ListMetrics, ListRecordings, Metrics, OpenHistoryRecording, OpenPoint, PointDetails,
     QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
     QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
     QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation, RangeDetails,
@@ -86,6 +87,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "cancel_query",
             "check_query",
             "describe_setting",
+            "get_history_open_status",
             "get_query_results",
             "get_query_status",
             "get_range_details",
@@ -95,6 +97,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "list_history_recordings",
             "list_metrics",
             "list_recordings",
+            "open_history_recording",
             "open_point",
             "open_query",
             "open_setting",
@@ -294,6 +297,30 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     self::assert_ui_tools_queue_requests(&mut client).await;
     self::assert_setting_tools_report_typed_values(&mut client).await;
     self::assert_history_listing_uses_the_date_filter(&mut client).await;
+    let opened = client.exchange(json!({
+        "jsonrpc": "2.0", "id": 31, "method": "tools/call",
+        "params": {"name": "open_history_recording", "arguments": {"recording": Uuid::from_u128(6)}}
+    })).await;
+    assert_eq!(
+        opened.pointer("/result/structuredContent/operation"),
+        Some(&json!(HISTORY_OPEN))
+    );
+    assert_eq!(
+        opened.pointer("/result/structuredContent/state/kind"),
+        Some(&json!("reading"))
+    );
+    let ready = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 32, "method": "tools/call",
+            "params": {"name": "get_history_open_status", "arguments": {"operation": HISTORY_OPEN}}
+        }))
+        .await;
+    assert_eq!(
+        ready.pointer("/result/structuredContent/state"),
+        Some(&json!({
+            "kind": "ready", "recording": self::recording_id(7), "reused": false
+        }))
+    );
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
@@ -416,6 +443,9 @@ async fn assert_setting_tools_report_typed_values(client: &mut Client) {
 
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
     match request {
+        Request::OpenHistoryRecording(_) | Request::GetHistoryOpenStatus(_) => {
+            self::history_open_fixture(&request)
+        }
         Request::ApplyProcessing => Ok(Reply::ProcessingQueued),
         Request::GetSettings => Ok(Reply::Settings {
             settings: vec![self::setting_fixture(10.0)],
@@ -627,6 +657,41 @@ fn recording_id(number: u64) -> RecordingReference {
         number,
     }
 }
+
+fn history_open_fixture(request: &Request) -> io::Result<Reply> {
+    match request {
+        Request::OpenHistoryRecording(OpenHistoryRecording { recording })
+            if serde_json::to_value(recording)
+                .is_ok_and(|value| value == json!(Uuid::from_u128(6))) =>
+        {
+            Ok(Reply::HistoryOpen {
+                operation: HistoryOpenStatus {
+                    operation: HISTORY_OPEN,
+                    state: HistoryOpenState::Reading,
+                },
+            })
+        }
+        Request::GetHistoryOpenStatus(GetHistoryOpenStatus { operation })
+            if *operation == HISTORY_OPEN =>
+        {
+            Ok(Reply::HistoryOpen {
+                operation: HistoryOpenStatus {
+                    operation: *operation,
+                    state: HistoryOpenState::Ready {
+                        recording: self::recording_id(7),
+                        reused: false,
+                    },
+                },
+            })
+        }
+        _ => Err(ErrorKind::InvalidInput.into()),
+    }
+}
+
+const HISTORY_OPEN: HistoryOpenId = HistoryOpenId {
+    session: Uuid::from_u128(1),
+    id: Uuid::from_u128(8),
+};
 
 fn track_reference() -> TrackReference {
     TrackReference {

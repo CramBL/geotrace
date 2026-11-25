@@ -3,19 +3,19 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
+use gt_loaded_files::LoadedFileId;
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::{
-    DatabaseRef, DbError, StoredFixPlacementRule, StoredTrackSnapshot, StoredTrackSplitRule,
-    TrackState,
-};
+use gt_session_bridge::ErrorCode;
+use gt_store::{DatabaseRef, DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
 use gt_ui_components::HeldBodyLines;
 
 use super::anchored_dialog::AnchoredDialogKind;
 use super::association_batches::RecordingOperationOrigin;
 use super::auto_prune::AutoPruneOutcome;
-use super::history_db::OpenedRecording;
+use super::history_db::{OpenedRecording, SessionRestoration};
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
-use super::loader::LoadedRecordingPlacement;
+use super::loader::{AttachedLogRequester, LoadedRecordingPlacement, RecalculationAuthority};
+use super::session_history::OpenStop;
 use super::{App, ResegmentPrompt, history, history_db, loader, modals, storage};
 
 fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
@@ -58,7 +58,7 @@ enum HistoryFailureChoice {
 
 /// What the user chose in the "Track settings differ" prompt.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ResegmentChoice {
+pub(super) enum ResegmentChoice {
     Cancel,
     RecalculateWithCurrentSettings,
     UseStoredTracks,
@@ -81,6 +81,7 @@ impl MarksDroppedByRecalculating {
     fn of_the_prompted_recording(
         prompt: &ResegmentPrompt,
         tree: &gt_side_panel::TreeState,
+        saved_hidden_track_count: Option<usize>,
     ) -> Self {
         Self {
             shelved_tracks: prompt
@@ -90,8 +91,8 @@ impl MarksDroppedByRecalculating {
                 .filter(|track| track.state == TrackState::Shelved)
                 .count(),
             hidden_tracks: tree
-                .hidden_track_numbers(&prompt.db_ref)
-                .map_or(0, BTreeSet::len),
+                .hidden_track_numbers_for_layout(prompt.track_snapshot.layout())
+                .map_or(saved_hidden_track_count.unwrap_or_default(), BTreeSet::len),
         }
     }
 
@@ -153,11 +154,26 @@ impl App {
     /// Ending the previous worker joins its thread, blocking until the request
     /// it is on finishes.
     pub(super) fn install_history_worker(&mut self, worker: history_db::HistoryWorker) {
+        self.session_history.expire();
+        self.pending_resegment
+            .take_if(|prompt| prompt.origin.session_history().is_some());
+        self.queued_resegments
+            .retain(|prompt| prompt.origin.session_history().is_none());
         let previous = std::mem::replace(&mut self.history, worker);
         previous.shutdown();
         self.sync_db_path();
         self.history_window.invalidate();
         self.store_the_hidden_tracks_the_settings_file_lists();
+    }
+
+    pub(super) fn expire_stale_history_settings(&mut self) {
+        if let Some(operation) = self.session_history.expire_stale_settings_decision() {
+            self.history_window.invalidate();
+            let is_expired =
+                |prompt: &ResegmentPrompt| prompt.origin.session_history() == Some(operation);
+            self.pending_resegment.take_if(|prompt| is_expired(prompt));
+            self.queued_resegments.retain(|prompt| !is_expired(prompt));
+        }
     }
 
     /// Put a freshly opened database behind the history worker.
@@ -289,31 +305,53 @@ impl App {
     /// prompt instead (recalculate vs. use the stored tracks).
     fn begin_history_open(
         &mut self,
-        db_ref: gt_store::DatabaseRef,
         placement: loader::LoadedRecordingPlacement,
-        stored: gt_store::StoredRecording,
-        track_snapshot: StoredTrackSnapshot,
+        mut opened: OpenedRecording,
         origin: RecordingOperationOrigin,
     ) {
         // Reuse the original filename: the identity is the filename (with an
         // "auto:" prefix for auto-derived ones).
+        let db_ref = opened.track_snapshot.recording();
         let filename = db_ref
             .identity
             .strip_prefix("auto:")
             .unwrap_or(&db_ref.identity)
             .to_owned();
 
-        let mode = load_mode_for_stored_recording(&stored);
+        let mode = load_mode_for_stored_recording(&opened.stored);
+        let settings_differ = !opened.track_snapshot.rows().is_empty()
+            && opened.stored.segmentation.is_some_and(|settings| {
+                !loader::stored_tracks_match_config(&settings, &self.processing_config)
+            });
+        if let Some(operation) = origin.session_history() {
+            if settings_differ {
+                self.session_history.await_settings(operation, &mut opened);
+            } else if !self.session_history.begin_load(
+                operation,
+                self.shared.borrow().loaded_files.view(),
+                &mut opened,
+                self.processing_config,
+            ) {
+                return;
+            }
+        }
+        let OpenedRecording {
+            stored,
+            track_snapshot,
+            ui_state,
+            ..
+        } = opened;
+        if let Some(ui_state) = ui_state {
+            self.apply_the_ui_state_stored_with_a_recording(
+                track_snapshot.layout().clone(),
+                ui_state,
+            );
+        }
         match stored.segmentation {
             // A stored track setting differs from the current one: let the user
             // choose before changing track ranges that the shelved state may
             // refer to, or the positions the fixes are drawn at.
-            Some(stored_settings)
-                if !loader::stored_tracks_match_config(
-                    &stored_settings,
-                    &self.processing_config,
-                ) && !track_snapshot.rows().is_empty() =>
-            {
+            Some(stored_settings) if settings_differ => {
                 let marker_settings_changed = !loader::marker_settings_match_config(
                     &stored_settings,
                     &self.processing_config,
@@ -332,7 +370,6 @@ impl App {
                 }
                 let prompt = ResegmentPrompt {
                     origin,
-                    db_ref,
                     filename,
                     bytes: stored.bytes.into(),
                     stored: stored_settings,
@@ -493,19 +530,37 @@ impl App {
         if retry.is_some_and(|attempt| !self.load_failures.retry_is_pending(attempt)) {
             return;
         }
+        let operation = origin.session_history();
+        if operation.is_some_and(|id| !self.session_history.is_pending(id)) {
+            return;
+        }
         match result {
             Ok(opened) => {
-                self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
-                self.begin_history_open(
-                    db_ref,
-                    placement,
-                    opened.stored,
-                    opened.track_snapshot,
-                    origin,
-                );
+                if let Some(id) = operation
+                    && !opened.track_snapshot.is_current_with_membership()
+                {
+                    self.history_window.invalidate();
+                    self.session_history.finish(id, OpenStop::Expired);
+                    return;
+                }
+                self.begin_history_open(placement, opened, origin);
             }
             Err(e) => {
                 log::error!("Failed to load recording from history: {e}");
+                if let Some(id) = operation {
+                    let state = match e {
+                        DbError::StoredTrackLayoutChanged => {
+                            self.history_window.invalidate();
+                            OpenStop::Expired
+                        }
+                        DbError::StoredTrackTableDamaged => {
+                            OpenStop::Failed(ErrorCode::HistoryTrackLayoutUnavailable)
+                        }
+                        _ => OpenStop::Failed(ErrorCode::HistoryOpenFailed),
+                    };
+                    self.session_history.finish(id, state);
+                    return;
+                }
                 let request = LoadReadRequest::OpenStoredRecording {
                     recording: db_ref.clone(),
                     placement,
@@ -570,8 +625,16 @@ impl App {
                     log::warn!("Storing the display settings of a recording failed: {e}");
                 }
             }
-            Response::RecordingUiStateLoaded { db_ref, ui_state } => {
-                self.apply_the_ui_state_stored_with_a_recording(&db_ref, ui_state);
+            Response::RecordingUiStateLoaded(Ok((observation, ui_state))) => {
+                self.apply_the_ui_state_stored_with_a_recording(observation, Ok(ui_state));
+            }
+            Response::RecordingUiStateLoaded(Err(error)) => {
+                log::warn!("Reading the display settings of a recording failed: {error}");
+            }
+            Response::SessionRecordingRestored(restoration) => {
+                if let Some(restoration) = restoration {
+                    self.apply_session_restoration(*restoration);
+                }
             }
             Response::StoredTrackTableLoaded { db_ref, tracks } => {
                 self.history_window.set_shelf_track_table(&db_ref, tracks);
@@ -587,7 +650,11 @@ impl App {
             Response::AttachedLogsLoaded {
                 db_ref,
                 attachments,
-            } => self.restore_attached_logs(&db_ref, attachments),
+            } => self.restore_attached_logs(
+                &db_ref,
+                attachments,
+                AttachedLogRequester::RecordingLoad,
+            ),
             Response::AttachedLogSettingsStored(completion) => {
                 self.apply_attached_log_settings_outcome(completion);
             }
@@ -623,6 +690,51 @@ impl App {
                 log::debug!("Did not run {label:?}: {rejection}");
             }
         }
+    }
+
+    fn apply_session_restoration(&mut self, restoration: SessionRestoration) {
+        let SessionRestoration {
+            file,
+            observation,
+            snap,
+            attachments,
+        } = restoration;
+        let shared = self.shared.borrow();
+        let files = shared.loaded_files.view();
+        let current = files.entry_for_id(file).is_some_and(|entry| {
+            entry.history().track_snapshot().is_some_and(|snapshot| {
+                snapshot.same_observation(&observation) && observation.is_current_with_membership()
+            })
+        });
+        drop(shared);
+        if current {
+            let recording = observation.recording();
+            match snap {
+                Ok(Some(bytes)) => self.restore_snap_runs(recording, &bytes),
+                Ok(None) => {}
+                Err(error) => log::warn!("Loading stored snap runs failed: {error}"),
+            }
+            if self.session_attachment_target_is_unambiguous(file, recording) {
+                self.restore_attached_logs(
+                    recording,
+                    attachments,
+                    AttachedLogRequester::SessionHistoryRecording(file),
+                );
+            }
+        }
+    }
+
+    pub(super) fn session_attachment_target_is_unambiguous(
+        &self,
+        file: LoadedFileId,
+        recording: &DatabaseRef,
+    ) -> bool {
+        let shared = self.shared.borrow();
+        let files = shared.loaded_files.view();
+        let mut copies = files
+            .entries()
+            .filter(|entry| entry.history().db_ref() == Some(recording));
+        copies.next().is_some_and(|entry| entry.id() == file) && copies.next().is_none()
     }
 
     pub(super) fn show_history_window(&mut self, ui: &egui::Ui) {
@@ -798,11 +910,25 @@ impl App {
         {
             return;
         }
+        let operation = prompt.origin.session_history();
+        if let Some(id) = operation
+            && !(self.session_history.is_pending(id)
+                && prompt.track_snapshot.is_current_with_membership())
+        {
+            if self.session_history.is_pending(id) {
+                self.session_history.finish(id, OpenStop::Expired);
+            }
+            return;
+        }
         let current = loader::stored_segmentation_from_config(&self.processing_config);
+        let can_recalculate = operation.is_none()
+            || (self.loader.db_path.is_some()
+                && self.pending_writes.write_access().allows_writing());
         let stored = prompt.stored;
         let recalculation_warning = MarksDroppedByRecalculating::of_the_prompted_recording(
             &prompt,
             &self.shared.borrow().tree,
+            operation.and_then(|id| self.session_history.saved_hidden_track_count(id)),
         )
         .warning_line();
         let fmt_gap = |us: i64| format!("{}s", us / 1_000_000);
@@ -880,11 +1006,12 @@ impl App {
             |ui| {
                 let mut choice = None;
                 if ui
-                    .button("Recalculate with current settings")
+                    .add_enabled(can_recalculate, Button::new("Recalculate with current settings"))
                     .on_hover_text(
                         "Re-split the recording with the current settings, replacing the stored \
                          tracks",
                     )
+                    .on_disabled_hover_text("Recalculating a session recording requires writable History with storage enabled")
                     .clicked()
                 {
                     choice = Some(ResegmentChoice::RecalculateWithCurrentSettings);
@@ -909,6 +1036,9 @@ impl App {
             },
         );
 
+        if let (Some(id), Some(choice)) = (operation, choice) {
+            self.session_history.apply_settings_choice(id, choice);
+        }
         match choice {
             Some(ResegmentChoice::RecalculateWithCurrentSettings) => {
                 self.loader.spawn_gtd_bytes(
@@ -917,6 +1047,11 @@ impl App {
                     self.processing_config,
                     prompt.mode,
                     Some(loader::HistoryOpen::Recalculate {
+                        authority: if operation.is_some() {
+                            RecalculationAuthority::SelectedLayout
+                        } else {
+                            RecalculationAuthority::StoredPayload
+                        },
                         snapshot: prompt.track_snapshot,
                         applied_current_marker_settings: prompt.marker_settings_changed,
                         placement: prompt.placement,

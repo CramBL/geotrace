@@ -8,6 +8,7 @@
 //! threads, which open the database by path. The global database lock keeps the
 //! two paths safe.
 //!
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -17,18 +18,20 @@ use std::thread::JoinHandle;
 
 use egui::Context;
 use gt_loaded_files::{LoadedFileId, StoredTrackSnapshotUpdate};
+use gt_loader::StoredGtdBytes;
 use gt_log_view::{
     AttachmentSettingsCompletion, AttachmentSettingsWrite, LogAttachmentRef, LogSaveCompletion,
     LogSaveReceipt, LogSaveRequest,
 };
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
-use gt_session_bridge::HistoryEntries;
+use gt_session_bridge::{HistoryEntries, HistoryOpenId, HistoryOpenSelection};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, LogAttachmentEntry,
     LogAttachmentError, LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _,
     LogContentHash, LogToAttach, PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _,
-    ReadOnlyRecordings, RecordingUiState, Recordings, RecordingsHandle, StoredLogSettings,
-    StoredRecording, StoredTrackSnapshot, TrackRange, TrackState, UiStateVersionReporter,
+    ReadOnlyRecordings, RecordingUiState, Recordings, RecordingsHandle, StoredLayoutRevision,
+    StoredLogSettings, StoredRecording, StoredTrackSnapshot, StoredTrackTable, TrackRange,
+    TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -207,12 +210,35 @@ enum ReadRequest {
     LoadStoredTrackTable(DatabaseRef),
     Open {
         origin: RecordingOperationOrigin,
-        db_ref: DatabaseRef,
+        target: OpenTarget,
         placement: LoadedRecordingPlacement,
     },
     PrunePreview(PruneMode),
+    RestoreSessionRecording {
+        file: LoadedFileId,
+        observation: StoredTrackSnapshot,
+    },
     /// Look each of the recordings that arrived from disk up in the database.
     ScreenRecordingsFromDisk(Vec<RecordingFromDisk>),
+}
+
+struct SessionOpenRead {
+    selection: HistoryOpenSelection,
+    reuse_bytes: Option<Arc<[u8]>>,
+}
+
+enum OpenTarget {
+    Address(DatabaseRef),
+    Checked(SessionOpenRead),
+}
+
+impl OpenTarget {
+    fn recording(&self) -> &DatabaseRef {
+        match self {
+            Self::Address(recording) => recording,
+            Self::Checked(read) => read.selection.recording(),
+        }
+    }
 }
 
 /// A request that changes the database, which only [`RecordingsHandle::writer`]
@@ -252,7 +278,7 @@ enum WriteRequest {
     StoreAttachedLogSettings(AttachmentSettingsWrite),
     /// Store the UI state of a recording, which holds its hidden tracks.
     StoreRecordingUiState {
-        db_ref: DatabaseRef,
+        target: RecordingUiStateTarget,
         ui_state: RecordingUiState,
     },
     /// Store a recording's serialized snap runs (opaque to the database).
@@ -260,6 +286,11 @@ enum WriteRequest {
         db_ref: DatabaseRef,
         blob: Vec<u8>,
     },
+}
+
+enum RecordingUiStateTarget {
+    Observed(StoredLayoutRevision),
+    SettingsFile(DatabaseRef),
 }
 
 impl WriteRequest {
@@ -316,7 +347,15 @@ pub struct ExistingLogAttachment {
 pub struct OpenedRecording {
     pub stored: StoredRecording,
     pub track_snapshot: StoredTrackSnapshot,
-    pub ui_state: Result<RecordingUiState, DbError>,
+    pub ui_state: Option<Result<RecordingUiState, DbError>>,
+    pub matches_reuse_payload: bool,
+}
+
+pub struct SessionRestoration {
+    pub file: LoadedFileId,
+    pub observation: StoredTrackSnapshot,
+    pub snap: Result<Option<Vec<u8>>, DbError>,
+    pub attachments: Result<Vec<RestoredLogAttachment>, DbError>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -370,16 +409,14 @@ pub enum Response {
     },
     PrunePreview(Result<Vec<DatabaseRef>, DbError>),
     /// The UI state stored with a recording the user loaded from disk.
-    RecordingUiStateLoaded {
-        db_ref: DatabaseRef,
-        ui_state: Result<RecordingUiState, DbError>,
-    },
+    RecordingUiStateLoaded(Result<(StoredLayoutRevision, RecordingUiState), DbError>),
     /// Outcome of a UI state store. The app logs a failure: the hidden tracks
     /// the session shows stay as they are.
     RecordingUiStateStored(Result<(), DbError>),
     /// Which of the recordings that arrived from disk the database already
     /// holds.
     RecordingsFromDiskScreened(ScreenedRecordings),
+    SessionRecordingRestored(Option<Box<SessionRestoration>>),
     /// A recording's stored snap runs, `None` when it has no stored runs.
     SnapRunsLoaded {
         db_ref: DatabaseRef,
@@ -419,6 +456,7 @@ pub struct HistoryWorker {
     path: Option<PathBuf>,
     ui_state_versions: Arc<UiStateVersionReporter>,
     writable_registry: Option<PendingWrites>,
+    session_restore_count: Cell<usize>,
 }
 
 impl HistoryWorker {
@@ -434,6 +472,7 @@ impl HistoryWorker {
             path: None,
             ui_state_versions: Arc::default(),
             writable_registry: None,
+            session_restore_count: Cell::new(0),
         }
     }
 
@@ -456,6 +495,7 @@ impl HistoryWorker {
             path,
             ui_state_versions,
             writable_registry,
+            session_restore_count: Cell::new(0),
         }
     }
 
@@ -550,9 +590,51 @@ impl HistoryWorker {
     pub(super) fn open_with_origin(&self, db_ref: DatabaseRef, origin: RecordingOperationOrigin) {
         self.send_read(ReadRequest::Open {
             origin,
-            db_ref,
+            target: OpenTarget::Address(db_ref),
             placement: LoadedRecordingPlacement::AddAnEntry,
         });
+    }
+
+    pub(super) fn open_session_recording(
+        &self,
+        operation: HistoryOpenId,
+        selection: HistoryOpenSelection,
+        reuse_bytes: Option<Arc<[u8]>>,
+    ) -> bool {
+        self.req_tx.as_ref().is_some_and(|tx| {
+            tx.send(Request::Read(ReadRequest::Open {
+                origin: RecordingOperationOrigin::SessionHistory(operation),
+                target: OpenTarget::Checked(SessionOpenRead {
+                    selection,
+                    reuse_bytes,
+                }),
+                placement: LoadedRecordingPlacement::AddAnEntry,
+            }))
+            .is_ok()
+        })
+    }
+
+    pub(super) fn restore_session_recording(
+        &self,
+        file: LoadedFileId,
+        observation: StoredTrackSnapshot,
+    ) {
+        if self.writable_registry.is_some()
+            && let Some(tx) = &self.req_tx
+            && tx
+                .send(Request::Read(ReadRequest::RestoreSessionRecording {
+                    file,
+                    observation,
+                }))
+                .is_ok()
+        {
+            self.session_restore_count
+                .set(self.session_restore_count.get() + 1);
+        }
+    }
+
+    pub(super) fn restoring_session_recordings(&self) -> bool {
+        self.session_restore_count.get() != 0
     }
 
     /// Read a recording back to put it over the entry the view already holds
@@ -560,7 +642,7 @@ impl HistoryWorker {
     pub fn open_over_the_loaded_entry(&self, db_ref: DatabaseRef) {
         self.send_read(ReadRequest::Open {
             origin: RecordingOperationOrigin::Independent,
-            db_ref,
+            target: OpenTarget::Address(db_ref),
             placement: LoadedRecordingPlacement::ReplaceTheLoadedEntry,
         });
     }
@@ -636,8 +718,22 @@ impl HistoryWorker {
         self.send_read(ReadRequest::LoadRecordingUiState(db_ref));
     }
 
-    pub fn store_recording_ui_state(&self, db_ref: DatabaseRef, ui_state: RecordingUiState) {
-        self.send_write(WriteRequest::StoreRecordingUiState { db_ref, ui_state });
+    pub fn store_recording_ui_state(
+        &self,
+        observation: StoredLayoutRevision,
+        ui_state: RecordingUiState,
+    ) {
+        self.send_write(WriteRequest::StoreRecordingUiState {
+            target: RecordingUiStateTarget::Observed(observation),
+            ui_state,
+        });
+    }
+
+    pub fn migrate_recording_ui_state(&self, recording: DatabaseRef, ui_state: RecordingUiState) {
+        self.send_write(WriteRequest::StoreRecordingUiState {
+            target: RecordingUiStateTarget::SettingsFile(recording),
+            ui_state,
+        });
     }
 
     pub fn load_attached_logs(&self, db_ref: DatabaseRef) {
@@ -677,7 +773,7 @@ impl HistoryWorker {
         self.req_tx.as_ref().is_some_and(|tx| {
             tx.send(Request::Read(ReadRequest::Open {
                 origin: RecordingOperationOrigin::Retry(attempt),
-                db_ref: recording,
+                target: OpenTarget::Address(recording),
                 placement,
             }))
             .is_ok()
@@ -710,6 +806,10 @@ impl HistoryWorker {
     pub fn poll(&self) -> Vec<Response> {
         let mut out = Vec::new();
         while let Ok(resp) = self.resp_rx.try_recv() {
+            if matches!(resp, Response::SessionRecordingRestored(_)) {
+                self.session_restore_count
+                    .set(self.session_restore_count.get().saturating_sub(1));
+            }
             out.push(resp);
         }
         out
@@ -790,7 +890,7 @@ fn worker_loop(
 ) {
     while let Ok(req) = req_rx.recv() {
         let resp = match req {
-            Request::Read(req) => handle_read_request(db.read(), req, ui_state_versions),
+            Request::Read(req) => handle_read_request(&db, req, ui_state_versions),
             Request::Write(req) => {
                 run_write_request(&mut db, req, pending_writes, ui_state_versions)
             }
@@ -820,29 +920,62 @@ fn run_write_request(
 }
 
 fn handle_read_request(
-    db: &ReadOnlyRecordings,
+    history: &RecordingsHandle,
     req: ReadRequest,
     ui_state_versions: &UiStateVersionReporter,
 ) -> Response {
+    let db = history.read();
     match req {
         ReadRequest::List(request) => Response::Listed {
             request,
             entries: db.list_recordings().map(HistoryEntries::new),
         },
         ReadRequest::Open {
-            db_ref,
+            target,
             placement,
             origin,
         } => {
-            let access = HistoryAccess::lock();
-            let result =
-                access
-                    .load_recording_with_snapshot(db, &db_ref)
-                    .map(|(stored, track_snapshot)| OpenedRecording {
-                        track_snapshot,
-                        stored,
-                        ui_state: db.recording_ui_state(&db_ref, ui_state_versions),
+            let db_ref = target.recording().clone();
+            let result = (|| {
+                let access = HistoryAccess::lock();
+                let checked = match target {
+                    OpenTarget::Checked(read) => Some(read),
+                    OpenTarget::Address(_) => None,
+                };
+                if checked.is_some() && !db.contains(&db_ref)? {
+                    return Err(DbError::StoredTrackLayoutChanged);
+                }
+                let (stored, track_snapshot) = access.load_recording_with_snapshot(db, &db_ref)?;
+                if let Some(read) = &checked {
+                    if !read.selection.matches_read_metadata(stored.meta) {
+                        return Err(DbError::StoredTrackLayoutChanged);
+                    }
+                    if matches!(stored.track_table, StoredTrackTable::Damaged) {
+                        return Err(DbError::StoredTrackTableDamaged);
+                    }
+                }
+                let ui_state = (checked.is_none() || matches!(history, RecordingsHandle::Owner(_)))
+                    .then(|| db.recording_ui_state(&db_ref, ui_state_versions));
+                drop(access);
+                let matches_reuse_payload = checked
+                    .and_then(|read| read.reuse_bytes)
+                    .is_some_and(|bytes| {
+                        bytes.as_ref() == stored.bytes
+                            || match gt_loader::same_recorded_payload(&bytes, StoredGtdBytes(&stored.bytes)) {
+                                Ok(matches) => matches,
+                                Err(error) => {
+                                    log::warn!("Could not compare the loaded and stored recordings: {error}");
+                                    false
+                                }
+                            }
                     });
+                Ok(OpenedRecording {
+                    track_snapshot,
+                    stored,
+                    ui_state,
+                    matches_reuse_payload,
+                })
+            })();
             Response::Opened {
                 origin,
                 db_ref,
@@ -861,23 +994,34 @@ fn handle_read_request(
             Response::StoredTrackTableLoaded { db_ref, tracks }
         }
         ReadRequest::LoadRecordingUiState(db_ref) => {
-            let ui_state = db.recording_ui_state(&db_ref, ui_state_versions);
-            Response::RecordingUiStateLoaded { db_ref, ui_state }
+            let access = HistoryAccess::lock();
+            let observed = access
+                .read_track_snapshot(db, &db_ref)
+                .and_then(|observation| {
+                    db.recording_ui_state(&db_ref, ui_state_versions)
+                        .map(|ui_state| (observation.layout().clone(), ui_state))
+                });
+            Response::RecordingUiStateLoaded(observed)
         }
         ReadRequest::LoadAttachedLogs(db_ref) => {
-            let attachments = db.log_attachments(&db_ref).map(|entries| {
-                entries
-                    .into_iter()
-                    .map(|entry| RestoredLogAttachment {
-                        log: db.load_attached_log(&db_ref, entry.id),
-                        entry,
-                    })
-                    .collect()
-            });
+            let attachments = self::read_attached_logs(db, &db_ref);
             Response::AttachedLogsLoaded {
                 db_ref,
                 attachments,
             }
+        }
+        ReadRequest::RestoreSessionRecording { file, observation } => {
+            let _access = HistoryAccess::lock();
+            let restoration = observation.is_current_with_membership().then(|| {
+                let db_ref = observation.recording();
+                Box::new(SessionRestoration {
+                    file,
+                    snap: db.snap_blob(db_ref),
+                    attachments: self::read_attached_logs(db, db_ref),
+                    observation,
+                })
+            });
+            Response::SessionRecordingRestored(restoration)
         }
         ReadRequest::LoadAttachedLog {
             attachment,
@@ -912,6 +1056,21 @@ fn handle_read_request(
             }
         }
     }
+}
+
+fn read_attached_logs(
+    db: &ReadOnlyRecordings,
+    db_ref: &DatabaseRef,
+) -> Result<Vec<RestoredLogAttachment>, DbError> {
+    db.log_attachments(db_ref).map(|entries| {
+        entries
+            .into_iter()
+            .map(|entry| RestoredLogAttachment {
+                log: db.load_attached_log(db_ref, entry.id),
+                entry,
+            })
+            .collect()
+    })
 }
 
 fn handle_write_request(
@@ -985,12 +1144,27 @@ fn handle_write_request(
         WriteRequest::StoreSnapRuns { db_ref, blob } => {
             Response::SnapRunsStored(db.set_snap_blob(&db_ref, &blob))
         }
-        WriteRequest::StoreRecordingUiState { db_ref, ui_state } => {
-            Response::RecordingUiStateStored(db.set_recording_ui_state(
-                &db_ref,
-                &ui_state,
-                ui_state_versions,
-            ))
+        WriteRequest::StoreRecordingUiState { target, ui_state } => {
+            let access = HistoryAccess::lock();
+            let result = match &target {
+                RecordingUiStateTarget::Observed(observation) if !observation.is_current() => {
+                    Ok(())
+                }
+                RecordingUiStateTarget::Observed(observation) => {
+                    let recording = observation.recording();
+                    match access.verify_layout_revision(db, observation) {
+                        Ok(()) => {
+                            db.set_recording_ui_state(recording, &ui_state, ui_state_versions)
+                        }
+                        Err(DbError::StoredTrackLayoutChanged) => Ok(()),
+                        Err(error) => Err(error),
+                    }
+                }
+                RecordingUiStateTarget::SettingsFile(recording) => {
+                    db.set_recording_ui_state(recording, &ui_state, ui_state_versions)
+                }
+            };
+            Response::RecordingUiStateStored(result)
         }
         WriteRequest::SaveLog(save) => {
             let result = RecordingLogSave {
@@ -1095,7 +1269,7 @@ impl DeletedTracks {
         let access = HistoryAccess::lock();
         let (stored, snapshot) = access.load_recording_with_snapshot(db, recording)?;
         let shelved_rows: Vec<usize> = stored
-            .tracks
+            .track_rows()
             .iter()
             .enumerate()
             .filter(|(_, track)| track.state == TrackState::Shelved)
@@ -1159,11 +1333,11 @@ fn purge_tracks_with_stored(
     // tracks against another table, and the rows that do hold a track may hold
     // tracks other than the ones that the user chose.
     for &row in drop_rows {
-        match stored.tracks.get(row) {
+        match stored.track_rows().get(row) {
             None => {
                 return Err(DbError::TrackIndexOutOfRange {
                     index: row,
-                    stored_track_count: stored.tracks.len(),
+                    stored_track_count: stored.track_rows().len(),
                 });
             }
             Some(track) if track.state == TrackState::Deleted => {
@@ -1176,7 +1350,7 @@ fn purge_tracks_with_stored(
     let drop: HashSet<usize> = drop_rows.iter().copied().collect();
 
     let a_track_survives = stored
-        .tracks
+        .track_rows()
         .iter()
         .enumerate()
         .any(|(row, t)| !drop.contains(&row) && t.state != TrackState::Deleted);
@@ -1186,7 +1360,7 @@ fn purge_tracks_with_stored(
     }
 
     let drop_ranges: Vec<Range<usize>> = stored
-        .tracks
+        .track_rows()
         .iter()
         .enumerate()
         .filter(|(row, _)| drop.contains(row))
@@ -1207,8 +1381,8 @@ fn purge_tracks_with_stored(
     // keeps its length and starts where the previous row ended, and a tombstone
     // takes the empty range there.
     let mut cursor = 0;
-    let mut new_tracks = Vec::with_capacity(stored.tracks.len());
-    for (row, t) in stored.tracks.iter().enumerate() {
+    let mut new_tracks = Vec::with_capacity(stored.track_rows().len());
+    for (row, t) in stored.track_rows().iter().enumerate() {
         let deleted = drop.contains(&row) || t.state == TrackState::Deleted;
         let len = if deleted {
             0
@@ -1326,7 +1500,7 @@ mod tests {
         };
         let stored = result.expect("open ok").stored;
         assert!(!stored.bytes.is_empty());
-        assert_eq!(stored.tracks.len(), 2);
+        assert_eq!(stored.track_rows().len(), 2);
 
         // Shelve one track.
         worker.set_tracks_shelved(
@@ -1418,7 +1592,7 @@ mod tests {
         };
         let stored = result.expect("open ok").stored;
         assert_eq!(
-            stored.tracks,
+            stored.track_rows(),
             vec![
                 TrackRange {
                     start: 0,
@@ -1786,7 +1960,7 @@ mod tests {
             panic!("expected an Opened response");
         };
         assert_eq!(
-            result.expect("the recording opens").stored.tracks,
+            result.expect("the recording opens").stored.track_rows(),
             vec![
                 TrackRange {
                     start: 0,

@@ -4,12 +4,12 @@ use std::ops::{Deref, RangeInclusive};
 use std::path::Path;
 
 use chrono::{NaiveDate, NaiveTime};
-use gt_history_types::{DatabaseRef, NavPointTimeRange, RecordingEntry};
+use gt_history_types::{DatabaseRef, NavPointTimeRange, RecordingEntry, RecordingMeta};
 use serde::{Deserialize, Serialize};
 use uuid::{Builder, Uuid};
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::protocol::ErrorCode;
+use crate::protocol::{ErrorCode, RecordingReference};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -60,6 +60,52 @@ pub struct HistoryCursor {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct HistoryRecordingId(Uuid);
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct OpenHistoryRecording {
+    pub recording: HistoryRecordingId,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GetHistoryOpenStatus {
+    pub operation: HistoryOpenId,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct HistoryOpenId {
+    pub session: Uuid,
+    pub id: Uuid,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HistoryOpenStatus {
+    pub operation: HistoryOpenId,
+    pub state: HistoryOpenState,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[expect(variant_size_differences, reason = "The ready reply fits in 32 bytes")]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HistoryOpenState {
+    AwaitingTrackSettings,
+    Cancelled,
+    Expired,
+    Failed {
+        code: ErrorCode,
+    },
+    Loading,
+    Reading,
+    Ready {
+        recording: RecordingReference,
+        reused: bool,
+    },
+}
 
 impl HistoryRecordingId {
     fn of(database: &Path, recordings: &HistoryEntries, reference: &DatabaseRef) -> Self {
@@ -122,6 +168,31 @@ pub struct HistoryListing<'a> {
 }
 
 impl HistoryListing<'_> {
+    pub fn select_for_open(
+        &self,
+        id: HistoryRecordingId,
+    ) -> Result<HistoryOpenSelection, ErrorCode> {
+        let mut matches = self.entries.iter().filter(|entry| {
+            HistoryRecordingId::of(self.database, self.entries, &entry.db_ref) == id
+        });
+        let entry = matches.next().ok_or(ErrorCode::HistorySelectionExpired)?;
+        if matches.next().is_some()
+            || self
+                .entries
+                .repeated_groups
+                .contains(&entry.db_ref.group_name)
+        {
+            return Err(ErrorCode::HistorySelectionExpired);
+        }
+        if !entry.db_ref.has_generated_group_id() {
+            return Err(ErrorCode::HistorySelectionRequiresDesktop);
+        }
+        Ok(HistoryOpenSelection {
+            recording: entry.db_ref.clone(),
+            meta: entry.meta,
+        })
+    }
+
     pub fn page(&self, request: ListHistoryRecordings) -> Result<HistoryRecordings, ErrorCode> {
         let dates = request.dates.unwrap_or_default();
         let timestamps = dates.timestamps()?;
@@ -177,6 +248,21 @@ impl HistoryListing<'_> {
             recordings,
             next_cursor,
         })
+    }
+}
+
+pub struct HistoryOpenSelection {
+    recording: DatabaseRef,
+    meta: RecordingMeta,
+}
+
+impl HistoryOpenSelection {
+    pub fn recording(&self) -> &DatabaseRef {
+        &self.recording
+    }
+
+    pub fn matches_read_metadata(&self, meta: Option<RecordingMeta>) -> bool {
+        meta == Some(self.meta)
     }
 }
 

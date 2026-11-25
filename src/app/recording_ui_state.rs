@@ -12,7 +12,7 @@ use std::fs;
 use std::mem;
 use std::path::Path;
 
-use gt_store::{DatabaseRef, DbError, RecordingUiState};
+use gt_store::{DatabaseRef, DbError, RecordingUiState, StoredLayoutRevision};
 
 use super::App;
 
@@ -58,10 +58,9 @@ pub(in crate::app) fn hidden_tracks_in_the_settings_file_at(
 }
 
 impl App {
-    /// Apply the UI state the history database holds for `db_ref` to the tree.
     pub(in crate::app) fn apply_the_ui_state_stored_with_a_recording(
         &self,
-        db_ref: &DatabaseRef,
+        observation: StoredLayoutRevision,
         ui_state: Result<RecordingUiState, DbError>,
     ) {
         let ui_state = match ui_state {
@@ -79,34 +78,42 @@ impl App {
         self.shared
             .borrow_mut()
             .tree
-            .set_hidden_tracks_of_recording(db_ref.clone(), hidden_track_numbers);
+            .apply_stored_hidden_tracks(observation, hidden_track_numbers);
     }
 
     /// Read the UI state of a recording whose tracks reached the view without
     /// it, which is one the user loaded from a file on disk.
     pub(in crate::app) fn read_the_ui_state_stored_with_a_loaded_recording(
         &self,
-        db_ref: &DatabaseRef,
+        layout: Option<&StoredLayoutRevision>,
     ) {
+        let Some(layout) = layout else {
+            return;
+        };
         if self
             .shared
             .borrow()
             .tree
-            .hidden_track_numbers(db_ref)
+            .hidden_track_numbers_for_layout(layout)
             .is_some()
         {
             return;
         }
-        self.history.load_recording_ui_state(db_ref.clone());
+        self.history
+            .load_recording_ui_state(layout.recording().clone());
     }
 
     /// Store the hidden tracks of every recording the user changed them for
     /// since this last ran.
     pub(in crate::app) fn store_the_hidden_tracks_the_user_changed(&self) {
-        let changed = self.shared.borrow_mut().tree.take_hidden_tracks_to_store();
-        for (db_ref, track_numbers) in changed {
+        let changed = self
+            .shared
+            .borrow_mut()
+            .tree
+            .take_observed_hidden_tracks_to_store();
+        for (observation, track_numbers) in changed {
             self.history.store_recording_ui_state(
-                db_ref,
+                observation,
                 RecordingUiState::with_hidden_track_numbers(
                     track_numbers
                         .into_iter()
@@ -135,7 +142,7 @@ impl App {
             return;
         }
         for entry in mem::take(&mut self.hidden_tracks_in_the_settings_file) {
-            self.history.store_recording_ui_state(
+            self.history.migrate_recording_ui_state(
                 entry.db_ref,
                 RecordingUiState::with_hidden_track_numbers(entry.track_numbers),
             );
