@@ -121,6 +121,70 @@ impl TimeWindow {
             Self::Empty => None,
         }
     }
+
+    /// Iterate over maximal runs of fixes in `selection` with times inside this window.
+    ///
+    /// The iterator follows recording order and joins adjacent runs across point chunks.
+    /// The iterator is empty for an empty or out-of-bounds selection.
+    pub fn fix_ranges(
+        self,
+        track: &LoadedTrack,
+        selection: Range<usize>,
+    ) -> impl Iterator<Item = Range<usize>> {
+        let window = if selection.is_empty() || selection.end > track.points.len() {
+            Self::Empty
+        } else {
+            self
+        };
+        let chunks = match window {
+            Self::All | Self::Empty => &[],
+            _ => track.lod.full_point_chunks(),
+        };
+        let first_chunk = chunks.partition_point(|chunk| chunk.slots().end <= selection.start);
+        let unchunked = chunks.is_empty().then(|| (selection.clone(), None));
+        let chunks = chunks
+            .iter()
+            .skip(first_chunk)
+            .map(|chunk| (chunk.slots(), Some(chunk.extent().time())))
+            .take_while(move |(slots, _)| slots.start < selection.end)
+            .map(move |(slots, time)| {
+                (
+                    slots.start.max(selection.start)..slots.end.min(selection.end),
+                    time,
+                )
+            });
+        let mut ranges = unchunked
+            .into_iter()
+            .chain(chunks)
+            .flat_map(move |(slots, time)| {
+                let covered = window == Self::All || time.is_some_and(|time| window.covers(time));
+                let scan = !covered
+                    && window != Self::Empty
+                    && time.is_none_or(|time| window.overlaps(time));
+                let whole = covered.then(|| slots.clone());
+                let mut pending = if scan { slots } else { Range::default() };
+                let partial = std::iter::from_fn(move || {
+                    let inside = |index: usize| {
+                        track
+                            .points
+                            .get(index)
+                            .is_some_and(|point| window.contains(point.tpv.time().utc()))
+                    };
+                    let first = pending.find(|&index| inside(index))?;
+                    let next_outside = pending.find(|&index| !inside(index));
+                    Some(first..next_outside.unwrap_or(pending.end))
+                });
+                whole.into_iter().chain(partial)
+            })
+            .peekable();
+        std::iter::from_fn(move || {
+            let mut run = ranges.next()?;
+            while let Some(next) = ranges.next_if(|next| next.start == run.end) {
+                run.end = next.end;
+            }
+            Some(run)
+        })
+    }
 }
 
 fn valid_positive_length(value: Length) -> bool {
@@ -204,7 +268,7 @@ pub fn point_passes_time_filter(time: DateTime<Utc>, filter: &GlobalFilter) -> b
 /// Returns `0..0` when no fix is inside the window.
 /// The range can include fixes outside the window when timestamps step backward.
 /// Use [`point_passes_time_filter`] to test individual fixes or
-/// [`time_filtered_fix_ranges`] to iterate over accepted runs in a track.
+/// [`TimeWindow::fix_ranges`] to iterate over accepted runs in a track.
 pub fn time_filtered_range(points: &[NavPoint], filter: &GlobalFilter) -> Range<usize> {
     let inside_window = |point: &NavPoint| point_passes_time_filter(point.tpv.time().utc(), filter);
     match (
@@ -214,70 +278,6 @@ pub fn time_filtered_range(points: &[NavPoint], filter: &GlobalFilter) -> Range<
         (Some(first), Some(last)) => first..last + 1,
         _ => 0..0,
     }
-}
-
-/// Iterate over maximal runs of fixes in `selection` with times inside `window`.
-///
-/// The iterator follows recording order and joins adjacent runs across point chunks.
-/// The iterator is empty for an empty or out-of-bounds selection.
-pub fn time_filtered_fix_ranges(
-    track: &LoadedTrack,
-    selection: Range<usize>,
-    window: TimeWindow,
-) -> impl Iterator<Item = Range<usize>> {
-    let window = if selection.is_empty() || selection.end > track.points.len() {
-        TimeWindow::Empty
-    } else {
-        window
-    };
-    let chunks = match window {
-        TimeWindow::All | TimeWindow::Empty => &[],
-        _ => track.lod.full_point_chunks(),
-    };
-    let first_chunk = chunks.partition_point(|chunk| chunk.slots().end <= selection.start);
-    let unchunked = chunks.is_empty().then(|| (selection.clone(), None));
-    let chunks = chunks
-        .iter()
-        .skip(first_chunk)
-        .map(|chunk| (chunk.slots(), Some(chunk.extent().time())))
-        .take_while(move |(slots, _)| slots.start < selection.end)
-        .map(move |(slots, time)| {
-            (
-                slots.start.max(selection.start)..slots.end.min(selection.end),
-                time,
-            )
-        });
-    let mut ranges = unchunked
-        .into_iter()
-        .chain(chunks)
-        .flat_map(move |(slots, time)| {
-            let covered = window == TimeWindow::All || time.is_some_and(|time| window.covers(time));
-            let scan = !covered
-                && window != TimeWindow::Empty
-                && time.is_none_or(|time| window.overlaps(time));
-            let whole = covered.then(|| slots.clone());
-            let mut pending = if scan { slots } else { Range::default() };
-            let partial = std::iter::from_fn(move || {
-                let inside = |index: usize| {
-                    track
-                        .points
-                        .get(index)
-                        .is_some_and(|point| window.contains(point.tpv.time().utc()))
-                };
-                let first = pending.find(|&index| inside(index))?;
-                let next_outside = pending.find(|&index| !inside(index));
-                Some(first..next_outside.unwrap_or(pending.end))
-            });
-            whole.into_iter().chain(partial)
-        })
-        .peekable();
-    std::iter::from_fn(move || {
-        let mut run = ranges.next()?;
-        while let Some(next) = ranges.next_if(|next| next.start == run.end) {
-            run.end = next.end;
-        }
-        Some(run)
-    })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

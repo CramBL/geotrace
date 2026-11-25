@@ -445,8 +445,10 @@ impl<'a> PreparedTrackEligibility<'a> {
             .filter(move |_| self.is_in_scope())
             .into_iter()
             .flat_map(move |track| {
-                let window = self.eligibility.filter.time_window();
-                gt_filter::time_filtered_fix_ranges(track, points.clone(), window)
+                self.eligibility
+                    .filter
+                    .time_window()
+                    .fix_ranges(track, points.clone())
             })
             .flat_map(move |range| self::exclude_hidden_fix_ranges(range, self.hidden_ranges))
     }
