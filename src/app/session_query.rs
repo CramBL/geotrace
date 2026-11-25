@@ -1,8 +1,8 @@
 use gt_loaded_files::{LoadedFilesView, RecordingData};
 use gt_query_run::RunResults;
 use gt_session_bridge::{
-    ErrorCode, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation, QueryResults, Reply,
-    Request, SessionRequest, SettingKey,
+    ApplyProcessing, ErrorCode, QueryJobId, QueryJobState, QueryJobStatus, QueryPreparation,
+    QueryResults, Reply, Request, SessionRequest, SettingKey,
 };
 use gt_types::Generation;
 use uuid::Uuid;
@@ -346,13 +346,15 @@ impl App {
         }
         let mut queries = std::mem::take(&mut self.session_query);
         let result = match request.request {
-            Request::ApplyProcessing if self.shutdown_requested() => Err(ErrorCode::ShuttingDown),
-            Request::ApplyProcessing if !self.has_loaded_nav_points() => {
-                Err(ErrorCode::NoLoadedNavPoints)
-            }
-            Request::ApplyProcessing => {
-                staged.apply_processing = true;
-                Ok(Reply::ProcessingQueued)
+            Request::ApplyProcessing(ApplyProcessing {}) => {
+                if self.shutdown_requested() {
+                    Err(ErrorCode::ShuttingDown)
+                } else if !self.has_loaded_nav_points() {
+                    Err(ErrorCode::NoLoadedNavPoints)
+                } else {
+                    staged.apply_processing = true;
+                    Ok(Reply::ProcessingQueued)
+                }
             }
             Request::CancelQuery(args) => queries.job_mut(request.session, args.job).map(|job| {
                 job.cancel();

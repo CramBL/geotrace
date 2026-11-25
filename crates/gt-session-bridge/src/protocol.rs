@@ -23,7 +23,7 @@ use crate::settings::{SetSetting, SettingInfo, SettingSelection};
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
-    ApplyProcessing,
+    ApplyProcessing(ApplyProcessing),
     CancelQuery(QueryJobRequest),
     CheckQuery(QueryText),
     DescribeSetting(SettingSelection),
@@ -46,6 +46,11 @@ pub enum Request {
     ShowOnMap(ShowOnMap),
     ShowOnPlot(ShowOnPlot),
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ApplyProcessing {}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

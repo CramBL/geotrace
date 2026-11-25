@@ -4,10 +4,10 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails, GetRecording, GetTrack,
-    ListHistoryRecordings, ListMetrics, ListRecordings, OpenHistoryRecording, OpenPoint,
-    QueryJobRequest, QueryText, Reply, Request, SetSetting, SettingSelection, ShowOnMap,
-    ShowOnPlot,
+    ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
+    GetRecording, GetTrack, ListHistoryRecordings, ListMetrics, ListRecordings,
+    OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
+    SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -42,15 +42,18 @@ struct Companion {
 #[tool_router]
 impl Companion {
     #[tool(
-        description = "Apply the current Processing settings to loaded recordings with navigation points. GeoTrace acknowledges the request with processing_queued.",
+        description = "Apply the current Processing settings to all loaded recordings with navigation points. GeoTrace acknowledges the request with processing_queued.",
         annotations(
             destructive_hint = true,
             idempotent_hint = false,
             open_world_hint = false
         )
     )]
-    async fn apply_processing(&self) -> CallToolResult {
-        self.inspect(Request::ApplyProcessing).await
+    async fn apply_processing(
+        &self,
+        Parameters(args): Parameters<ApplyProcessing>,
+    ) -> CallToolResult {
+        self.inspect(Request::ApplyProcessing(args)).await
     }
 
     #[tool(

@@ -1,14 +1,15 @@
 use std::io::{self, ErrorKind};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDate, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    AnalysisSettingKey, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails, HistoryDates,
-    HistoryOpenId, HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings,
-    ListMetrics, ListRecordings, Metrics, OpenHistoryRecording, OpenPoint, PointDetails,
-    QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
+    AnalysisSettingKey, ApplyProcessing, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
+    HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus, HistoryRecordings,
+    ListHistoryRecordings, ListMetrics, ListRecordings, Metrics, OpenHistoryRecording, OpenPoint,
+    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
     QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
     QueryResultTime, QueryResultValue, QueryResults, QueryText, QueryValidation, RangeDetails,
     RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, SetSetting,
@@ -151,6 +152,14 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     );
     assert_eq!(
         processing_tool.pointer("/annotations/idempotentHint"),
+        Some(&json!(false))
+    );
+    assert_eq!(
+        processing_tool.pointer("/inputSchema/type"),
+        Some(&json!("object"))
+    );
+    assert_eq!(
+        processing_tool.pointer("/inputSchema/additionalProperties"),
         Some(&json!(false))
     );
 
@@ -296,6 +305,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     );
     self::assert_ui_tools_queue_requests(&mut client).await;
     self::assert_setting_tools_report_typed_values(&mut client).await;
+    self::assert_processing_requires_empty_arguments(&mut client).await;
     self::assert_history_listing_uses_the_date_filter(&mut client).await;
     let opened = client.exchange(json!({
         "jsonrpc": "2.0", "id": 31, "method": "tools/call",
@@ -428,17 +438,47 @@ async fn assert_setting_tools_report_typed_values(client: &mut Client) {
         changed.pointer("/result/structuredContent"),
         Some(&expected)
     );
+}
 
-    let applied = client
-        .exchange(json!({
-            "jsonrpc": "2.0", "id": 22, "method": "tools/call",
-            "params": {"name": "apply_processing", "arguments": {}}
-        }))
-        .await;
-    assert_eq!(
-        applied.pointer("/result/structuredContent"),
-        Some(&json!({"status": "processing_queued"}))
-    );
+async fn assert_processing_requires_empty_arguments(client: &mut Client) {
+    for (id, (field, value)) in (22..).zip([
+        ("recording", json!(self::recording_id(7))),
+        ("dry_run", json!(true)),
+        ("extra", Value::Null),
+    ]) {
+        let reply = client
+            .exchange(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {"name": "apply_processing", "arguments": {field: value}}
+            }))
+            .await;
+        assert_eq!(
+            reply.pointer("/result/isError"),
+            Some(&json!(true)),
+            "field {field} returned {reply}"
+        );
+        assert!(
+            reply
+                .pointer("/result/content/0/text")
+                .and_then(Value::as_str)
+                .is_some_and(|message| message.contains(field))
+        );
+    }
+    assert_eq!(PROCESSING_DISPATCHES.load(Ordering::Relaxed), 0);
+
+    for (id, params) in (25..).zip([
+        json!({"name": "apply_processing", "arguments": {}}),
+        json!({"name": "apply_processing"}),
+    ]) {
+        let reply = client
+            .exchange(json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params}))
+            .await;
+        assert_eq!(
+            reply.pointer("/result/structuredContent"),
+            Some(&json!({"status": "processing_queued"}))
+        );
+    }
+    assert_eq!(PROCESSING_DISPATCHES.load(Ordering::Relaxed), 2);
 }
 
 fn inspection_fixture(request: Request) -> io::Result<Reply> {
@@ -446,7 +486,10 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
         Request::OpenHistoryRecording(_) | Request::GetHistoryOpenStatus(_) => {
             self::history_open_fixture(&request)
         }
-        Request::ApplyProcessing => Ok(Reply::ProcessingQueued),
+        Request::ApplyProcessing(ApplyProcessing {}) => {
+            PROCESSING_DISPATCHES.fetch_add(1, Ordering::Relaxed);
+            Ok(Reply::ProcessingQueued)
+        }
         Request::GetSettings => Ok(Reply::Settings {
             settings: vec![self::setting_fixture(10.0)],
         }),
@@ -748,3 +791,4 @@ impl Client {
 }
 
 const INVALID_QUERY_DRAFT: &str = "# Første\r\n\r\npoints | where speed > 10 km/h";
+static PROCESSING_DISPATCHES: AtomicUsize = AtomicUsize::new(0);
