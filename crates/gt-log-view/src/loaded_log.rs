@@ -18,7 +18,7 @@ use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
 };
 
-use crate::anchor::RecordingKey;
+use crate::anchor::{RecordingKey, RecordingLookup};
 use crate::association::AssociationCandidates;
 use crate::attachment::{self, LogAttachmentRef};
 use crate::attachment_settings::{
@@ -91,8 +91,7 @@ struct Association {
 
     associated_entry_count: usize,
 
-    /// The loaded recording the anchor last resolved to.
-    recording: Option<LoadedFileId>,
+    source: RecordingLookup<LoadedFileId>,
 }
 
 impl LoadedLog {
@@ -118,7 +117,7 @@ impl LoadedLog {
                 window: association_window,
                 entry_placements: Vec::new(),
                 associated_entry_count: 0,
-                recording: None,
+                source: RecordingLookup::Absent,
             },
             visible: true,
         }
@@ -334,10 +333,15 @@ impl LoadedLog {
         self.anchor_key().as_ref() == Some(recording_key)
     }
 
-    /// The loaded recording the anchor resolved to, `None` while the anchored
-    /// recording is not loaded.
     pub fn associated_recording(&self) -> Option<LoadedFileId> {
-        self.association.recording
+        match self.association.source {
+            RecordingLookup::Loaded(recording) => Some(recording),
+            RecordingLookup::Absent | RecordingLookup::SelectionRequired => None,
+        }
+    }
+
+    pub fn position_source_requires_selection(&self) -> bool {
+        matches!(self.association.source, RecordingLookup::SelectionRequired)
     }
 
     pub fn association_window(&self) -> AssociationWindow {
@@ -471,14 +475,24 @@ impl LoadedLog {
     /// without a position and stays: no log ever re-anchors to another
     /// recording without being pointed at it.
     pub fn reassociate(&mut self, recordings: &LoadedFilesView<'_>) {
-        let anchored = self
-            .anchor_key()
-            .and_then(|key| key.loaded_recording(recordings));
-        let Some(recording) = anchored else {
+        let anchored = match &mut self.context {
+            LogContext::LooseImport {
+                source: PositionSourceState::Recording(key),
+            }
+            | LogContext::DetachedAttachment { source: Some(key) } => key.resolve(recordings),
+            LogContext::SavedAttachment(state) => {
+                RecordingLookup::for_attachment(&state.attachment().recording, recordings)
+            }
+            _ => RecordingLookup::Absent,
+        };
+        let RecordingLookup::Loaded(recording) = anchored else {
             self.clear_entry_placements();
+            if matches!(anchored, RecordingLookup::SelectionRequired) {
+                self.association.source = RecordingLookup::SelectionRequired;
+            }
             return;
         };
-        self.association.recording = Some(recording.id());
+        self.association.source = RecordingLookup::Loaded(recording.id());
         let entry_placements = match self.document.parsed.chronology() {
             LogChronology::Resolved(resolved) => {
                 RecordingAssociationIndex::from_recording(recording)
@@ -551,11 +565,19 @@ impl LoadedLog {
         Some(state)
     }
 
-    fn forget_attachment(&mut self) {
+    fn forget_attachment(&mut self, recordings: &LoadedFilesView<'_>) {
         if let LogContext::SavedAttachment(state) = &self.context {
+            let source = self
+                .associated_recording()
+                .and_then(|id| recordings.entry_for_id(id))
+                .map_or_else(
+                    || RecordingKey::PendingHistory(state.attachment().recording.clone()),
+                    RecordingKey::of_loaded_recording,
+                );
             self.context = LogContext::DetachedAttachment {
-                source: Some(RecordingKey::Stored(state.attachment().recording.clone())),
+                source: Some(source),
             };
+            self.reassociate(recordings);
         }
     }
 
@@ -590,7 +612,7 @@ impl LoadedLog {
     fn clear_entry_placements(&mut self) {
         self.association.entry_placements = Vec::new();
         self.association.associated_entry_count = 0;
-        self.association.recording = None;
+        self.association.source = RecordingLookup::Absent;
     }
 }
 
@@ -799,14 +821,13 @@ impl LoadedLogs {
         let InitialLogSaveState::Failed { operation, error } = &mut log.initial_save else {
             return Err(LogOperationError::NoFailedSave);
         };
-        let target = RecordingKey::Stored(operation.recording.clone())
-            .loaded_recording(recordings)
-            .ok_or_else(|| {
-                *error = LogOperationError::TargetUnloaded.to_string();
-                LogOperationError::TargetUnloaded
-            })?
-            .id();
-        self.prepare_save(id, target, recordings, access)
+        let RecordingLookup::Loaded(target) =
+            RecordingLookup::for_attachment(&operation.recording, recordings)
+        else {
+            *error = LogOperationError::TargetUnloaded.to_string();
+            return Err(LogOperationError::TargetUnloaded);
+        };
+        self.prepare_save(id, target.id(), recordings, access)
     }
 
     pub fn acknowledge_initial_save(
@@ -1046,13 +1067,17 @@ impl LoadedLogs {
     }
 
     /// Retains the removed attachment's context independently of loose imports.
-    pub fn forget_attachment(&mut self, attachment: &LogAttachmentRef) {
+    pub fn forget_attachment(
+        &mut self,
+        attachment: &LogAttachmentRef,
+        recordings: &LoadedFilesView<'_>,
+    ) {
         if let Some(stored) = self
             .logs
             .iter_mut()
             .find(|stored| stored.log.attachment() == Some(attachment))
         {
-            stored.log.forget_attachment();
+            stored.log.forget_attachment(recordings);
             self.map_matches_stale = true;
         }
     }

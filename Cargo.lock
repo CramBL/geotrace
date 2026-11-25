@@ -2850,7 +2850,9 @@ dependencies = [
  "gt-history-types",
  "gt-test-utils",
  "gt-types",
+ "parking_lot",
  "rstest",
+ "xxhash-rust",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ use gt_history_types::{
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_logfile::ParsedLog;
 use gt_pending_writes::WriteAccess;
-use gt_types::{AssociationWindow, FileIdx};
+use gt_types::{AssociationWindow, FileIdx, Latitude};
 
 use crate::anchor::RecordingKey;
 use crate::attachment::LogAttachmentRef;
@@ -21,6 +21,7 @@ use crate::{AttachmentSettingsStatus, FilterEffect, FilterGroupOperator, test_ut
 
 #[rstest::rstest]
 #[case(true, FileHistory::None)]
+#[case(true, test_util::stored_in_history(&fixtures::attachment_ref().recording))]
 #[case(
     false,
     test_util::stored_in_history(&test_util::recording_ref_of_group("2026-01-02T14-02-11"))
@@ -65,13 +66,24 @@ fn an_attached_log_keeps_its_recording_after_another_source_is_selected(
     assert_eq!(log.associated_recording(), associated);
     assert_eq!(log.entry_placement(0), placement);
 
-    log.forget_attachment();
+    log.forget_attachment(&files.view());
+    assert_eq!(
+        log.anchor_key(),
+        Some(associated.map_or_else(
+            || RecordingKey::PendingHistory(attachment.recording.clone()),
+            RecordingKey::Session,
+        ))
+    );
     log.anchor_to_loaded_recording(Some(other), &files.view());
 
     assert_eq!(log.attachment(), None);
     assert_eq!(log.associated_recording(), Some(other));
     assert_eq!(log.anchor_key().as_ref(), Some(&other_key));
     assert_eq!(log.associated_entry_count(), 10);
+    assert_eq!(
+        log.entry_placement(0).unwrap().position.0,
+        Latitude::new(60.0)
+    );
 }
 
 #[test]
@@ -149,7 +161,7 @@ fn filter_edits_during_a_pending_write_remain_dirty_after_its_acknowledgement() 
             .settings_save_status(WriteAccess::Owner),
         AttachmentSettingsStatus::Saved
     );
-    logs.forget_attachment(&attachment);
+    logs.forget_attachment(&attachment, &recordings.view());
     assert_eq!(logs.len(), 1);
     assert_eq!(logs.get_by_id(id).and_then(LoadedLog::attachment), None);
     assert!(logs.prepare_settings_writes(WriteAccess::Owner).is_empty());
@@ -245,7 +257,7 @@ fn settings_completions_are_ignored_after_attachment_context_replacement(#[case]
     if unload {
         logs.remove_by_id(id);
     } else {
-        logs.forget_attachment(&attachment);
+        logs.forget_attachment(&attachment, &files.view());
     }
     let replacement = logs
         .restore_attachment(
@@ -515,7 +527,7 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
         [FileIdx::new(0), FileIdx::new(usize::from(!same_recording))]
     );
 
-    logs.forget_attachment(&first);
+    logs.forget_attachment(&first, &files.view());
     assert_eq!(logs.id_of_attachment(&first), None);
     assert_eq!(logs.id_of_attachment(&second), Some(second_id));
     logs.save_attachment(first_id, first.clone(), fixtures::settings(), &files.view());
@@ -632,16 +644,13 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         .to_stored_stack();
     let loose = logs.push(test_util::log_of(10)).id();
     let placement = logs.get_by_id(first).expect("saved log").entry_placement(1);
-    logs.forget_attachment(&attachment);
+    logs.forget_attachment(&attachment, &files.view());
     let detached = logs.get_by_id(first).expect("detached log");
     assert_eq!(
         detached.context_origin(),
         LogContextOrigin::DetachedAttachment
     );
-    assert_eq!(
-        detached.anchor_key(),
-        Some(RecordingKey::Stored(attachment.recording.clone()))
-    );
+    assert_eq!(detached.anchor_key(), Some(test_util::key_of(&files, 0)));
     assert_eq!(detached.entry_placement(1), placement);
     assert_eq!(detached.filters().to_stored_stack(), first_filters);
     assert_eq!(

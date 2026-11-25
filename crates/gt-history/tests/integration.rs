@@ -1064,6 +1064,24 @@ fn load_gtd_bytes_round_trips_nav_point_timestamps() {
     assert_eq!(times, expected, "loaded timestamps should match original");
 }
 
+#[cfg(feature = "backend-sys")]
+#[test]
+fn reconstructed_gtd_root_has_zero_object_timestamps() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
+    let recording = insert_two_track(&mut db, "device", 9_000_000, 20);
+    let bytes = db.load_bytes(&recording).expect("reconstruct GTD");
+    let path = dir.path().join("reconstructed.gtd");
+    fs::write(&path, bytes).expect("write GTD");
+    let reconstructed = NativeFile::open(&path).expect("open GTD");
+    let root = reconstructed.group("/").expect("root group");
+    let header = root.loc_info().expect("root object header");
+    assert_eq!(
+        [header.atime, header.mtime, header.ctime, header.btime],
+        [0; 4]
+    );
+}
+
 #[test_log::test]
 fn nav_point_f64_data_round_trips() {
     let dir = tempfile::tempdir().expect("temp dir");

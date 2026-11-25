@@ -3,16 +3,20 @@ use std::sync::Arc;
 
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Angle, Channel, NavFile, NavFileBuilder, NavFix, SolutionState};
+use gt_loaded_files::LoadedFileId;
+use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
+use gt_logfile::ParsedLog;
+use gt_side_panel::NodeKey;
 use gt_store::{
-    HistoryDatabase as _, ReadOnlyHistoryDatabase as _, Recordings, StoredFixPlacementRule,
-    TrackRange, TrackState,
+    DatabaseRef, HistoryAccess, HistoryDatabase as _, LogAttachmentId,
+    ReadOnlyHistoryDatabase as _, ReadOnlyRecordings, Recordings, StoredFixPlacementRule,
+    StoredLogFilterStack, StoredLogSettings, StoredYearResolution, TrackRange, TrackState,
 };
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use gt_track_builder::SegmentationConfig;
-use gt_types::{FileIdx, Latitude, Longitude, TrackIdx, TrackRef};
+use gt_types::{AssociationWindow, FileIdx, Latitude, Longitude, TrackIdx, TrackRef};
 use rstest::rstest;
 
-use crate::app::App;
 use crate::app::association_batches::{AssociationSubmission, RecordingOperationOrigin};
 use crate::app::recording_from_disk::{
     self, LEAVE_SHELVED_TRACKS_OUT_LABEL, LOAD_FROM_DISK_LABEL, NO_SHELVED_TRACK_HOVER,
@@ -22,6 +26,8 @@ use crate::app::recording_from_disk::{
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 use crate::app::ui_tests;
+use crate::app::{App, ParsedLogOrigin, log_viewer, modals};
+use crate::settings::InitialPositionSourcePolicy;
 
 /// The app with `ride.gtd` in its history database, the second of its two
 /// tracks shelved, and the same file sitting on disk beside the database.
@@ -338,17 +344,7 @@ fn a_different_disk_payload_never_uses_the_stored_track_rows(#[case] leave_shelv
     drop_paths(&mut harness, std::slice::from_ref(&gtd_path));
     test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
 
-    let original = std::fs::read(&gtd_path).expect("read original file");
-    let mut changed = NavFile::read(original.as_slice()).expect("decode original file");
-    changed.nav_points_mut()[0].fix.lat = Angle::degrees(52.0);
-    let mut changed_bytes = Vec::new();
-    changed
-        .write(&mut changed_bytes)
-        .expect("encode changed position");
-    let old_meta = gt_store::extract_meta(&original).expect("read original metadata");
-    let new_meta = gt_store::extract_meta(&changed_bytes).expect("read changed metadata");
-    assert!(old_meta.same_recording(&new_meta));
-    std::fs::write(&gtd_path, &changed_bytes).expect("replace file before load");
+    self::change_recorded_first_latitude(&gtd_path);
 
     if !leave_shelved_out {
         harness.get_by_label(LEAVE_SHELVED_TRACKS_OUT_LABEL).click();
@@ -361,6 +357,276 @@ fn a_different_disk_payload_never_uses_the_stored_track_rows(#[case] leave_shelv
     assert!(entry.history().is_stored());
     assert!(entry.history().track_snapshot().is_none());
     assert_eq!(entry.history().shelved_track_count(), 0);
+}
+
+fn change_recorded_first_latitude(gtd_path: &Path) {
+    let original = std::fs::read(gtd_path).expect("read original file");
+    let mut changed = NavFile::read(original.as_slice()).expect("decode original file");
+    changed.nav_points_mut()[0].fix.lat = Angle::degrees(52.0);
+    let mut changed_bytes = Vec::new();
+    changed
+        .write(&mut changed_bytes)
+        .expect("encode changed position");
+    let old_meta = gt_store::extract_meta(&original).expect("read original metadata");
+    let new_meta = gt_store::extract_meta(&changed_bytes).expect("read changed metadata");
+    assert!(old_meta.same_recording(&new_meta));
+    std::fs::write(gtd_path, &changed_bytes).expect("replace file before load");
+}
+
+#[test]
+fn a_log_arrival_uses_the_selected_copy_of_a_stored_recording() {
+    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_of_live_tracks();
+    drop_paths(&mut harness, std::slice::from_ref(&gtd_path));
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    self::change_recorded_first_latitude(&gtd_path);
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+    assert_eq!(step_until_one_recording_is_loaded(&mut harness), 2);
+    let recording = harness
+        .state()
+        .shared
+        .borrow()
+        .loaded_files
+        .view()
+        .get(0)
+        .unwrap()
+        .history()
+        .db_ref()
+        .unwrap()
+        .clone();
+    self::open_scoped_history_arrival(harness.state_mut(), &recording);
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .first_log()
+            .is_some_and(|log| log.associated_recording().is_some())
+    }));
+
+    let app = harness.state_mut();
+    let mut files = app.shared.borrow().loaded_files.clone();
+    let entry = files.view().get(1).unwrap();
+    assert_eq!(entry.history().db_ref(), Some(&recording));
+    let stored_id = entry.id();
+    self::assert_log_source(app, Some(stored_id), Some(Latitude::new(51.5)));
+    for (file_index, count) in [(0, 0), (1, 1)] {
+        let removed = modals::removed_recording_keys(
+            &[NodeKey::File(FileIdx::new(file_index))],
+            files.view(),
+        );
+        assert_eq!(app.logs.anchored_to(&removed).count(), count);
+    }
+
+    files.remove_file(1);
+    app.logs.reassociate_all(&files.view());
+    self::assert_log_source(app, None, None);
+    app.history.open(recording);
+    assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 3));
+    let app = harness.state_mut();
+    let (reread_file, history) = {
+        let shared = app.shared.borrow();
+        let reread = shared.loaded_files.view().get(2).expect("History reread");
+        (reread.file().clone(), reread.history().clone())
+    };
+    let mut partial_file = reread_file.clone();
+    partial_file.tracks.remove(0);
+    files.push(partial_file, history.clone());
+    app.logs.reassociate_all(&files.view());
+    self::assert_log_source(app, None, None);
+
+    files.replace_file(1, reread_file, history);
+    let reopened = files.view().get(1).unwrap().id();
+    assert_ne!(reopened, stored_id);
+    app.logs.reassociate_all(&files.view());
+    self::assert_log_source(app, Some(reopened), Some(Latitude::new(51.5)));
+}
+
+#[test]
+fn a_log_stays_unassociated_with_a_changed_history_payload() {
+    let (mut harness, _dir, _gtd_path) = app_with_a_stored_recording_on_disk();
+    let app = harness.state_mut();
+    let path = app.history.path().expect("History path").to_owned();
+    let recording = self::stored_recording_ref(&path);
+    self::open_scoped_history_arrival(app, &recording);
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .first_log()
+            .is_some_and(|log| log.associated_recording().is_some())
+    }));
+
+    {
+        let _access = HistoryAccess::lock();
+        let file = hdf5_pure::File::open_rw(&path).expect("edit History");
+        let dataset_path = format!(
+            "by_identity/{}/{}/nav_points/lat",
+            gt_store::identity_group_name(&recording.identity),
+            recording.group_name,
+        );
+        let mut latitude = file.dataset(&dataset_path).expect("latitude dataset");
+        let mut samples = latitude.read_f64().expect("latitude samples");
+        samples[0] = 52.0;
+        latitude.write(&samples).expect("replace latitude");
+        file.commit().expect("commit changed payload");
+    }
+
+    harness.state().history.open(recording);
+    assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 2));
+    let app = harness.state_mut();
+    let mut files = app.shared.borrow().loaded_files.clone();
+    let first = files.view().get(0).expect("original load");
+    let second = files.view().get(1).expect("replacement load");
+    let original = first
+        .history()
+        .track_snapshot()
+        .expect("original observation");
+    let replacement = second
+        .history()
+        .track_snapshot()
+        .expect("replacement observation");
+    assert!(original.is_current() && original.same_observation(replacement));
+    assert_eq!(original.rows(), replacement.rows());
+    self::assert_log_source(app, Some(first.id()), Some(Latitude::new(51.5)));
+
+    let replacement_id = second.id();
+    files.remove_file(0);
+    app.logs.reassociate_all(&files.view());
+    self::assert_log_source(app, None, None);
+
+    let log_id = app.logs.first_id().expect("loaded log identity");
+    app.logs
+        .get_mut_by_id(log_id)
+        .expect("loaded log")
+        .anchor_to_loaded_recording(Some(replacement_id), &files.view());
+    self::assert_log_source(app, Some(replacement_id), Some(Latitude::new(52.0)));
+}
+
+#[rstest]
+#[case::matching_rows(true)]
+#[case::different_rows(false)]
+fn a_detached_log_waits_for_a_verified_history_source(#[case] matching_rows: bool) {
+    let (mut harness, _dir, gtd_path) = if matching_rows {
+        app_with_a_stored_recording_on_disk()
+    } else {
+        let [first, last] = ui_tests::two_live_track_ranges();
+        app_with_a_stored_recording_of(&[TrackRange {
+            end: last.end,
+            ..first
+        }])
+    };
+    let app = harness.state_mut();
+    let recording = self::stored_recording_ref(app.history.path().expect("History path"));
+    let attachment = LogAttachmentRef {
+        recording: recording.clone(),
+        id: LogAttachmentId::new_random(),
+    };
+    {
+        let shared = app.shared.borrow();
+        let files = shared.loaded_files.view();
+        app.logs.restore_attachment(
+            LoadedLog::new(
+                Some("detached.log".to_owned()),
+                self::parsed_position_log(),
+                AssociationWindow::ZERO,
+            ),
+            attachment.clone(),
+            StoredLogSettings {
+                association_window: None,
+                filters: StoredLogFilterStack::default(),
+                year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
+            },
+            &files,
+        );
+        app.logs.forget_attachment(&attachment, &files);
+    }
+    drop_paths(&mut harness, std::slice::from_ref(&gtd_path));
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    self::change_recorded_first_latitude(&gtd_path);
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+    assert_eq!(step_until_one_recording_is_loaded(&mut harness), 2);
+    self::assert_log_source(harness.state(), None, None);
+    let original_log = harness.state().logs.first_id().expect("detached log");
+    harness.state_mut().log_viewer.open_on_log(original_log);
+    harness.run_steps(3);
+    assert!(
+        !harness
+            .get_by_label(log_viewer::LOAD_RECORDING_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.state_mut().shared.borrow_mut().tree.pending_unload =
+        Some(vec![NodeKey::File(FileIdx::new(0))]);
+    harness.run_steps(2);
+    assert!(harness.state().shared.borrow().loaded_files.is_empty());
+    assert_eq!(harness.state().logs.first_id(), Some(original_log));
+    self::assert_log_source(harness.state(), None, None);
+
+    harness.state().history.open(recording);
+    assert_eq!(
+        step_until_one_recording_is_loaded(&mut harness),
+        if matching_rows { 1 } else { 2 }
+    );
+    if !matching_rows {
+        self::assert_log_source(harness.state(), None, None);
+        harness.get_by_label("Choose the source in Positions from");
+        assert!(
+            harness
+                .get_by_label(log_viewer::LOAD_RECORDING_LABEL)
+                .accesskit_node()
+                .is_disabled()
+        );
+        return;
+    }
+    let app = harness.state_mut();
+    let shared = app.shared.borrow();
+    let entry = shared
+        .loaded_files
+        .view()
+        .get(0)
+        .expect("verified History load");
+    self::assert_log_source(app, Some(entry.id()), Some(Latitude::new(51.5)));
+    assert_eq!(
+        app.first_log().expect("detached log").anchor_key(),
+        Some(RecordingKey::of_loaded_recording(entry))
+    );
+}
+
+fn stored_recording_ref(path: &Path) -> DatabaseRef {
+    let stored = ReadOnlyRecordings::open_existing_read_only(path).expect("open History");
+    stored.list_recordings().expect("list History")[0]
+        .db_ref
+        .clone()
+}
+
+fn open_scoped_history_arrival(app: &mut App, recording: &DatabaseRef) {
+    app.initial_position_source_policy = InitialPositionSourcePolicy::AutomaticallyUseUnambiguous;
+    let batch = app.association_batches.begin_submission(std::iter::empty());
+    app.history.open_with_origin(
+        recording.clone(),
+        RecordingOperationOrigin::Arrival(batch.recording()),
+    );
+    app.integrate_parsed_log(
+        Some("selected.log".to_owned()),
+        self::parsed_position_log(),
+        ParsedLogOrigin::Loose(&batch.log()),
+    );
+}
+
+fn parsed_position_log() -> ParsedLog {
+    let time = ui_tests::base_time();
+    let text = format!(
+        "{} selected recording\n",
+        time.format(gt_fmt::UTC_SECOND_FORMAT)
+    );
+    gt_logfile::parse_log(text.into(), time).expect("parse log")
+}
+
+fn assert_log_source(app: &App, recording: Option<LoadedFileId>, latitude: Option<Latitude>) {
+    let log = app.first_log().expect("loaded log");
+    assert_eq!(log.associated_recording(), recording);
+    assert_eq!(
+        log.entry_placement(0).map(|placement| placement.position.0),
+        latitude
+    );
 }
 
 #[test]

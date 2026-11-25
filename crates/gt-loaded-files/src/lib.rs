@@ -1,12 +1,15 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::ops::{Deref, Index, IndexMut};
+use std::sync::Arc;
 
 use gt_history_types::{DatabaseRef, RecordingMeta, StoredTrackSnapshot, TrackState};
 use gt_types::{
     AddressedFix, FileIdx, FixRef, Generation, LoadedFile, LoadedTrack, NavPoint, PointIdx,
     TrackIdx, TrackRef, Versionable, Versioned,
 };
+use parking_lot::Mutex;
+use xxhash_rust::xxh3::Xxh3;
 
 pub use recording_names::RecordingNames;
 pub use session::{
@@ -56,12 +59,19 @@ pub enum FileHistory {
         identity: String,
         meta: RecordingMeta,
         db_ref: Option<DatabaseRef>,
+        load_origin: RecordingLoadOrigin,
         track_snapshot: Option<Box<StoredTrackSnapshot>>,
         /// How many of the recording's stored tracks are shelved. The open
         /// from history leaves those tracks out of the [`LoadedFile`], and a
         /// recording loaded from disk has none.
         shelved_tracks: usize,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordingLoadOrigin {
+    History,
+    Import,
 }
 
 pub struct StoredTrackSnapshotUpdate {
@@ -84,9 +94,17 @@ impl FileHistory {
             identity,
             meta,
             db_ref,
+            load_origin: RecordingLoadOrigin::Import,
             track_snapshot: None,
             shelved_tracks,
         }
+    }
+
+    pub fn with_load_origin(mut self, origin: RecordingLoadOrigin) -> Self {
+        if let Self::Recording { load_origin, .. } = &mut self {
+            *load_origin = origin;
+        }
+        self
     }
 
     pub fn with_track_snapshot(mut self, snapshot: Option<StoredTrackSnapshot>) -> Self {
@@ -120,6 +138,13 @@ impl FileHistory {
                 ..
             } => Some(db_ref),
             Self::None | Self::Recording { db_ref: None, .. } => None,
+        }
+    }
+
+    pub fn load_origin(&self) -> Option<RecordingLoadOrigin> {
+        match self {
+            Self::Recording { load_origin, .. } => Some(*load_origin),
+            Self::None => None,
         }
     }
 
@@ -171,6 +196,8 @@ pub struct LoadedFileEntry<'a> {
     fi: FileIdx,
     file: &'a LoadedFile,
     history: &'a FileHistory,
+    data_generation: Generation<RecordingData>,
+    placement_fingerprints: &'a Mutex<PlacementFingerprints>,
 }
 
 impl<'a> LoadedFilesView<'a> {
@@ -204,6 +231,8 @@ impl<'a> LoadedFilesView<'a> {
             fi: FileIdx::new(index),
             file,
             history,
+            data_generation: storage.files.generation(),
+            placement_fingerprints: &self.loaded_files.placement_fingerprints,
         })
     }
 
@@ -224,17 +253,21 @@ impl<'a> LoadedFilesView<'a> {
 
     pub fn entries(&self) -> impl ExactSizeIterator<Item = LoadedFileEntry<'a>> + 'a {
         let storage = self.loaded_files.storage.get();
+        let data_generation = storage.files.generation();
+        let placement_fingerprints = &*self.loaded_files.placement_fingerprints;
         storage
             .ids
             .iter()
             .zip(storage.files())
             .zip(&storage.history)
             .enumerate()
-            .map(|(index, ((&id, file), history))| LoadedFileEntry {
+            .map(move |(index, ((&id, file), history))| LoadedFileEntry {
                 id,
                 fi: FileIdx::new(index),
                 file,
                 history,
+                data_generation,
+                placement_fingerprints,
             })
     }
 
@@ -291,7 +324,7 @@ impl<'a> LoadedFileEntry<'a> {
     /// [`LoadedFileEntry::nav_points`] with the position each fix is drawn at
     /// and the address it is reached by, leaving out the fixes of a track that
     /// has no geometry.
-    pub fn addressed_fixes(&self) -> Vec<AddressedFix<'a>> {
+    pub fn addressed_fixes(&self) -> impl Iterator<Item = AddressedFix<'a>> {
         let fi = self.fi;
         self.file
             .tracks
@@ -307,7 +340,28 @@ impl<'a> LoadedFileEntry<'a> {
                         placed,
                     })
             })
-            .collect()
+    }
+
+    pub fn fix_placement_fingerprint(&self) -> FixPlacementFingerprint {
+        let mut cache = self.placement_fingerprints.lock();
+        if cache.data_generation != Some(self.data_generation) {
+            cache.data_generation = Some(self.data_generation);
+            cache.by_file.clear();
+        }
+        *cache.by_file.entry(self.id).or_insert_with(|| {
+            let mut digest = Xxh3::new();
+            for addressed in self.addressed_fixes() {
+                let (latitude, longitude) = addressed.placed.resolved_position();
+                let time = addressed.placed.fix.tpv.time().utc();
+                digest.update(&(addressed.fix.track.index.as_usize() as u64).to_le_bytes());
+                digest.update(&(addressed.fix.point.as_usize() as u64).to_le_bytes());
+                digest.update(&time.timestamp().to_le_bytes());
+                digest.update(&time.timestamp_subsec_nanos().to_le_bytes());
+                digest.update(&latitude.as_degrees().to_le_bytes());
+                digest.update(&longitude.as_degrees().to_le_bytes());
+            }
+            FixPlacementFingerprint(digest.digest128())
+        })
     }
 
     /// Every fix of the file, its tracks concatenated in track order and
@@ -377,6 +431,15 @@ pub struct RecordingData(Vec<LoadedFile>);
 
 impl Versionable for RecordingData {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FixPlacementFingerprint(u128);
+
+#[derive(Debug, Default)]
+struct PlacementFingerprints {
+    data_generation: Option<Generation<RecordingData>>,
+    by_file: BTreeMap<LoadedFileId, FixPlacementFingerprint>,
+}
+
 /// Loaded files plus app/session metadata that must remain index-aligned.
 ///
 /// The backing vectors are private so callers cannot construct mismatched file
@@ -386,6 +449,7 @@ impl Versionable for RecordingData {}
 pub struct LoadedFiles {
     storage: Versioned<IndexAlignedFiles>,
     next_id: u64,
+    placement_fingerprints: Arc<Mutex<PlacementFingerprints>>,
 }
 
 impl LoadedFiles {

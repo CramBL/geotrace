@@ -468,17 +468,18 @@ pub fn removed_recording_keys(
         .filter(|entry| !removed.contains(&entry.file_index().as_usize()))
         .filter_map(|entry| entry.history().db_ref())
         .collect();
-    removed
-        .into_iter()
-        .filter_map(|fi| loaded_files.get(fi))
-        .filter(|entry| {
-            entry
-                .history()
-                .db_ref()
-                .is_none_or(|recording| !remaining.contains(recording))
-        })
-        .map(RecordingKey::of_loaded_recording)
-        .collect()
+    let mut keys = Vec::new();
+    let mut stored = BTreeSet::new();
+    for entry in removed.into_iter().filter_map(|fi| loaded_files.get(fi)) {
+        keys.push(RecordingKey::Session(entry.id()));
+        if let Some(recording) = entry.history().db_ref()
+            && !remaining.contains(recording)
+            && stored.insert(recording)
+        {
+            keys.push(RecordingKey::Stored(recording.clone()));
+        }
+    }
+    keys
 }
 
 /// Indices of files that removing `keys` would empty entirely - either selected
