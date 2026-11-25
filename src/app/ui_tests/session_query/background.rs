@@ -10,10 +10,11 @@ use gt_store::{SolarStore, Store};
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use rstest::rstest;
 
-use super::{App, ui_tests};
 use crate::app::snap::{SnapActivity, SnapPriority, SnapScheduler};
 use crate::app::solar::TEST_KP_WORKER_NAME_PREFIX;
 use crate::app::test_util;
+use crate::app::test_util::session;
+use crate::app::{App, ui_tests};
 
 #[derive(Clone, Copy)]
 enum QueryInput {
@@ -40,9 +41,9 @@ fn a_minimized_app_uses_new_query_inputs(
             .geomagnetic_indices
             .adopt_store(Some(archive));
     }
-    let first = super::start(&mut harness, text);
+    let first = session::start_query(&mut harness, text);
     self::poll_minimized_until_query_finishes(&mut harness);
-    let before = super::status(&mut harness, first);
+    let before = session::query_status(&mut harness, first);
     let QueryJobState::Completed { queries } = &before else {
         panic!("expected completed query, got {before:?}");
     };
@@ -77,15 +78,18 @@ fn a_minimized_app_uses_new_query_inputs(
         repaint.recv_timeout(Duration::from_secs(5)).unwrap(),
         egui::ViewportId::ROOT
     );
-    assert_eq!(super::status(&mut harness, first), before);
+    assert_eq!(session::query_status(&mut harness, first), before);
 
     if matches!(input, QueryInput::Kp) {
         test_util::harness::step_minimized_logic(&mut harness);
-        assert_eq!(super::status(&mut harness, first), QueryJobState::Stale);
+        assert_eq!(
+            session::query_status(&mut harness, first),
+            QueryJobState::Stale
+        );
     }
-    let next = super::start(&mut harness, text);
+    let next = session::start_query(&mut harness, text);
     self::poll_minimized_until_query_finishes(&mut harness);
-    let after = super::status(&mut harness, next);
+    let after = session::query_status(&mut harness, next);
     let QueryJobState::Completed { queries } = &after else {
         panic!("expected completed query, got {after:?}");
     };

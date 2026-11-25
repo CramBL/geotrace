@@ -9,8 +9,9 @@ use gt_session_bridge::{
 use gt_test_utils::HarnessInteraction as _;
 use strum::IntoEnumIterator as _;
 
-use super::ui_tests;
 use crate::app::settings_ui::{self, SettingsPage};
+use crate::app::test_util::session;
+use crate::app::ui_tests;
 
 mod edit;
 
@@ -25,7 +26,7 @@ fn analysis_settings_report_live_values_and_share_the_control_bounds() {
         .analysis
         .elevation_mask_deg = startup_value;
     let generation = app.shared.borrow().loaded_files.data_generation();
-    let Reply::Settings { settings } = super::execute(&mut harness, Request::GetSettings) else {
+    let Reply::Settings { settings } = session::execute(&mut harness, Request::GetSettings) else {
         panic!("expected settings");
     };
     let keys = AnalysisSettingKey::iter()
@@ -61,12 +62,12 @@ fn analysis_settings_report_live_values_and_share_the_control_bounds() {
 
     let select = SettingSelection { key };
     assert_eq!(
-        super::execute(&mut harness, Request::OpenSetting(select)),
+        session::execute(&mut harness, Request::OpenSetting(select)),
         Reply::SettingOpenQueued
     );
     harness.run_steps(3);
     assert_eq!(
-        super::execute(&mut harness, Request::DescribeSetting(select)),
+        session::execute(&mut harness, Request::DescribeSetting(select)),
         Reply::Setting {
             setting: setting.clone()
         }
@@ -78,7 +79,8 @@ fn analysis_settings_report_live_values_and_share_the_control_bounds() {
         .unwrap()
         .set_value_accesskit(180.0);
     harness.run_steps(2);
-    let Reply::Setting { setting } = super::execute(&mut harness, Request::DescribeSetting(select))
+    let Reply::Setting { setting } =
+        session::execute(&mut harness, Request::DescribeSetting(select))
     else {
         panic!("expected setting");
     };
@@ -124,7 +126,7 @@ fn opening_a_setting_reveals_the_row_after_current_input() {
 
     let key = SettingKey::Analysis(AnalysisSettingKey::MarkBackwardTimeSteps);
     assert_eq!(
-        super::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
+        session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
         Reply::SettingOpenQueued
     );
     harness
@@ -167,7 +169,7 @@ fn opening_a_setting_raises_the_window_above_overlapping_windows() {
 
     let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
     assert_eq!(
-        super::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
+        session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
         Reply::SettingOpenQueued
     );
     harness.run_steps(3);
@@ -195,7 +197,7 @@ fn opening_a_disabled_processing_control_preserves_settings_and_loaded_data() {
     let gap = SettingSelection {
         key: SettingKey::Processing(ProcessingSettingKey::TrackSplitGap),
     };
-    let Reply::Setting { setting } = super::execute(&mut harness, Request::DescribeSetting(gap))
+    let Reply::Setting { setting } = session::execute(&mut harness, Request::DescribeSetting(gap))
     else {
         panic!("expected the split gap");
     };
@@ -214,7 +216,7 @@ fn opening_a_disabled_processing_control_preserves_settings_and_loaded_data() {
         key: SettingKey::Processing(ProcessingSettingKey::ClockDiscontinuitySigmas),
     };
     assert_eq!(
-        super::execute(&mut harness, Request::OpenSetting(select)),
+        session::execute(&mut harness, Request::OpenSetting(select)),
         Reply::SettingOpenQueued
     );
     assert!(harness.step_until(|harness| {
@@ -237,7 +239,8 @@ fn opening_a_disabled_processing_control_preserves_settings_and_loaded_data() {
         generation
     );
 
-    let Reply::Setting { setting } = super::execute(&mut harness, Request::DescribeSetting(select))
+    let Reply::Setting { setting } =
+        session::execute(&mut harness, Request::DescribeSetting(select))
     else {
         panic!("expected jump sensitivity");
     };
@@ -261,7 +264,7 @@ fn opening_the_track_split_gap_reveals_all_duration_fields() {
     harness.set_size(egui::vec2(520.0, 440.0));
     let key = SettingKey::Processing(ProcessingSettingKey::TrackSplitGap);
     assert_eq!(
-        super::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
+        session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
         Reply::SettingOpenQueued
     );
     assert!(harness.step_until(|harness| {
@@ -300,7 +303,7 @@ fn processing_settings_report_edits_with_the_control_bounds() {
         key: SettingKey::Processing(ProcessingSettingKey::ClockDiscontinuitySigmas),
     };
     assert_eq!(
-        super::execute(&mut harness, Request::OpenSetting(select)),
+        session::execute(&mut harness, Request::OpenSetting(select)),
         Reply::SettingOpenQueued
     );
     harness.run_steps(3);
@@ -308,7 +311,8 @@ fn processing_settings_report_edits_with_the_control_bounds() {
         .get_by_label("Jump sensitivity")
         .set_value_accesskit(25.0);
     harness.run_steps(2);
-    let Reply::Setting { setting } = super::execute(&mut harness, Request::DescribeSetting(select))
+    let Reply::Setting { setting } =
+        session::execute(&mut harness, Request::DescribeSetting(select))
     else {
         panic!("expected jump sensitivity");
     };

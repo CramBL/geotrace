@@ -11,8 +11,9 @@ use gt_session_bridge::{
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use rstest::rstest;
 
-use super::ui_tests;
 use crate::app::test_util::harness;
+use crate::app::test_util::session;
+use crate::app::ui_tests;
 use crate::settings::Settings;
 
 #[test]
@@ -31,7 +32,7 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
         key,
         value: SettingInput::Number(18.5),
     });
-    let reply = super::super::execute(&mut harness, request);
+    let reply = session::execute(&mut harness, request);
     let Reply::Setting { setting } = &reply else {
         panic!("expected the effective elevation mask");
     };
@@ -63,7 +64,7 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
 
     let selection = SettingSelection { key };
     assert_eq!(
-        super::super::execute(&mut harness, Request::OpenSetting(selection)),
+        session::execute(&mut harness, Request::OpenSetting(selection)),
         Reply::SettingOpenQueued
     );
     harness.run_steps(3);
@@ -73,7 +74,7 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
         .unwrap()
         .set_value_accesskit(35.0);
     assert!(matches!(
-        super::super::execute(
+        session::execute(
             &mut harness,
             Request::SetSetting(SetSetting {
                 key,
@@ -84,7 +85,7 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
     ));
     harness.run_steps(2);
     let Reply::Setting { setting } =
-        super::super::execute(&mut harness, Request::DescribeSetting(selection))
+        session::execute(&mut harness, Request::DescribeSetting(selection))
     else {
         panic!("expected the value from the visible editor");
     };
@@ -113,7 +114,7 @@ fn setting_an_equivalent_zero_reports_the_existing_value() {
     let mut harness = ui_tests::app_with_a_recording();
     let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
     for input in [0.0, -0.0] {
-        let reply = super::super::execute(
+        let reply = session::execute(
             &mut harness,
             Request::SetSetting(SetSetting {
                 key,
@@ -171,7 +172,7 @@ fn processing_edits_keep_full_precision_and_defer_reprocessing() {
         ),
     ];
     for (key, input, expected) in edits {
-        let Reply::Setting { setting } = super::super::execute(
+        let Reply::Setting { setting } = session::execute(
             &mut harness,
             Request::SetSetting(SetSetting { key, value: input }),
         ) else {
@@ -180,8 +181,7 @@ fn processing_edits_keep_full_precision_and_defer_reprocessing() {
         assert_eq!(setting.value, expected);
         assert_eq!(setting.apply, SettingApply::DeferredProcessing);
     }
-    let Reply::Settings { settings } = super::super::execute(&mut harness, Request::GetSettings)
-    else {
+    let Reply::Settings { settings } = session::execute(&mut harness, Request::GetSettings) else {
         panic!("expected settings");
     };
     for (key, _, expected) in edits {
@@ -217,7 +217,7 @@ fn invalid_and_inactive_setting_edits_preserve_the_app_snapshot() {
     let mut harness = ui_tests::app_with_a_recording();
     let detection = SettingKey::Processing(ProcessingSettingKey::DetectClockDiscontinuities);
     assert!(matches!(
-        super::super::execute(
+        session::execute(
             &mut harness,
             Request::SetSetting(SetSetting {
                 key: detection,
@@ -268,7 +268,7 @@ fn invalid_and_inactive_setting_edits_preserve_the_app_snapshot() {
         ),
     ] {
         assert_eq!(
-            super::super::execute(&mut harness, Request::SetSetting(SetSetting { key, value })),
+            session::execute(&mut harness, Request::SetSetting(SetSetting { key, value })),
             Reply::Error { code: error }
         );
         assert!(harness.state().collect_snapshot() == before);
@@ -284,7 +284,7 @@ fn a_session_edit_uses_the_settings_write_access(#[case] access: WriteAccess) {
     harness.inner.step();
     let key = SettingKey::Processing(ProcessingSettingKey::TrackSplitGap);
     assert!(matches!(
-        super::super::execute(
+        session::execute(
             &mut harness.inner,
             Request::SetSetting(SetSetting {
                 key,
