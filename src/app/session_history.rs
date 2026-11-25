@@ -174,10 +174,6 @@ impl Operation {
 }
 
 impl SessionHistory {
-    pub(super) fn pending(&self) -> bool {
-        self.operation.as_ref().is_some_and(Operation::pending)
-    }
-
     pub(super) fn is_pending(&self, id: HistoryOpenId) -> bool {
         self.operation
             .as_ref()

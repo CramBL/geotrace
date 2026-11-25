@@ -43,6 +43,9 @@ use super::space_weather_warning::{self, ArchivedIndexPeriod, GeomagneticActivit
 use super::track_day_values::{ArchivedTrackValues, TrackValuesByArchivedDays};
 use super::unarchived_day::UnarchivedDay;
 
+#[cfg(test)]
+pub(super) const TEST_KP_WORKER_NAME_PREFIX: &str = "test-geomagnetic-fetch";
+
 /// What one day's fetch produced.
 enum IndexDayMessage {
     /// Every index the service could have values for was archived. Both
@@ -258,6 +261,25 @@ impl GeomagneticIndexScheduler {
 
     pub fn fetch_queue_mut(&mut self) -> &mut DayFetchQueue {
         &mut self.days
+    }
+
+    #[cfg(test)]
+    pub(super) fn archive_kp_from_test_worker(&self, day: NaiveDate) {
+        let store = self.store.clone().expect("test archive");
+        day_fetch_dispatch::spawn_fetch_thread(
+            &self.ctx,
+            &self.tx,
+            TEST_KP_WORKER_NAME_PREFIX,
+            day,
+            move || {
+                super::test_util::day_archive::archive_kp_day(&store, day, 2.0);
+                IndexDayMessage::Stored {
+                    day,
+                    kp_samples: 8,
+                    hp30_samples: 0,
+                }
+            },
+        );
     }
 
     /// Apply finished fetches and start the next queued day.

@@ -35,7 +35,7 @@ use crate::app::auto_prune::AutoPruneOutcome;
 use crate::app::history_db::{DbOp, DeleteReason, HistoryWorker, Response};
 use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
 use crate::app::storage::OpenStorage;
-use crate::app::test_util::harness::TestDroppedFile;
+use crate::app::test_util::harness::{self, TestDroppedFile};
 use crate::app::test_util::recordings;
 
 const UNFILTERED: ListHistoryRecordings = ListHistoryRecordings {
@@ -914,7 +914,6 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
     self::attach_saved_log(&mut db, &selected);
     drop(db);
     let mut harness = self::owner_app(&store);
-    let ctx = harness.ctx.clone();
     let page = self::await_page(&mut harness, UNFILTERED);
     let open = self::open_status(&super::execute(
         &mut harness,
@@ -930,9 +929,7 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
     {
         let _access = HistoryAccess::lock();
         while harness.state().shared.borrow().loaded_files.is_empty() {
-            harness
-                .state_mut()
-                .apply_finished_session_recording_work(&ctx);
+            harness::step_minimized_logic(&mut harness);
             assert!(Instant::now() < deadline, "timed out loading the recording");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -953,9 +950,7 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
     }
 
     while harness.state().logs.is_empty() {
-        harness
-            .state_mut()
-            .apply_finished_session_recording_work(&ctx);
+        harness::step_minimized_logic(&mut harness);
         assert!(
             Instant::now() < deadline,
             "timed out loading the attachment"
@@ -963,7 +958,7 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(!harness.state().history.restoring_session_recordings());
-    assert!(!harness.state().loader.restoring_session_attachments());
+    assert!(harness.state().loader.loading_jobs.is_empty());
 }
 
 #[test]
@@ -1008,7 +1003,7 @@ fn a_history_open_leaves_saved_logs_unloaded_when_a_disk_copy_shares_the_entry()
     ));
     assert!(harness.step_until(
         |harness| !harness.state().history.restoring_session_recordings()
-            && !harness.state().loader.restoring_session_attachments()
+            && harness.state().loader.loading_jobs.is_empty()
     ));
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 2);
     assert!(harness.state().logs.is_empty());

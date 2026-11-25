@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     path::PathBuf,
     sync::{Arc, mpsc},
@@ -315,7 +315,6 @@ pub(super) struct LoadJobs {
     next_id: u64,
     retries: BTreeMap<u64, LoadRetryAttempt>,
     file_dialogs: Vec<PendingFileDialog>,
-    session_attachments: BTreeSet<u64>,
     /// Path to the history database file, forwarded to background load threads
     /// so they can insert recordings after parsing.  `None` when storage is
     /// unavailable (DB failed to open at startup).
@@ -341,7 +340,6 @@ impl LoadJobs {
             next_id: 0,
             retries: BTreeMap::new(),
             file_dialogs: Vec::new(),
-            session_attachments: BTreeSet::new(),
             db_path: None,
             analysis_config: AnalysisConfig::default(),
             pending_writes,
@@ -709,12 +707,6 @@ impl LoadJobs {
         requested_by: AttachedLogRequester,
     ) -> u64 {
         let id = self.alloc_id();
-        if matches!(
-            requested_by,
-            AttachedLogRequester::SessionHistoryRecording(_)
-        ) {
-            self.session_attachments.insert(id);
-        }
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
             id,
@@ -833,7 +825,6 @@ impl LoadJobs {
                     }
                 }
                 LoadMessage::Completed { id, completion } => {
-                    self.session_attachments.remove(&id);
                     let Some(index) = self.loading_jobs.iter().position(|job| job.id == id) else {
                         log::warn!("Completed load {id} has no registered job");
                         continue;
@@ -849,10 +840,6 @@ impl LoadJobs {
             }
         }
         completed
-    }
-
-    pub(super) fn restoring_session_attachments(&self) -> bool {
-        !self.session_attachments.is_empty()
     }
 
     /// Remove the entries from `finishing_jobs` that have fully faded. `now` is

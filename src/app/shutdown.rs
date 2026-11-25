@@ -185,9 +185,7 @@ impl ForceQuitPrompt {
 }
 
 impl App {
-    /// Intercepts the window's close button and any termination signal, drives
-    /// the shutdown they start, and returns what the app paints this frame.
-    pub(in crate::app) fn intercept_close_request(&mut self, ui: &mut egui::Ui) -> FrameContents {
+    pub(super) fn begin_shutdown_if_requested(&mut self, ctx: &egui::Context) {
         match TERMINATION_SIGNAL_FLAG.take_action() {
             TerminationSignalAction::KeepRunning => {}
             TerminationSignalAction::BeginShutdown => self.begin_shutdown(),
@@ -195,11 +193,15 @@ impl App {
                 self.exit_leaving_writes_unfinished(SECOND_SIGNAL_QUIT_CAUSE)
             }
         }
-        let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
-        if close_requested && !self.shutdown.close_allowed() {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.shutdown.close_allowed() {
+            self.begin_shutdown();
+        }
+    }
+
+    pub(super) fn shutdown_ui(&mut self, ui: &mut egui::Ui) -> FrameContents {
+        if ui.ctx().input(|i| i.viewport().close_requested()) && !self.shutdown.close_allowed() {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.begin_shutdown();
         }
         if !self.shutdown.has_begun() {
             return FrameContents::NormalUi;
@@ -216,9 +218,6 @@ impl App {
                     SHUTDOWN_WINDOW_INNER_SIZE,
                 ));
             }
-            // Results still arrive while the writes finish: draining them is
-            // what takes the registry to idle.
-            self.apply_finished_background_work(ui);
             self.instance_lock
                 .report_shutdown_progress(&self.pending_writes);
             let snapshot = self.pending_writes.snapshot();
@@ -332,6 +331,7 @@ impl App {
         self.session_bridge = None;
         self.session_query = Default::default();
         self.pending_writes.begin_shutdown();
+        self.snap.stop_starting_runs();
         self.flush_settings_during_shutdown();
         self.shut_down_history_worker_off_the_gui_thread();
         self.shutdown.begin(Instant::now());

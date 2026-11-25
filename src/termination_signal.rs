@@ -1,9 +1,7 @@
 //! Unix termination signals, taken as a request to shut down.
 //!
 //! A dedicated thread waits for SIGINT, SIGTERM and SIGHUP, raises a flag and
-//! wakes the GUI. The frame loop reads the flag in
-//! `App::intercept_close_request` and starts the shutdown the window's close
-//! button starts.
+//! wakes the GUI. `App::logic` reads the flag and begins shutdown.
 //!
 //! Windows is not covered: a GUI-subsystem build receives
 //! `WM_QUERYENDSESSION` and `WM_ENDSESSION` at logoff or shutdown.

@@ -48,6 +48,19 @@ pub fn costing_override(harness: &Harness<'_, App>, track: TrackRef) -> Option<C
 /// points with an unsnapped stretch at indices 20..25, so the snap error
 /// series has a line break and markers to show.
 pub fn inject_completed_run(harness: &mut Harness<'_, App>, track: TrackRef) {
+    let (key, run) = self::completed_run(harness, track);
+    harness.state_mut().snap.insert_run(key, run);
+}
+
+pub fn report_completed_run(harness: &Harness<'_, App>, track: TrackRef) {
+    let (key, run) = self::completed_run(harness, track);
+    harness
+        .state()
+        .snap
+        .report_completed_test_run(track, key, run);
+}
+
+fn completed_run(harness: &Harness<'_, App>, track: TrackRef) -> (SnapCacheKey, SnapRun) {
     let points: Vec<SnapPoint> = (0..60)
         .map(|i| {
             let kind = if (20..25).contains(&i) {
@@ -104,12 +117,12 @@ pub fn inject_completed_run(harness: &mut Harness<'_, App>, track: TrackRef) {
             gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
         )
     };
-    harness.state_mut().snap.insert_run(
+    (
         key,
         SnapRun::new(
             result,
             Vec::new(),
             gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
         ),
-    );
+    )
 }

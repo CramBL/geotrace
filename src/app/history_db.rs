@@ -8,6 +8,7 @@
 //! threads, which open the database by path. The global database lock keeps the
 //! two paths safe.
 //!
+#[cfg(test)]
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::ops::Range;
@@ -456,6 +457,7 @@ pub struct HistoryWorker {
     path: Option<PathBuf>,
     ui_state_versions: Arc<UiStateVersionReporter>,
     writable_registry: Option<PendingWrites>,
+    #[cfg(test)]
     session_restore_count: Cell<usize>,
 }
 
@@ -472,6 +474,7 @@ impl HistoryWorker {
             path: None,
             ui_state_versions: Arc::default(),
             writable_registry: None,
+            #[cfg(test)]
             session_restore_count: Cell::new(0),
         }
     }
@@ -495,6 +498,7 @@ impl HistoryWorker {
             path,
             ui_state_versions,
             writable_registry,
+            #[cfg(test)]
             session_restore_count: Cell::new(0),
         }
     }
@@ -621,18 +625,21 @@ impl HistoryWorker {
     ) {
         if self.writable_registry.is_some()
             && let Some(tx) = &self.req_tx
-            && tx
-                .send(Request::Read(ReadRequest::RestoreSessionRecording {
-                    file,
-                    observation,
-                }))
-                .is_ok()
         {
-            self.session_restore_count
-                .set(self.session_restore_count.get() + 1);
+            let sent = tx.send(Request::Read(ReadRequest::RestoreSessionRecording {
+                file,
+                observation,
+            }));
+            #[cfg(test)]
+            if sent.is_ok() {
+                self.session_restore_count
+                    .set(self.session_restore_count.get() + 1);
+            }
+            sent.ok();
         }
     }
 
+    #[cfg(test)]
     pub(super) fn restoring_session_recordings(&self) -> bool {
         self.session_restore_count.get() != 0
     }
@@ -806,6 +813,7 @@ impl HistoryWorker {
     pub fn poll(&self) -> Vec<Response> {
         let mut out = Vec::new();
         while let Ok(resp) = self.resp_rx.try_recv() {
+            #[cfg(test)]
             if matches!(resp, Response::SessionRecordingRestored(_)) {
                 self.session_restore_count
                     .set(self.session_restore_count.get().saturating_sub(1));
