@@ -331,11 +331,39 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "kind": "ready", "recording": self::recording_id(7), "reused": false
         }))
     );
+    self::assert_query_reply_shapes(
+        &mut client,
+        checked.pointer("/result/structuredContent").unwrap(),
+    )
+    .await;
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
         .unwrap()
         .unwrap();
+}
+
+async fn assert_query_reply_shapes(client: &mut Client, expected_validation: &Value) {
+    let mismatched = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 33, "method": "tools/call",
+            "params": {"name": "check_query", "arguments": {"text": "points | draw"}}
+        }))
+        .await;
+    assert_eq!(mismatched.pointer("/result/isError"), Some(&json!(true)));
+    assert_eq!(mismatched.pointer("/result/structuredContent"), None);
+
+    let invalid = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 34, "method": "tools/call",
+            "params": {"name": "run_query", "arguments": {"text": "points | where speed > 30 km/h"}}
+        }))
+        .await;
+    assert_eq!(invalid.pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(
+        invalid.pointer("/result/structuredContent"),
+        Some(expected_validation)
+    );
 }
 
 async fn assert_history_listing_uses_the_date_filter(client: &mut Client) {
@@ -481,10 +509,10 @@ async fn assert_processing_requires_empty_arguments(client: &mut Client) {
     assert_eq!(PROCESSING_DISPATCHES.load(Ordering::Relaxed), 2);
 }
 
-fn inspection_fixture(request: Request) -> io::Result<Reply> {
+fn inspection_fixture(request: &Request) -> io::Result<Reply> {
     match request {
         Request::OpenHistoryRecording(_) | Request::GetHistoryOpenStatus(_) => {
-            self::history_open_fixture(&request)
+            self::history_open_fixture(request)
         }
         Request::ApplyProcessing(ApplyProcessing {}) => {
             PROCESSING_DISPATCHES.fetch_add(1, Ordering::Relaxed);
@@ -506,7 +534,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                     start: Some(1),
                     end: Some(2),
                 },
-        }) if track == self::track_reference() => Ok(Reply::MapPresentationQueued),
+        }) if *track == self::track_reference() => Ok(Reply::MapPresentationQueued),
         Request::OpenQuery(QueryText { text }) if text == INVALID_QUERY_DRAFT => {
             Ok(Reply::QueryDraftQueued)
         }
@@ -527,7 +555,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                     end: Some(2),
                 },
             metrics,
-        }) if track == self::track_reference() && metrics == ["velocity"] => {
+        }) if *track == self::track_reference() && metrics.as_slice() == ["velocity"] => {
             Ok(Reply::PlotPresentationQueued)
         }
         Request::ShowOnMap(ShowOnMap {
@@ -541,7 +569,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                             match_ordinal: 3,
                         },
                 },
-        }) if job == self::query_job_id() => Ok(Reply::MapPresentationQueued),
+        }) if *job == self::query_job_id() => Ok(Reply::MapPresentationQueued),
         Request::GetQueryResults(GetQueryResults {
             job,
             query: 0,
@@ -553,11 +581,11 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                 },
         }) if job.session == self::query_job_id().session
             && job.id == Uuid::from_u128(4)
-            && matched == QueryMatchPosition::default() =>
+            && *matched == QueryMatchPosition::default() =>
         {
             Ok(Reply::QueryResults {
                 results: QueryResults {
-                    job,
+                    job: *job,
                     query: 0,
                     source: QueryResultSource::Channel {
                         channel: "accel".to_owned(),
@@ -568,7 +596,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                         unit: Some("g".to_owned()),
                     }],
                     page: QueryResultPage::Rows {
-                        matched,
+                        matched: *matched,
                         next_start: Some(4),
                         rows: vec![QueryResultRow {
                             index: 3,
@@ -579,16 +607,20 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                 },
             })
         }
-        Request::RunQuery(QueryText { text }) if text == "points | draw" => Ok(Reply::QueryJob {
-            job: QueryJobStatus {
-                job: self::query_job_id(),
-                state: QueryJobState::Preparing,
-            },
-        }),
-        Request::GetQueryStatus(QueryJobRequest { job }) if job == self::query_job_id() => {
+        Request::CheckQuery(QueryText { text }) | Request::RunQuery(QueryText { text })
+            if text == "points | draw" =>
+        {
             Ok(Reply::QueryJob {
                 job: QueryJobStatus {
-                    job,
+                    job: self::query_job_id(),
+                    state: QueryJobState::Preparing,
+                },
+            })
+        }
+        Request::GetQueryStatus(QueryJobRequest { job }) if *job == self::query_job_id() => {
+            Ok(Reply::QueryJob {
+                job: QueryJobStatus {
+                    job: *job,
                     state: QueryJobState::Running {
                         tracks_prepared: 2,
                         track_total: 3,
@@ -596,15 +628,17 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                 },
             })
         }
-        Request::CancelQuery(QueryJobRequest { job }) if job == self::query_job_id() => {
+        Request::CancelQuery(QueryJobRequest { job }) if *job == self::query_job_id() => {
             Ok(Reply::QueryJob {
                 job: QueryJobStatus {
-                    job,
+                    job: *job,
                     state: QueryJobState::Cancelling,
                 },
             })
         }
-        Request::CheckQuery(QueryText { text }) if text == "points | where speed > 30 km/h" => {
+        Request::CheckQuery(QueryText { text }) | Request::RunQuery(QueryText { text })
+            if text == "points | where speed > 30 km/h" =>
+        {
             Ok(Reply::QueryCheck {
                 validation: QueryValidation::Invalid {
                     diagnostics: vec![Diagnostic {
@@ -622,7 +656,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
         Request::ListRecordings(ListRecordings {
             after: Some(after),
             limit: Some(NonZeroUsize::MIN),
-        }) if after == self::recording_id(6) => Ok(self::recording_page()),
+        }) if *after == self::recording_id(6) => Ok(self::recording_page()),
         Request::ListMetrics(ListMetrics {
             channel_start: Some(3),
             channel_limit: Some(NonZeroUsize::MIN),
@@ -641,7 +675,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
                     through: None,
                 }),
             limit: Some(NonZeroUsize::MIN),
-        }) if Some(from) == NaiveDate::from_ymd_opt(2025, 2, 2) => Ok(Reply::HistoryRecordings {
+        }) if Some(*from) == NaiveDate::from_ymd_opt(2025, 2, 2) => Ok(Reply::HistoryRecordings {
             page: HistoryRecordings {
                 recordings: Vec::new(),
                 next_cursor: None,
@@ -652,7 +686,7 @@ fn inspection_fixture(request: Request) -> io::Result<Reply> {
             start: None,
             end: None,
             limit: None,
-        }) if track == self::track_reference() => Ok(Reply::Range {
+        }) if *track == self::track_reference() => Ok(Reply::Range {
             details: RangeDetails {
                 points: vec![PointDetails {
                     index: PointIdx::new(0),
