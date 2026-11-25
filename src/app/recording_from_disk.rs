@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use egui::{Label, RichText};
 use gt_store::{
-    DatabaseRef, ReadOnlyHistoryDatabase as _, ReadOnlyRecordings, RecordingEntry, RecordingMeta,
-    TrackRange, TrackState,
+    HistoryAccess, ReadOnlyHistoryDatabase as _, ReadOnlyRecordings, RecordingEntry, RecordingMeta,
+    StoredTrackSnapshot, TrackState,
 };
 
 use super::anchored_dialog::AnchoredDialogKind;
@@ -81,12 +81,11 @@ impl RecordingFromDisk {
     }
 }
 
-/// One arriving recording that the history database already holds, with the
-/// reference and the stored track table of what it matched.
+/// A disk arrival and the History track snapshot with matching recording metadata.
 pub struct RecordingAlreadyInHistory {
     pub from_disk: RecordingFromDisk,
-    pub db_ref: DatabaseRef,
-    pub stored_tracks: Vec<TrackRange>,
+    pub track_snapshot: StoredTrackSnapshot,
+    pub history_path: PathBuf,
 }
 
 /// What the history lookup made of one batch of arriving recordings.
@@ -122,17 +121,18 @@ pub fn screen_against_history(
     let mut screened = ScreenedRecordings::default();
     for recording in recordings {
         match stored_recording_for(db, &entries, &recording) {
-            Some((db_ref, stored_tracks)) => {
+            Some(track_snapshot) => {
+                let db_ref = track_snapshot.recording();
                 log::info!(
-                    "'{}' is already in history as {}/{}",
-                    recording.filename,
+                    "History recording {}/{} has matching metadata for '{}'",
                     db_ref.identity,
-                    db_ref.group_name
+                    db_ref.group_name,
+                    recording.filename
                 );
                 screened.already_in_history.push(RecordingAlreadyInHistory {
                     from_disk: recording,
-                    db_ref,
-                    stored_tracks,
+                    track_snapshot,
+                    history_path: db.path().to_owned(),
                 });
             }
             None => screened.new_to_history.push(recording),
@@ -141,19 +141,18 @@ pub fn screen_against_history(
     screened
 }
 
-/// The database entry holding the same recording as `recording`, and that
-/// entry's stored track table.
+/// The stored track table of the first History entry with matching metadata.
 fn stored_recording_for(
     db: &ReadOnlyRecordings,
     entries: &[RecordingEntry],
     recording: &RecordingFromDisk,
-) -> Option<(DatabaseRef, Vec<TrackRange>)> {
+) -> Option<StoredTrackSnapshot> {
     let meta = recording.recording_meta()?;
     let entry = entries
         .iter()
         .find(|entry| entry.meta.same_recording(&meta))?;
-    match db.stored_track_table(&entry.db_ref) {
-        Ok(stored_tracks) => Some((entry.db_ref.clone(), stored_tracks)),
+    match HistoryAccess::lock().read_track_snapshot(db, &entry.db_ref) {
+        Ok(snapshot) => Some(snapshot),
         Err(e) => {
             log::warn!(
                 "Could not read the stored track table of {}/{}: {e}. Loading '{}' from disk.",
@@ -188,7 +187,7 @@ impl RecordingsAlreadyInHistory {
     fn shelved_track_count(&self) -> usize {
         self.recordings
             .iter()
-            .flat_map(|recording| &recording.stored_tracks)
+            .flat_map(|recording| recording.track_snapshot.rows())
             .filter(|track| track.state == TrackState::Shelved)
             .count()
     }
@@ -424,20 +423,23 @@ impl App {
             Some(AlreadyInHistoryChoice::OpenTheStoredVersion) => {
                 for recording in prompt.recordings {
                     let origin = RecordingOperationOrigin::Arrival(recording.from_disk.arrival);
-                    self.history.open_with_origin(recording.db_ref, origin);
+                    self.history
+                        .open_with_origin(recording.track_snapshot.recording().clone(), origin);
                 }
             }
             Some(AlreadyInHistoryChoice::LoadFromDisk) => {
                 for RecordingAlreadyInHistory {
                     from_disk,
-                    db_ref,
-                    stored_tracks,
+                    track_snapshot,
+                    history_path,
                 } in prompt.recordings
                 {
                     let open = if leave_shelved_tracks_out {
                         Some(loader::HistoryOpen::ApplyShelved {
-                            db_ref,
-                            stored_tracks,
+                            track_table: loader::OpenTrackTable::DiskMatch {
+                                database_path: history_path,
+                                snapshot: track_snapshot,
+                            },
                             applied_current_marker_settings: false,
                             placement: loader::LoadedRecordingPlacement::AddAnEntry,
                         })
@@ -481,7 +483,7 @@ pub(in crate::app) const NO_SHELVED_TRACK_HOVER: &str =
 
 #[cfg(test)]
 mod tests {
-    use gt_store::{HistoryDatabase as _, Recordings};
+    use gt_store::{HistoryDatabase as _, Recordings, TrackRange};
 
     use crate::app::association_batches::AssociationBatches;
     use crate::app::test_util::recordings;

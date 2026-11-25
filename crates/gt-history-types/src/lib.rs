@@ -217,6 +217,12 @@ pub struct DatabaseRef {
     pub group_name: String,
 }
 
+pub enum RecordingInsert {
+    Created(DatabaseRef),
+    /// The backend found a recording with matching [`RecordingMeta`] fields.
+    Existing(DatabaseRef),
+}
+
 impl fmt::Display for DatabaseRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.identity, self.group_name)
@@ -870,7 +876,23 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
         tracks: &[TrackRange],
         settings: StoredSegmentation,
         bytes: &[u8],
-    ) -> Result<DatabaseRef, DbError>;
+    ) -> Result<DatabaseRef, DbError> {
+        self.insert_with_outcome(identity, meta, tracks, settings, bytes)
+            .map(|outcome| match outcome {
+                RecordingInsert::Created(recording) | RecordingInsert::Existing(recording) => {
+                    recording
+                }
+            })
+    }
+
+    fn insert_with_outcome(
+        &mut self,
+        identity: &str,
+        meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+        bytes: &[u8],
+    ) -> Result<RecordingInsert, DbError>;
 
     /// Replace a recording's stored GTD bytes, metadata, track table and
     /// segmentation settings under its existing group name, which keeps

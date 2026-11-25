@@ -414,17 +414,17 @@ fn a_recording_retry_settings_prompt_completes_or_cancels_its_attempt(
         .state_mut()
         .handle_history_response(history_db::Response::Opened {
             origin: RecordingOperationOrigin::Retry(attempt),
-            db_ref: recording,
+            db_ref: recording.clone(),
             placement: LoadedRecordingPlacement::AddAnEntry,
-            result: Ok(OpenedRecording {
-                stored: StoredRecording {
+            result: Ok(test_util::recordings::opened_recording(
+                &recording,
+                StoredRecording {
                     bytes: ui_tests::minimal_gtd_bytes(),
                     tracks: ui_tests::two_live_track_ranges().to_vec(),
                     segmentation: Some(segmentation),
                     debug_tag: None,
                 },
-                ui_state: Ok(RecordingUiState::default()),
-            }),
+            )),
         });
     harness.run_steps(2);
     assert!(harness.state().pending_resegment.is_some());

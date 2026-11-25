@@ -306,6 +306,16 @@ impl TreeState {
         self.hidden_tracks_by_recording.get(db_ref)
     }
 
+    pub fn cancel_shelve_confirmation_for_file(&mut self, file: FileIdx) {
+        if self
+            .shelve_confirm
+            .as_ref()
+            .is_some_and(|confirm| confirm.items.iter().any(|item| item.file() == file))
+        {
+            self.shelve_confirm = None;
+        }
+    }
+
     /// Take the hidden tracks the history database holds for `db_ref`: the
     /// tracks of that recording already in the view turn unchecked, and the
     /// ones loaded afterwards start unchecked.

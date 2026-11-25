@@ -33,6 +33,8 @@ pub mod cargo_env;
 pub mod clock_reset_fixtures;
 #[cfg(feature = "archive")]
 pub mod day_archive;
+#[cfg(feature = "history")]
+pub mod history_fixtures;
 #[cfg(feature = "snapshot")]
 pub mod interaction;
 #[cfg(feature = "ionex")]

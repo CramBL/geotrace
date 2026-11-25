@@ -11,11 +11,11 @@ use gt_history_types::{
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR,
     GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
     HIDDEN_TRACKS_DATASET, HistoryAccess, LogAttachmentId, LogAttachmentListingEntry,
-    LogAttachmentReadError, NavPointTimeRange, RecordingDebugTag, RecordingEntry, RecordingMeta,
-    RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule, StoredRecording,
-    StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion, TRACK_END_DATASET,
-    TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP,
-    UI_STATE_VERSION_ATTR, UiStateVersionReporter,
+    LogAttachmentReadError, NavPointTimeRange, RecordingDebugTag, RecordingEntry, RecordingInsert,
+    RecordingMeta, RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
+    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
+    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
 };
 use hdf5::Group;
 use thiserror::Error;
@@ -730,7 +730,7 @@ pub(crate) fn insert_recording(
     tracks: &[TrackRange],
     settings: StoredSegmentation,
     gtd_bytes: &[u8],
-) -> Result<DatabaseRef, InternalError> {
+) -> Result<RecordingInsert, InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
 
     // Duplicate check: re-storing a recording already present returns its
@@ -746,10 +746,10 @@ pub(crate) fn insert_recording(
                         log::debug!(
                             "Recording already in history as identity={existing_identity:?}, group={rec_name:?}"
                         );
-                        return Ok(DatabaseRef {
+                        return Ok(RecordingInsert::Existing(DatabaseRef {
                             identity: existing_identity,
                             group_name: rec_name,
-                        });
+                        }));
                     }
                 }
             }
@@ -781,10 +781,10 @@ pub(crate) fn insert_recording(
 
     write_track_table(&rec_grp, tracks)?;
 
-    Ok(DatabaseRef {
+    Ok(RecordingInsert::Created(DatabaseRef {
         identity: identity.to_owned(),
         group_name,
-    })
+    }))
 }
 
 /// Resolve one replacement stage, in each of the three states an interrupted

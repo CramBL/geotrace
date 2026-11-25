@@ -1058,7 +1058,7 @@ fn the_unloaded_attachments_of_a_removed_recording_leave_the_list() {
 
     open_the_shelve_confirmation(&mut harness, false);
     harness.get_by_label(SHELVE_BUTTON_LABEL).click();
-    harness.run_steps(3);
+    assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.is_empty()));
 
     assert!(
         harness
@@ -1099,7 +1099,7 @@ fn shelving_every_track_of_a_recording_unloads_the_logs_it_holds() {
     harness.get_by_label_contains("Unloads 1 attached log");
 
     harness.get_by_label(SHELVE_BUTTON_LABEL).click();
-    harness.run_steps(3);
+    assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.is_empty()));
 
     assert_eq!(harness.state().logs.len(), 0);
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
@@ -1120,7 +1120,7 @@ fn permanently_deleting_a_recording_states_the_attached_logs_it_deletes() {
     harness
         .get_by_label(DELETE_PERMANENTLY_BUTTON_LABEL)
         .click();
-    harness.run_steps(3);
+    assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.is_empty()));
 
     assert_eq!(harness.state().logs.len(), 0);
     assert!(

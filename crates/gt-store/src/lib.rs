@@ -30,7 +30,7 @@ pub use gt_history::{
     InvalidStoredLogFilterStack, LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry,
     LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError, LogContentHash,
     NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry,
-    RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter,
+    RecordingInsert, RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter,
     StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
     StoredLogSettings, StoredRecording, StoredSegmentation, StoredTrackSnapshot,

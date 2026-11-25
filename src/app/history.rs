@@ -7,7 +7,8 @@ use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
 use gt_session_bridge::HistoryEntries;
 use gt_store::{
-    DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta, TrackRange,
+    DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta,
+    StoredTrackSnapshot,
 };
 use gt_types::TravelMode;
 use gt_ui_components::{ToolWindow, ToolWindowSizing};
@@ -484,9 +485,7 @@ pub(super) struct OpenShelf {
 /// How far the open shelf has got in reading its recording's stored track
 /// table.
 pub(super) enum ShelfTracks {
-    /// [`gt_store::ReadOnlyHistoryDatabase::stored_track_table`]'s result
-    /// verbatim.
-    Read(Vec<TrackRange>),
+    Read(StoredTrackSnapshot),
     /// Set once the listing sends the read request, until the worker's reply
     /// arrives.
     Requested,
@@ -654,7 +653,7 @@ impl HistoryWindow {
     pub fn set_shelf_track_table(
         &mut self,
         db_ref: &DatabaseRef,
-        tracks: Result<Vec<TrackRange>, DbError>,
+        tracks: Result<StoredTrackSnapshot, DbError>,
     ) {
         let Some(shelf) = &mut self.shelf else {
             return;

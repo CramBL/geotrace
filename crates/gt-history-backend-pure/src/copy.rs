@@ -16,8 +16,8 @@ use gt_history_types::{
     DbError, GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
     HIDDEN_TRACKS_DATASET, LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError,
-    RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP,
-    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    RecordingInsert, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET,
+    SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
     StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET,
     TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
     UiStateVersionReporter, log_attachment,
@@ -554,7 +554,7 @@ pub(crate) fn insert_recording(
     tracks: &[TrackRange],
     settings: StoredSegmentation,
     gtd_bytes: &[u8],
-) -> Result<DatabaseRef, InternalError> {
+) -> Result<RecordingInsert, InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
 
     // Duplicate check: re-storing a recording already present returns its
@@ -597,7 +597,7 @@ pub(crate) fn insert_recording(
             db_ref.identity,
             db_ref.group_name
         );
-        return Ok(db_ref);
+        return Ok(RecordingInsert::Existing(db_ref));
     }
 
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
@@ -620,10 +620,10 @@ pub(crate) fn insert_recording(
     drop(existing_db);
     write_db(&identity_nodes, db_path)?;
     log::info!("Stored recording identity={identity:?}, group={rec_name:?} in history database");
-    Ok(DatabaseRef {
+    Ok(RecordingInsert::Created(DatabaseRef {
         identity: identity.to_owned(),
         group_name: rec_name,
-    })
+    }))
 }
 
 /// Rewrite one recording's GTD data, metadata attributes, track table and

@@ -8,7 +8,9 @@ use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
-use gt_store::{ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, TrackState};
+use gt_store::{
+    ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, StoredTrackSnapshot, TrackState,
+};
 use gt_ui_components::{
     ActionPresentation, ColumnBudget, ColumnFallback, ColumnPlan, ColumnRole, ColumnSpec,
     DetailsTooltip, MetadataView,
@@ -131,12 +133,17 @@ pub(super) fn history_table(
                     }
                     ListingRow::Shelf(shelf_row) => {
                         let recording = shelf.as_ref().map(|open| &open.recording);
+                        let track_snapshot = shelf.as_ref().and_then(|open| match &open.tracks {
+                            ShelfTracks::Read(snapshot) => Some(snapshot),
+                            ShelfTracks::Requested | ShelfTracks::Unrequested => None,
+                        });
                         render_shelf_row(
                             &mut row,
                             ShelfRowRender {
                                 shelf_row,
                                 plan: &plan,
                                 recording,
+                                track_snapshot,
                                 worker,
                                 raised_the_delete: shelf_raised_the_delete,
                                 write_access,
@@ -400,7 +407,7 @@ fn listing_rows<'a>(
             continue;
         };
         let mut stored_rows = Vec::new();
-        for (stored_row, track) in tracks.iter().enumerate() {
+        for (stored_row, track) in tracks.rows().iter().enumerate() {
             if track.state != TrackState::Shelved {
                 continue;
             }
@@ -429,11 +436,15 @@ fn request_the_track_table_of_the_open_shelf(
     let Some(open) = shelf.as_mut() else {
         return;
     };
-    if !matches!(open.tracks, ShelfTracks::Unrequested) {
-        return;
+    let needs_read = match &open.tracks {
+        ShelfTracks::Unrequested => true,
+        ShelfTracks::Requested => false,
+        ShelfTracks::Read(snapshot) => !snapshot.is_current(),
+    };
+    if needs_read {
+        worker.load_stored_track_table(open.recording.clone());
+        open.tracks = ShelfTracks::Requested;
     }
-    worker.load_stored_track_table(open.recording.clone());
-    open.tracks = ShelfTracks::Requested;
 }
 
 /// The caret that opens a recording's shelf, grayed out for a recording whose
@@ -467,6 +478,7 @@ struct ShelfRowRender<'a> {
     /// The recording the shelf is open on, and [`None`] on the frame the shelf
     /// closes under the row being drawn.
     recording: Option<&'a DatabaseRef>,
+    track_snapshot: Option<&'a StoredTrackSnapshot>,
     worker: &'a HistoryWorker,
     /// Set to the shelf's recording when the closing line's delete is pressed.
     /// The History window raises the confirmation over it.
@@ -481,6 +493,7 @@ fn render_shelf_row(
         shelf_row,
         plan,
         recording,
+        track_snapshot,
         worker,
         raised_the_delete,
         write_access,
@@ -535,8 +548,8 @@ fn render_shelf_row(
                         .on_hover_text(hover)
                         .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
                         .clicked();
-                    if clicked && let Some(recording) = recording {
-                        worker.set_tracks_shelved(recording.clone(), rows, false);
+                    if clicked && let Some(snapshot) = track_snapshot {
+                        worker.set_tracks_shelved(snapshot.clone(), rows, false);
                     }
 
                     let ShelfRow::EveryShelvedTrack { .. } = shelf_row else {

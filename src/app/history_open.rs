@@ -4,7 +4,10 @@ use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::{DatabaseRef, DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
+use gt_store::{
+    DatabaseRef, DbError, StoredFixPlacementRule, StoredTrackSnapshot, StoredTrackSplitRule,
+    TrackState,
+};
 use gt_ui_components::HeldBodyLines;
 
 use super::anchored_dialog::AnchoredDialogKind;
@@ -81,7 +84,8 @@ impl MarksDroppedByRecalculating {
     ) -> Self {
         Self {
             shelved_tracks: prompt
-                .stored_tracks
+                .track_snapshot
+                .rows()
                 .iter()
                 .filter(|track| track.state == TrackState::Shelved)
                 .count(),
@@ -288,6 +292,7 @@ impl App {
         db_ref: gt_store::DatabaseRef,
         placement: loader::LoadedRecordingPlacement,
         stored: gt_store::StoredRecording,
+        track_snapshot: StoredTrackSnapshot,
         origin: RecordingOperationOrigin,
     ) {
         // Reuse the original filename: the identity is the filename (with an
@@ -299,8 +304,6 @@ impl App {
             .to_owned();
 
         let mode = load_mode_for_stored_recording(&stored);
-        let stored_tracks = stored.tracks;
-
         match stored.segmentation {
             // A stored track setting differs from the current one: let the user
             // choose before changing track ranges that the shelved state may
@@ -309,7 +312,7 @@ impl App {
                 if !loader::stored_tracks_match_config(
                     &stored_settings,
                     &self.processing_config,
-                ) && !stored_tracks.is_empty() =>
+                ) && !track_snapshot.rows().is_empty() =>
             {
                 let marker_settings_changed = !loader::marker_settings_match_config(
                     &stored_settings,
@@ -333,7 +336,7 @@ impl App {
                     filename,
                     bytes: stored.bytes.into(),
                     stored: stored_settings,
-                    stored_tracks,
+                    track_snapshot,
                     marker_settings_changed,
                     mode,
                     placement,
@@ -362,8 +365,7 @@ impl App {
                     config,
                     mode,
                     Some(loader::HistoryOpen::ApplyShelved {
-                        db_ref,
-                        stored_tracks,
+                        track_table: loader::OpenTrackTable::Stored(track_snapshot),
                         applied_current_marker_settings: marker_settings_changed,
                         placement,
                     }),
@@ -378,8 +380,7 @@ impl App {
                     self.processing_config,
                     mode,
                     Some(loader::HistoryOpen::ApplyShelved {
-                        db_ref,
-                        stored_tracks,
+                        track_table: loader::OpenTrackTable::Stored(track_snapshot),
                         applied_current_marker_settings: false,
                         placement,
                     }),
@@ -389,7 +390,44 @@ impl App {
         }
     }
 
+    fn remove_confirmed_tracks_from_view(&mut self, removal: &history_db::RecordingTrackRemoval) {
+        let removed_recordings = {
+            let mut shared = self.shared.borrow_mut();
+            let state = &mut *shared;
+            let keys = removal.loaded_keys(state.loaded_files.view());
+            if keys.is_empty() {
+                return;
+            }
+            let removed = modals::removed_recording_keys(&keys, state.loaded_files.view());
+            modals::remove_items_from_view(&keys, &mut state.loaded_files, &mut state.tree);
+            state.plot_state.rebuild_all(&state.loaded_files);
+            removed
+        };
+        self.unload_logs_and_forget_attachments_of(&removed_recordings);
+        self.on_track_indices_changed();
+    }
+
     fn apply_mutation_outcome(&mut self, op: &history_db::DbOp, result: &Result<(), DbError>) {
+        if let history_db::DbOp::TracksDeleted {
+            view_removal: Some(removal),
+            ..
+        }
+        | history_db::DbOp::TracksShelved {
+            view_removal: Some(removal),
+            ..
+        } = op
+        {
+            self.remove_confirmed_tracks_from_view(removal);
+        }
+        if let history_db::DbOp::TracksDeleted {
+            snapshot_updates, ..
+        } = op
+        {
+            self.shared
+                .borrow_mut()
+                .loaded_files
+                .apply_track_snapshot_updates(snapshot_updates);
+        }
         match result {
             Ok(()) => {
                 let mut loading_the_recording_again = false;
@@ -458,7 +496,13 @@ impl App {
         match result {
             Ok(opened) => {
                 self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
-                self.begin_history_open(db_ref, placement, opened.stored, origin);
+                self.begin_history_open(
+                    db_ref,
+                    placement,
+                    opened.stored,
+                    opened.track_snapshot,
+                    origin,
+                );
             }
             Err(e) => {
                 log::error!("Failed to load recording from history: {e}");
@@ -873,7 +917,7 @@ impl App {
                     self.processing_config,
                     prompt.mode,
                     Some(loader::HistoryOpen::Recalculate {
-                        db_ref: prompt.db_ref,
+                        snapshot: prompt.track_snapshot,
                         applied_current_marker_settings: prompt.marker_settings_changed,
                         placement: prompt.placement,
                     }),
@@ -889,8 +933,7 @@ impl App {
                     config,
                     prompt.mode,
                     Some(loader::HistoryOpen::ApplyShelved {
-                        db_ref: prompt.db_ref,
-                        stored_tracks: prompt.stored_tracks,
+                        track_table: loader::OpenTrackTable::Stored(prompt.track_snapshot),
                         applied_current_marker_settings: prompt.marker_settings_changed,
                         placement: prompt.placement,
                     }),
@@ -989,7 +1032,7 @@ fn corrupt_backup_path(path: &std::path::Path) -> PathBuf {
 fn mutation_toast(op: &history_db::DbOp, loading_the_recording_again: bool) -> String {
     use history_db::{DbOp, DeleteReason};
     match op {
-        DbOp::TracksShelved { count } => {
+        DbOp::TracksShelved { count, .. } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");
             format!("Shelved {count} {tracks} in history")
         }
@@ -1001,7 +1044,7 @@ fn mutation_toast(op: &history_db::DbOp, loading_the_recording_again: bool) -> S
                 format!("Unshelved {count} {tracks} in history")
             }
         }
-        DbOp::TracksDeleted { count } => {
+        DbOp::TracksDeleted { count, .. } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");
             format!("Permanently deleted {count} {tracks} from history")
         }

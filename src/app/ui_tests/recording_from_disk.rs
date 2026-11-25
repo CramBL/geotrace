@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
-use geotrace_sdk::NavFile;
+use geotrace_sdk::{Angle, Channel, NavFile, NavFileBuilder, NavFix, SolutionState};
 use gt_store::{
     HistoryDatabase as _, ReadOnlyHistoryDatabase as _, Recordings, StoredFixPlacementRule,
     TrackRange, TrackState,
@@ -26,20 +26,15 @@ use crate::app::ui_tests;
 /// The app with `ride.gtd` in its history database, the second of its two
 /// tracks shelved, and the same file sitting on disk beside the database.
 fn app_with_a_stored_recording_on_disk() -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
-    use gt_store::{TrackRange, TrackState};
+    app_with_a_stored_shelved_track(&ui_tests::two_track_gtd_bytes())
+}
 
-    app_with_a_stored_recording_of(&[
-        TrackRange {
-            start: 0,
-            end: 10,
-            state: TrackState::Live,
-        },
-        TrackRange {
-            start: 10,
-            end: 20,
-            state: TrackState::Shelved,
-        },
-    ])
+fn app_with_a_stored_shelved_track(
+    bytes: &[u8],
+) -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+    let [live, mut shelved] = ui_tests::two_live_track_ranges();
+    shelved.state = TrackState::Shelved;
+    app_with_a_stored_recording_of_bytes(&[live, shelved], bytes)
 }
 
 /// [`app_with_a_stored_recording_on_disk`] with both of the stored tracks
@@ -57,11 +52,17 @@ fn app_with_a_stored_recording_of_live_tracks()
 fn app_with_a_stored_recording_of(
     tracks: &[gt_store::TrackRange],
 ) -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+    app_with_a_stored_recording_of_bytes(tracks, &ui_tests::two_track_gtd_bytes())
+}
+
+fn app_with_a_stored_recording_of_bytes(
+    tracks: &[TrackRange],
+    bytes: &[u8],
+) -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
-    let bytes = ui_tests::two_track_gtd_bytes();
     let gtd_path = dir.path().join("ride.gtd");
-    std::fs::write(&gtd_path, &bytes).expect("write the recording");
+    std::fs::write(&gtd_path, bytes).expect("write the recording");
 
     let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
     harness.step();
@@ -70,7 +71,7 @@ fn app_with_a_stored_recording_of(
     // then reproduces its tracks without the "Track settings differ" prompt.
     let settings =
         crate::app::loader::stored_segmentation_from_config(&harness.state().processing_config);
-    ui_tests::insert_recording_into(&store, &bytes, tracks, settings);
+    ui_tests::insert_recording_into(&store, bytes, tracks, settings);
 
     ui_tests::land_the_databases(&mut harness, &databases, &store);
     (harness, dir, gtd_path)
@@ -230,9 +231,63 @@ fn opening_the_stored_version_reproduces_the_stored_tracks_from_the_database() {
     );
 }
 
-#[test]
-fn loading_from_disk_leaves_the_shelved_track_out_while_the_tickbox_is_ticked() {
-    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
+#[derive(Clone, Copy)]
+enum DiskShelfMode {
+    Owner,
+    ReadOnly,
+    AutoStoreDisabled,
+}
+
+fn two_tracks_with_missing_samples() -> Vec<u8> {
+    let bytes = ui_tests::two_track_gtd_bytes();
+    let file = NavFile::read(bytes.as_slice()).expect("read two tracks");
+    let mut builder = NavFileBuilder::new().open();
+    for (index, point) in file.nav_points().iter().enumerate() {
+        let fix = if index == 4 {
+            NavFix::status_only(point.fix.time, SolutionState::NoFix)
+        } else {
+            point.fix
+        };
+        builder.add_nav_fix(fix);
+    }
+    builder.add_channel(
+        Channel::builder()
+            .name("sensor")
+            .times(vec![ui_tests::base_time()])
+            .values(vec![f64::NAN])
+            .build()
+            .expect("channel sample"),
+    );
+    let file = builder.finish().expect("recording with missing samples");
+    let mut bytes = Vec::new();
+    file.write(&mut bytes).expect("write recording");
+    bytes
+}
+
+#[rstest]
+#[case::owner(DiskShelfMode::Owner)]
+#[case::read_only(DiskShelfMode::ReadOnly)]
+#[case::missing_samples_without_auto_store(DiskShelfMode::AutoStoreDisabled)]
+fn loading_from_disk_leaves_the_shelved_track_out_while_the_tickbox_is_ticked(
+    #[case] mode: DiskShelfMode,
+) {
+    let (mut harness, _dir, gtd_path) = match mode {
+        DiskShelfMode::Owner | DiskShelfMode::ReadOnly => app_with_a_stored_recording_on_disk(),
+        DiskShelfMode::AutoStoreDisabled => {
+            app_with_a_stored_shelved_track(&two_tracks_with_missing_samples())
+        }
+    };
+    let app = harness.state_mut();
+    match mode {
+        DiskShelfMode::ReadOnly => app
+            .pending_writes
+            .become_read_only_for_the_rest_of_the_run(),
+        DiskShelfMode::AutoStoreDisabled => {
+            app.storage_settings.enabled = false;
+            app.sync_db_path();
+        }
+        DiskShelfMode::Owner => {}
+    }
 
     drop_paths(&mut harness, &[gtd_path]);
     test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
@@ -245,12 +300,13 @@ fn loading_from_disk_leaves_the_shelved_track_out_while_the_tickbox_is_ticked() 
     );
     let state = harness.state();
     let shared = state.shared.borrow();
-    let file = shared
+    let entry = shared
         .loaded_files
         .view()
         .get(0)
-        .expect("the loaded recording")
-        .file();
+        .expect("the loaded recording");
+    assert!(entry.history().track_snapshot().is_some());
+    let file = entry.file();
     assert!(
         matches!(file.source, gt_types::FileSource::GtdPath(_)),
         "the load from disk read the stored bytes"
@@ -272,6 +328,39 @@ fn loading_from_disk_shows_every_track_once_the_tickbox_is_cleared() {
         2,
         "the load from disk left the shelved track out with the tickbox cleared"
     );
+}
+
+#[rstest]
+#[case::leave_shelved_out(true)]
+#[case::show_all_tracks(false)]
+fn a_different_disk_payload_never_uses_the_stored_track_rows(#[case] leave_shelved_out: bool) {
+    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
+    drop_paths(&mut harness, std::slice::from_ref(&gtd_path));
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+
+    let original = std::fs::read(&gtd_path).expect("read original file");
+    let mut changed = NavFile::read(original.as_slice()).expect("decode original file");
+    changed.nav_points_mut()[0].fix.lat = Angle::degrees(52.0);
+    let mut changed_bytes = Vec::new();
+    changed
+        .write(&mut changed_bytes)
+        .expect("encode changed position");
+    let old_meta = gt_store::extract_meta(&original).expect("read original metadata");
+    let new_meta = gt_store::extract_meta(&changed_bytes).expect("read changed metadata");
+    assert!(old_meta.same_recording(&new_meta));
+    std::fs::write(&gtd_path, &changed_bytes).expect("replace file before load");
+
+    if !leave_shelved_out {
+        harness.get_by_label(LEAVE_SHELVED_TRACKS_OUT_LABEL).click();
+        harness.step();
+    }
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+    assert_eq!(step_until_one_recording_is_loaded(&mut harness), 2);
+    let shared = harness.state().shared.borrow();
+    let entry = shared.loaded_files.view().get(0).expect("loaded recording");
+    assert!(entry.history().is_stored());
+    assert!(entry.history().track_snapshot().is_none());
+    assert_eq!(entry.history().shelved_track_count(), 0);
 }
 
 #[test]
@@ -398,22 +487,25 @@ fn recordings_already_in_history(
                     ))),
                     mode: crate::app::loader::GtdLoadMode::Regular,
                 },
-                db_ref: gt_store::DatabaseRef {
-                    identity: format!("auto:ride-{index}.gtd"),
-                    group_name: format!("2025-05-2{index}T10:00:00Z_a1b2"),
-                },
-                stored_tracks: vec![
-                    TrackRange {
-                        start: 0,
-                        end: 10,
-                        state: TrackState::Live,
+                history_path: PathBuf::new(),
+                track_snapshot: test_util::recordings::synthetic_track_snapshot(
+                    &gt_store::DatabaseRef {
+                        identity: format!("auto:ride-{index}.gtd"),
+                        group_name: format!("2025-05-2{index}T10:00:00Z_a1b2"),
                     },
-                    TrackRange {
-                        start: 10,
-                        end: 20,
-                        state: TrackState::Shelved,
-                    },
-                ],
+                    &[
+                        TrackRange {
+                            start: 0,
+                            end: 10,
+                            state: TrackState::Live,
+                        },
+                        TrackRange {
+                            start: 10,
+                            end: 20,
+                            state: TrackState::Shelved,
+                        },
+                    ],
+                ),
             })
             .collect(),
         leave_shelved_tracks_out: true,
@@ -468,27 +560,31 @@ fn resegment_prompt_for(
     track_split_rule: gt_store::StoredTrackSplitRule,
     fix_placement_rule: gt_store::StoredFixPlacementRule,
 ) -> crate::app::ResegmentPrompt {
+    let db_ref = gt_store::DatabaseRef {
+        identity: "auto:ride.gtd".to_owned(),
+        group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
+    };
     crate::app::ResegmentPrompt {
         origin: RecordingOperationOrigin::Independent,
-        db_ref: gt_store::DatabaseRef {
-            identity: "auto:ride.gtd".to_owned(),
-            group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
-        },
+        db_ref: db_ref.clone(),
         filename: "ride.gtd".to_owned(),
         bytes: std::sync::Arc::from(ui_tests::minimal_gtd_bytes()),
         stored: stored_segmentation_from_app_with_rules(app, track_split_rule, fix_placement_rule),
-        stored_tracks: vec![
-            gt_store::TrackRange {
-                start: 0,
-                end: 30,
-                state: gt_store::TrackState::Live,
-            },
-            gt_store::TrackRange {
-                start: 30,
-                end: 61,
-                state: gt_store::TrackState::Shelved,
-            },
-        ],
+        track_snapshot: test_util::recordings::synthetic_track_snapshot(
+            &db_ref,
+            &[
+                gt_store::TrackRange {
+                    start: 0,
+                    end: 30,
+                    state: gt_store::TrackState::Live,
+                },
+                gt_store::TrackRange {
+                    start: 30,
+                    end: 61,
+                    state: gt_store::TrackState::Shelved,
+                },
+            ],
+        ),
         marker_settings_changed: false,
         mode: crate::app::loader::GtdLoadMode::Regular,
         placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
@@ -559,19 +655,17 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
     };
 
     let origin = RecordingOperationOrigin::Independent;
+    let recording = gt_store::DatabaseRef {
+        identity: "auto:ride.gtd".to_owned(),
+        group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
+    };
     harness
         .state_mut()
         .handle_history_response(crate::app::history_db::Response::Opened {
             origin,
-            db_ref: gt_store::DatabaseRef {
-                identity: "auto:ride.gtd".to_owned(),
-                group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
-            },
+            db_ref: recording.clone(),
             placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
-            result: Ok(crate::app::history_db::OpenedRecording {
-                stored,
-                ui_state: Ok(gt_store::RecordingUiState::default()),
-            }),
+            result: Ok(test_util::recordings::opened_recording(&recording, stored)),
         });
 
     assert_eq!(harness.state().pending_resegment.is_some(), expected_prompt);

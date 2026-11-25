@@ -263,6 +263,30 @@ fn load_gtd_bytes_with_progress_and_time_repair(
     config: &gt_track_builder::SegmentationConfig,
     time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
+    let source = FileSource::GtdBytes(Arc::from(bytes));
+    load_gtd_contents(bytes, filename, source, progress, config, time_repair)
+}
+
+pub fn load_gtd_path_contents(
+    bytes: &[u8],
+    path: &Path,
+    filename: String,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+    time_repair: Option<DebugTimeRepairConfig>,
+) -> Result<LoadedGtd, LoadError> {
+    let source = FileSource::GtdPath(path.to_owned());
+    load_gtd_contents(bytes, filename, source, progress, config, time_repair)
+}
+
+fn load_gtd_contents(
+    bytes: &[u8],
+    filename: String,
+    source: FileSource,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+    time_repair: Option<DebugTimeRepairConfig>,
+) -> Result<LoadedGtd, LoadError> {
     progress(0.15, STAGE_PARSING);
     let open_mode = match time_repair {
         Some(config) => NavFileOpenMode::DebugTimeRepair(SdkDebugTimeRepair::new(
@@ -271,8 +295,17 @@ fn load_gtd_bytes_with_progress_and_time_repair(
         None => NavFileOpenMode::Regular,
     };
     let nav_file = NavFile::read_with_mode(bytes, open_mode)?;
-    let source = FileSource::GtdBytes(Arc::from(bytes));
     build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
+}
+
+pub struct StoredGtdBytes<'a>(pub &'a [u8]);
+
+/// Compares the recorded content decoded by [`NavFile`].
+pub fn same_recorded_payload(
+    incoming: &[u8],
+    StoredGtdBytes(stored): StoredGtdBytes<'_>,
+) -> Result<bool, LoadError> {
+    Ok(NavFile::read(incoming)?.equals_ignoring_build_provenance(&NavFile::read(stored)?))
 }
 
 /// Re-encode a `.gtd` recording with the nav points in `drop_ranges` removed.
