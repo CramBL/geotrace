@@ -12,7 +12,7 @@ use gt_types::{NavPoint, TrackRef};
 use serde::{Deserialize, Serialize};
 
 use crate::framing::{Frame, MAX_REPLY_BYTES};
-use crate::protocol::{ErrorCode, TrackReference};
+use crate::protocol::{ErrorCode, NumericObservation, TrackReference};
 use crate::query_job::QueryJobId;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -149,14 +149,14 @@ pub struct QueryMatch {
     pub range: Range<usize>,
     pub first_time: Option<QueryResultTime>,
     pub last_time: Option<QueryResultTime>,
-    pub aggregates: Vec<QueryResultValue>,
+    pub aggregates: Vec<NumericObservation>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueryResultRow {
     pub index: usize,
     pub time: Option<QueryResultTime>,
-    pub values: Vec<QueryResultValue>,
+    pub values: Vec<NumericObservation>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -192,24 +192,6 @@ impl QueryResultColumn {
             ordinal,
             label,
             unit: unit.map(str::to_owned),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum QueryResultValue {
-    Finite { value: f64 },
-    Missing,
-    NonFinite,
-}
-
-impl From<Option<f64>> for QueryResultValue {
-    fn from(value: Option<f64>) -> Self {
-        match value {
-            Some(value) if value.is_finite() => Self::Finite { value },
-            Some(_) => Self::NonFinite,
-            None => Self::Missing,
         }
     }
 }
@@ -478,7 +460,7 @@ impl MatchSource<'_> {
         range: Range<usize>,
         limit: Option<NonZeroUsize>,
         columns: Vec<QueryResultColumn>,
-        values: impl Fn(usize) -> Vec<QueryResultValue>,
+        values: impl Fn(usize) -> Vec<NumericObservation>,
     ) -> Result<(Vec<QueryResultColumn>, QueryResultPage), ErrorCode> {
         let limit = self::page_limit(limit, columns.len())?;
         let end = range.start.saturating_add(limit).min(range.end);

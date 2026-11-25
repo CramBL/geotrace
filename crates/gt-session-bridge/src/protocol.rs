@@ -289,6 +289,24 @@ pub enum ErrorCode {
     StaleTrack,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum NumericObservation {
+    Finite { value: f64 },
+    Missing,
+    NonFinite,
+}
+
+impl From<Option<f64>> for NumericObservation {
+    fn from(value: Option<f64>) -> Self {
+        match value {
+            Some(value) if value.is_finite() => Self::Finite { value },
+            Some(_) => Self::NonFinite,
+            None => Self::Missing,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Recordings {
     pub recordings: Vec<Recording>,
