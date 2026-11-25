@@ -140,12 +140,12 @@ impl Drop for Server {
 }
 
 /// Call from a [`tokio::runtime::Runtime`] with I/O and time enabled.
-pub async fn request(request: Request) -> io::Result<Reply> {
+pub async fn request(request: &Request) -> io::Result<Reply> {
     self::request_at(&Endpoint::current_user()?, request).await
 }
 
-async fn request_at(endpoint: &Endpoint, request: Request) -> io::Result<Reply> {
-    let frame = Frame::encode(&request, MAX_REQUEST_BYTES).map_err(|error| {
+async fn request_at(endpoint: &Endpoint, request: &Request) -> io::Result<Reply> {
+    let frame = Frame::encode(request, MAX_REQUEST_BYTES).map_err(|error| {
         io::Error::new(
             error.io_error_kind().unwrap_or(ErrorKind::InvalidData),
             error,

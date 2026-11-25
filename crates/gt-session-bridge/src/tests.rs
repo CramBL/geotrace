@@ -63,7 +63,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
         session: server.session,
         number: files.view().get(0).unwrap().id().into(),
     };
-    let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, REQUEST), async {
+    let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, &REQUEST), async {
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(1), wakes.recv())
                 .await
@@ -421,7 +421,7 @@ async fn oversized_query_requests_fail_before_connecting() {
     let request = Request::CheckQuery(QueryText {
         text: "\n".repeat(MAX_REQUEST_BYTES / 2),
     });
-    let error = super::request_at(&fixture.endpoint, request)
+    let error = super::request_at(&fixture.endpoint, &request)
         .await
         .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::FileTooLarge);
@@ -450,7 +450,7 @@ async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
     let request = Request::CheckQuery(QueryText {
         text: "@accel | where @accel.x > 1 g".to_owned(),
     });
-    let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, request), async {
+    let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, &request), async {
         tokio::time::timeout(Duration::from_secs(1), wakes.recv())
             .await
             .unwrap()
@@ -651,7 +651,7 @@ async fn shutdown_disconnects_pending_client_and_releases_endpoint() {
         .unwrap();
     after_shutdown.unwrap_err();
     assert_eq!(
-        super::request_at(&fixture.endpoint, REQUEST)
+        super::request_at(&fixture.endpoint, &REQUEST)
             .await
             .unwrap_err()
             .kind(),

@@ -282,7 +282,18 @@ impl Companion {
 
     async fn inspect(&self, request: Request) -> CallToolResult {
         let checking_query = matches!(&request, Request::CheckQuery(_) | Request::RunQuery(_));
-        let result = match self.bridge.request(request).await {
+        let result = match self.bridge.request(&request).await {
+            Ok(Reply::Error {
+                code: ErrorCode::ReplyTooLarge,
+            }) if checking_query => {
+                return Self::tool_error(
+                    "The query diagnostics exceed the reply size limit. Check fewer blocks at a time. For a single oversized diagnostic, check the query in the GeoTrace editor.",
+                );
+            }
+            Ok(Reply::Error { code }) => return Self::tool_error(Self::reply_error_message(code)),
+            Ok(reply) if !Self::accepts_success_reply(&request, &reply) => {
+                return Self::tool_error("GeoTrace returned an unexpected reply for this tool.");
+            }
             Ok(
                 reply @ (Reply::MapPresentationQueued
                 | Reply::PlotPresentationQueued
@@ -302,14 +313,6 @@ impl Companion {
             Ok(Reply::Recordings { page }) => serde_json::to_value(page),
             Ok(Reply::Setting { setting }) => serde_json::to_value(setting),
             Ok(Reply::Track { details }) => serde_json::to_value(details),
-            Ok(Reply::Error {
-                code: ErrorCode::ReplyTooLarge,
-            }) if checking_query => {
-                return Self::tool_error(
-                    "The query diagnostics exceed the reply size limit. Check fewer blocks at a time. For a single oversized diagnostic, check the query in the GeoTrace editor.",
-                );
-            }
-            Ok(Reply::Error { code }) => return Self::tool_error(Self::reply_error_message(code)),
             Err(error) => return Self::tool_error(Self::connection_error_message(error.kind())),
         };
         match result {
@@ -317,6 +320,43 @@ impl Companion {
             Err(error) => {
                 Self::tool_error(format!("Could not encode the GeoTrace result ({error})."))
             }
+        }
+    }
+
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "Each arm checks an independent request and reply pair"
+    )]
+    fn accepts_success_reply(request: &Request, reply: &Reply) -> bool {
+        match request {
+            Request::ApplyProcessing(_) => matches!(reply, Reply::ProcessingQueued),
+            Request::CancelQuery(_) | Request::GetQueryStatus(_) => {
+                matches!(reply, Reply::QueryJob { .. })
+            }
+            Request::CheckQuery(_) => matches!(reply, Reply::QueryCheck { .. }),
+            Request::DescribeSetting(_) | Request::SetSetting(_) => {
+                matches!(reply, Reply::Setting { .. })
+            }
+            Request::GetHistoryOpenStatus(_) | Request::OpenHistoryRecording(_) => {
+                matches!(reply, Reply::HistoryOpen { .. })
+            }
+            Request::GetQueryResults(_) => matches!(reply, Reply::QueryResults { .. }),
+            Request::GetRangeDetails(_) => matches!(reply, Reply::Range { .. }),
+            Request::GetRecording(_) => matches!(reply, Reply::Recording { .. }),
+            Request::GetSettings => matches!(reply, Reply::Settings { .. }),
+            Request::GetTrack(_) => matches!(reply, Reply::Track { .. }),
+            Request::ListHistoryRecordings(_) => matches!(reply, Reply::HistoryRecordings { .. }),
+            Request::ListMetrics(_) => matches!(reply, Reply::Metrics { .. }),
+            Request::ListRecordings(_) => matches!(reply, Reply::Recordings { .. }),
+            Request::OpenPoint(_) | Request::ShowOnMap(_) => {
+                matches!(reply, Reply::MapPresentationQueued)
+            }
+            Request::OpenQuery(_) => matches!(reply, Reply::QueryDraftQueued),
+            Request::OpenSetting(_) => matches!(reply, Reply::SettingOpenQueued),
+            Request::RunQuery(_) => {
+                matches!(reply, Reply::QueryCheck { .. } | Reply::QueryJob { .. })
+            }
+            Request::ShowOnPlot(_) => matches!(reply, Reply::PlotPresentationQueued),
         }
     }
 
@@ -431,11 +471,11 @@ impl ServerHandler for Companion {
 enum Bridge {
     Desktop,
     #[cfg(test)]
-    Fixture(fn(Request) -> io::Result<Reply>),
+    Fixture(fn(&Request) -> io::Result<Reply>),
 }
 
 impl Bridge {
-    async fn request(self, request: Request) -> io::Result<Reply> {
+    async fn request(self, request: &Request) -> io::Result<Reply> {
         match self {
             Self::Desktop => gt_session_bridge::request(request).await,
             #[cfg(test)]
