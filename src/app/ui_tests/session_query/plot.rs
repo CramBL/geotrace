@@ -8,8 +8,9 @@ use gt_test_utils::fixtures;
 use gt_types::{FileIdx, MetricKind};
 use rstest::rstest;
 
-use super::ui_tests;
 use crate::app::SharedAppState;
+use crate::app::test_util::session;
+use crate::app::ui_tests;
 
 #[test]
 fn the_plot_frames_filtered_fix_times_across_a_clock_reversal() {
@@ -44,7 +45,7 @@ fn the_plot_frames_filtered_fix_times_across_a_clock_reversal() {
         plot_state.metric_vis.set(MetricKind::Eph, false);
         plot_state.metric_vis.set(MetricKind::Velocity, false);
     }
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let target = RangeTarget::Track {
         track,
         start: Some(0),
@@ -55,7 +56,7 @@ fn the_plot_frames_filtered_fix_times_across_a_clock_reversal() {
         metrics: vec!["eph".to_owned(), "util_all".to_owned()],
     });
     assert_eq!(
-        super::execute(&mut harness, request),
+        session::execute(&mut harness, request),
         Reply::PlotPresentationQueued
     );
     assert!(harness.state().plot_is_visible());
@@ -74,7 +75,7 @@ fn the_plot_frames_filtered_fix_times_across_a_clock_reversal() {
 #[test]
 fn the_plot_syncs_again_when_the_map_time_range_changes() {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let target = RangeTarget::Track {
         track,
         start: Some(20),
@@ -85,7 +86,7 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
         metrics: Vec::new(),
     });
     assert_eq!(
-        super::execute(&mut harness, frame.clone()),
+        session::execute(&mut harness, frame.clone()),
         Reply::PlotPresentationQueued
     );
     harness.run_steps(3);
@@ -103,7 +104,7 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
     };
     let map = Request::ShowOnMap(ShowOnMap { target });
     assert_eq!(
-        super::execute(&mut harness, map.clone()),
+        session::execute(&mut harness, map.clone()),
         Reply::MapPresentationQueued
     );
     harness.run_steps(3);
@@ -116,7 +117,7 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
     drop(shared);
 
     assert_eq!(
-        super::execute(&mut harness, frame),
+        session::execute(&mut harness, frame),
         Reply::PlotPresentationQueued
     );
     harness.step();
@@ -129,7 +130,7 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
     }
 
     assert_eq!(
-        super::execute(&mut harness, map),
+        session::execute(&mut harness, map),
         Reply::MapPresentationQueued
     );
     harness.run_steps(3);
@@ -154,9 +155,9 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
             .set_time_bounds(Some(point_at), Some(point_at));
         shared.plot_state.metric_vis.set(MetricKind::Eph, false);
     }
-    let job = super::start(&mut harness, "points | where velocity > 1 km/h");
+    let job = session::start_query(&mut harness, "points | where velocity > 1 km/h");
     assert!(matches!(
-        super::complete(&mut harness, job),
+        session::wait_for_query_to_stop(&mut harness, job),
         QueryJobState::Completed { .. }
     ));
     let target = RangeTarget::QueryMatch {
@@ -166,7 +167,7 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
     };
     harness.set_size(egui::vec2(100.0, 60.0));
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::ShowOnPlot(ShowOnPlot {
                 target,
@@ -185,7 +186,7 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
             .is_some()
     );
     if replace_job {
-        assert_ne!(super::start(&mut harness, "points"), job);
+        assert_ne!(session::start_query(&mut harness, "points"), job);
         harness.step();
         assert!(
             harness
@@ -214,7 +215,7 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
 #[test]
 fn a_plot_request_requires_plot_metrics_and_visible_times() {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let target = RangeTarget::Track {
         track,
         start: Some(3),
@@ -223,7 +224,7 @@ fn a_plot_request_requires_plot_metrics_and_visible_times() {
     let app = harness.state_mut();
     app.tiles_tree.tiles.set_visible(app.plot_tile_id, false);
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::ShowOnPlot(ShowOnPlot {
                 target,
@@ -239,7 +240,7 @@ fn a_plot_request_requires_plot_metrics_and_visible_times() {
         .tree
         .toggle_file_check(FileIdx::new(0));
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::ShowOnPlot(ShowOnPlot {
                 target,

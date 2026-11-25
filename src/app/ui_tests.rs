@@ -19,7 +19,7 @@ use super::archive_recovery::UnavailableArchives;
 use super::storage::OpenStorage;
 use crate::app::log_viewer::filters;
 use crate::app::test_util;
-use crate::app::test_util::harness::TestDroppedFile;
+use crate::app::test_util::harness::{QUERY_WINDOW_TITLE, TestDroppedFile};
 
 mod about_dialog;
 mod app_snapshots;
@@ -785,10 +785,6 @@ fn open_temporary_history_database(path: &std::path::Path) -> gt_store::Recordin
 /// A demo-trip query with more matches than the matches table lists at once,
 /// each of them holding rows for the points table below it.
 const MANY_MATCH_QUERY: &str = "points | where accel < -0.2 m/s2";
-
-/// The query window's title, which both its area and its accesskit node are
-/// addressed by.
-const QUERY_WINDOW_TITLE: &str = "Query";
 
 /// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
 /// value generation and the expected-match assertion so they cannot drift.

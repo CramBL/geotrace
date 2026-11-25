@@ -7,20 +7,19 @@ use egui_kittest::kittest::Queryable as _;
 use gt_loaded_files::FileHistory;
 use gt_query::Unit;
 use gt_session_bridge::{
-    ErrorCode, GetQueryResults, GetRecording, ListRecordings, QueryCounts, QueryJobId,
-    QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition,
-    QueryPageRequest, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
-    QueryResultValue, QueryResults, QueryText, QueryValidation, RangeTarget, Reply, Request,
-    SessionRequest, ShowOnMap, ShowOnPlot, TrackReference,
+    ErrorCode, GetQueryResults, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
+    QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultPage, QueryResultSource,
+    QueryResultTime, QueryResultValue, QueryText, QueryValidation, RangeTarget, Reply, Request,
+    ShowOnMap, ShowOnPlot,
 };
-use gt_test_utils::HarnessInteraction as _;
 use gt_test_utils::fixtures;
 use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use uuid::Uuid;
 
-use super::{self as ui_tests, App};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
+use crate::app::test_util::session;
+use crate::app::{App, ui_tests};
 
 mod background;
 mod history;
@@ -35,7 +34,7 @@ fn pending_run_input_leaves_a_session_draft_unrun() {
     assert!(!harness.state().query_window.open);
     let draft = "points | where eph < 20 m | draw";
     assert_eq!(
-        self::execute(
+        session::execute(
             &mut harness,
             Request::OpenQuery(QueryText {
                 text: draft.to_owned(),
@@ -81,7 +80,7 @@ fn a_session_draft_opens_the_query_editor_with_diagnostics_and_previous_results(
 
     let draft = "# Første\r\n\r\npoints | where speed > 10 km/h";
     assert_eq!(
-        self::execute(
+        session::execute(
             &mut harness,
             Request::OpenQuery(QueryText {
                 text: draft.to_owned()
@@ -117,7 +116,7 @@ fn an_editor_run_finishes_after_a_session_draft_replaces_the_text() {
 
     let draft = "points | where velocity > 999 km/h | hide";
     assert_eq!(
-        self::execute(
+        session::execute(
             &mut harness,
             Request::OpenQuery(QueryText {
                 text: draft.to_owned()
@@ -139,8 +138,8 @@ fn editor_and_session_results_refresh_when_enabled_tracks_change() {
     harness.state_mut().query_window.open = true;
     let text = "points | where velocity > 1 km/h | draw";
     ui_tests::run_query(&mut harness, text);
-    let job = self::start(&mut harness, text);
-    let completed = self::complete(&mut harness, job);
+    let job = session::start_query(&mut harness, text);
+    let completed = session::wait_for_query_to_stop(&mut harness, job);
     assert!(matches!(completed, QueryJobState::Completed { .. }));
     assert!(!harness.state().query_window.matches().unwrap().stale);
     let other_file = FileIdx::new(1);
@@ -200,8 +199,11 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
     let editor_matches = harness.state().query_window.matches().unwrap().clone();
     let history_revision = harness.state().query_window.history_revision();
 
-    let first = self::start(&mut harness, "points | where velocity > 1 km/h | hide");
-    assert_eq!(self::complete(&mut harness, first), self::completed(1));
+    let first = session::start_query(&mut harness, "points | where velocity > 1 km/h | hide");
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, first),
+        session::completed_single_track_query(1)
+    );
     let window = &harness.state().query_window;
     assert_eq!(window.text(), editor_text);
     assert_eq!(window.matches(), Some(&editor_matches));
@@ -213,20 +215,29 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
         .borrow_mut()
         .filter
         .set_time_bounds(Some(ui_tests::base_time() + TimeDelta::minutes(10)), None);
-    assert_eq!(self::status(&mut harness, first), QueryJobState::Stale);
-    let filtered = self::start(&mut harness, "points | where velocity > 1 km/h");
-    assert_eq!(self::complete(&mut harness, filtered), self::completed(0));
+    assert_eq!(
+        session::query_status(&mut harness, first),
+        QueryJobState::Stale
+    );
+    let filtered = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, filtered),
+        session::completed_single_track_query(0)
+    );
 
     {
         let mut shared = harness.state_mut().shared.borrow_mut();
         shared.filter.set_time_bounds(None, None);
         shared.tree.set_all_enabled(false);
     }
-    let hidden = self::start(&mut harness, "points | where velocity > 1 km/h");
-    assert_eq!(self::complete(&mut harness, hidden), self::completed(0));
+    let hidden = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, hidden),
+        session::completed_single_track_query(0)
+    );
     let old = Request::GetQueryStatus(QueryJobRequest { job: filtered });
     assert_eq!(
-        self::execute(&mut harness, old),
+        session::execute(&mut harness, old),
         ErrorCode::QueryJobNotFound.into()
     );
 }
@@ -234,11 +245,11 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
 #[test]
 fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
     let mut harness = ui_tests::app_with_a_recording();
-    let job = self::start(&mut harness, "points | where velocity > 1 km/h");
+    let job = session::start_query(&mut harness, "points | where velocity > 1 km/h");
     let ctx = harness.ctx.clone();
     harness.state_mut().prepare_session_query(&ctx);
     assert_eq!(
-        self::execute(
+        session::execute(
             &mut harness,
             Request::RunQuery(QueryText {
                 text: "points".to_owned()
@@ -256,7 +267,7 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
         ..job
     };
     assert_eq!(
-        self::execute(
+        session::execute(
             &mut harness,
             Request::CancelQuery(QueryJobRequest {
                 job: previous_session
@@ -265,14 +276,17 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
         ErrorCode::StaleSession.into()
     );
     let Reply::QueryJob { job: status } =
-        self::execute(&mut harness, Request::CancelQuery(QueryJobRequest { job }))
+        session::execute(&mut harness, Request::CancelQuery(QueryJobRequest { job }))
     else {
         panic!("expected a cancellation status");
     };
     assert_eq!(status.state, QueryJobState::Cancelling);
-    assert_eq!(self::complete(&mut harness, job), QueryJobState::Cancelled);
     assert_eq!(
-        self::execute(
+        session::wait_for_query_to_stop(&mut harness, job),
+        QueryJobState::Cancelled
+    );
+    assert_eq!(
+        session::execute(
             &mut harness,
             Request::RunQuery(QueryText {
                 text: "# empty".to_owned()
@@ -282,11 +296,14 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
             validation: QueryValidation::Empty
         }
     );
-    assert_eq!(self::status(&mut harness, job), QueryJobState::Cancelled);
     assert_eq!(
-        self::execute(
+        session::query_status(&mut harness, job),
+        QueryJobState::Cancelled
+    );
+    assert_eq!(
+        session::execute(
             &mut harness,
-            Request::GetQueryResults(self::first_page(job))
+            Request::GetQueryResults(session::first_query_match_request(job))
         ),
         ErrorCode::QueryResultsUnavailable.into()
     );
@@ -302,24 +319,24 @@ fn session_query_pages_point_matches_and_absolute_table_rows() {
         .borrow_mut()
         .filter
         .set_time_bounds(Some(time), None);
-    let job = self::start(
+    let job = session::start_query(
         &mut harness,
         "points | window 2 | where max(velocity) > 1 km/h | table time, accel, max(velocity), velocity\n\npoints | where velocity > 300 km/h",
     );
-    let request = self::first_page(job);
+    let request = session::first_query_match_request(job);
     assert_eq!(
-        self::execute(&mut harness, Request::GetQueryResults(request)),
+        session::execute(&mut harness, Request::GetQueryResults(request)),
         ErrorCode::QueryNotComplete.into()
     );
     assert!(matches!(
-        self::complete(&mut harness, job),
+        session::wait_for_query_to_stop(&mut harness, job),
         QueryJobState::Completed { .. }
     ));
-    let results = self::results(&mut harness, request);
+    let results = session::results(&mut harness, request);
     assert_eq!(results.source, QueryResultSource::Points);
     assert_eq!(results.columns[0].ordinal, 2);
     assert_eq!(results.columns[0].unit.as_deref(), Some("m/s"));
-    let (matches, next) = self::match_page(results.page);
+    let (matches, next) = session::match_page(results.page);
     assert_eq!(matches.len(), 1);
     let matched = &matches[0];
     assert_eq!(matched.range, 20..240);
@@ -337,8 +354,8 @@ fn session_query_pages_point_matches_and_absolute_table_rows() {
             match_ordinal: 0
         })
     );
-    let (second, _) = self::match_page(
-        self::results(
+    let (second, _) = session::match_page(
+        session::results(
             &mut harness,
             GetQueryResults {
                 page: QueryPageRequest::Matches { start: next },
@@ -351,7 +368,7 @@ fn session_query_pages_point_matches_and_absolute_table_rows() {
 
     self::assert_point_rows(&mut harness, request, matched);
     assert_eq!(
-        self::results(
+        session::results(
             &mut harness,
             GetQueryResults {
                 query: 1,
@@ -379,7 +396,7 @@ fn assert_point_rows(
         limit: Some(NonZeroUsize::MAX),
         ..request
     };
-    let details = self::results(harness, rows_request);
+    let details = session::results(harness, rows_request);
     assert_eq!(
         details
             .columns
@@ -388,7 +405,7 @@ fn assert_point_rows(
             .collect::<Vec<_>>(),
         [0, 1, 3]
     );
-    let (rows, next_start) = self::row_page(details.page);
+    let (rows, next_start) = session::row_page(details.page);
     assert_eq!(rows.len(), 100);
     assert_eq!(rows[0].index, 20);
     assert_eq!(rows[0].time, matched.first_time);
@@ -405,7 +422,7 @@ fn assert_point_rows(
         ..rows_request
     };
     assert_eq!(
-        self::execute(harness, Request::GetQueryResults(invalid)),
+        session::execute(harness, Request::GetQueryResults(invalid)),
         ErrorCode::InvalidQueryCursor.into()
     );
 }
@@ -427,16 +444,16 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         .borrow_mut()
         .filter
         .set_time_bounds(Some(time), None);
-    let job = self::start(
+    let job = session::start_query(
         &mut harness,
         "@accel | window 2 | where min(@accel.x) > 1 g | table max(@accel.x)",
     );
     assert!(matches!(
-        self::complete(&mut harness, job),
+        session::wait_for_query_to_stop(&mut harness, job),
         QueryJobState::Completed { .. }
     ));
-    let request = self::first_page(job);
-    let results = self::results(&mut harness, request);
+    let request = session::first_query_match_request(job);
+    let results = session::results(&mut harness, request);
     assert_eq!(
         results.source,
         QueryResultSource::Channel {
@@ -448,7 +465,7 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         results.columns[0].unit.as_deref(),
         Some(Unit::M_PER_S2.label())
     );
-    let (matches, next) = self::match_page(results.page);
+    let (matches, next) = session::match_page(results.page);
     assert_eq!(matches[0].range, 0..20);
     assert_eq!(
         matches[0].first_time,
@@ -480,7 +497,7 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         matched: matches[0].position,
     };
     assert_eq!(
-        self::execute(&mut harness, Request::ShowOnMap(ShowOnMap { target })),
+        session::execute(&mut harness, Request::ShowOnMap(ShowOnMap { target })),
         ErrorCode::QueryMatchIsChannel.into()
     );
     let frame = ShowOnPlot {
@@ -496,11 +513,11 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         .filter
         .set_time_bounds(None, None);
     assert_eq!(
-        self::execute(&mut harness, Request::GetQueryResults(request)),
+        session::execute(&mut harness, Request::GetQueryResults(request)),
         ErrorCode::StaleQueryResults.into()
     );
     assert_eq!(
-        self::execute(&mut harness, Request::ShowOnPlot(frame)),
+        session::execute(&mut harness, Request::ShowOnPlot(frame)),
         ErrorCode::StaleQueryResults.into()
     );
 }
@@ -512,7 +529,7 @@ fn assert_channel_plot(harness: &mut Harness<'_, App>, frame: &ShowOnPlot, start
         shared.plot_state.channel_vis.set("accel", false);
     }
     assert_eq!(
-        self::execute(harness, Request::ShowOnPlot(frame.clone())),
+        session::execute(harness, Request::ShowOnPlot(frame.clone())),
         Reply::PlotPresentationQueued
     );
     harness.run_steps(2);
@@ -531,7 +548,7 @@ fn assert_channel_rows(
     request: GetQueryResults,
     matched: &QueryMatch,
 ) {
-    let details = self::results(
+    let details = session::results(
         harness,
         GetQueryResults {
             page: QueryPageRequest::Rows {
@@ -550,7 +567,7 @@ fn assert_channel_rows(
         ["x", "y", "z"]
     );
     assert_eq!(details.columns[0].unit.as_deref(), Some("g"));
-    let (rows, next_start) = self::row_page(details.page);
+    let (rows, next_start) = session::row_page(details.page);
     assert_eq!(next_start, None);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].index, 19);
@@ -558,51 +575,16 @@ fn assert_channel_rows(
     assert_eq!(rows[0].values[0], QueryResultValue::Finite { value: 1.5 });
 }
 
-fn match_page(page: QueryResultPage) -> (Vec<QueryMatch>, Option<QueryMatchPosition>) {
-    let QueryResultPage::Matches {
-        matches,
-        next_start,
-    } = page
-    else {
-        panic!("expected match page");
-    };
-    (matches, next_start)
-}
-
-fn row_page(page: QueryResultPage) -> (Vec<QueryResultRow>, Option<usize>) {
-    let QueryResultPage::Rows {
-        rows, next_start, ..
-    } = page
-    else {
-        panic!("expected row page");
-    };
-    (rows, next_start)
-}
-
-fn first_page(job: QueryJobId) -> GetQueryResults {
-    GetQueryResults {
-        job,
-        query: 0,
-        page: QueryPageRequest::Matches { start: None },
-        limit: Some(NonZeroUsize::MIN),
-    }
-}
-
-fn results(harness: &mut Harness<'_, App>, args: GetQueryResults) -> QueryResults {
-    let Reply::QueryResults { results } = self::execute(harness, Request::GetQueryResults(args))
-    else {
-        panic!("expected query results");
-    };
-    results
-}
-
 #[test]
 fn session_query_status_becomes_stale_after_replacing_the_recording() {
     let mut harness = ui_tests::app_with_a_recording();
-    let job = self::start(&mut harness, "points | where velocity > 1 km/h");
-    let completed = self::completed(1);
-    assert_eq!(self::complete(&mut harness, job), completed);
-    assert_eq!(self::status(&mut harness, job), completed);
+    let job = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    let completed = session::completed_single_track_query(1);
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, job),
+        completed
+    );
+    assert_eq!(session::query_status(&mut harness, job), completed);
 
     let points = fixtures::nav_points_from(ui_tests::base_time(), 1, 1);
     let replacement =
@@ -616,77 +598,8 @@ fn session_query_status_becomes_stale_after_replacing_the_recording() {
         .loaded_files
         .replace_file(0, replacement, FileHistory::None);
 
-    assert_eq!(self::status(&mut harness, job), QueryJobState::Stale);
-}
-
-fn start(harness: &mut Harness<'_, App>, text: &str) -> QueryJobId {
-    let reply = self::execute(
-        harness,
-        Request::RunQuery(QueryText {
-            text: text.to_owned(),
-        }),
+    assert_eq!(
+        session::query_status(&mut harness, job),
+        QueryJobState::Stale
     );
-    let Reply::QueryJob { job } = reply else {
-        panic!("expected a running query job, got {reply:?}");
-    };
-    assert_eq!(job.state, QueryJobState::Preparing);
-    job.job
-}
-
-fn status(harness: &mut Harness<'_, App>, job: QueryJobId) -> QueryJobState {
-    let Reply::QueryJob { job: result } =
-        self::execute(harness, Request::GetQueryStatus(QueryJobRequest { job }))
-    else {
-        panic!("expected query status");
-    };
-    assert_eq!(result.job, job);
-    result.state
-}
-
-fn complete(harness: &mut Harness<'_, App>, job: QueryJobId) -> QueryJobState {
-    assert!(harness.step_until(|harness| { !harness.state().session_query.is_active() }));
-    self::status(harness, job)
-}
-
-fn execute(harness: &mut Harness<'_, App>, request: Request) -> Reply {
-    harness.state_mut().execute_session_request_in_test(
-        SessionRequest {
-            request,
-            session: Uuid::from_u128(1),
-        },
-        true,
-    )
-}
-
-fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {
-    let Reply::Recordings { page } = self::execute(
-        harness,
-        Request::ListRecordings(ListRecordings {
-            after: None,
-            limit: None,
-        }),
-    ) else {
-        panic!("expected recordings");
-    };
-    let Reply::Recording { details } = self::execute(
-        harness,
-        Request::GetRecording(GetRecording {
-            recording: page.recordings[0].id,
-            after: None,
-            limit: None,
-        }),
-    ) else {
-        panic!("expected recording details");
-    };
-    details.tracks[0]
-}
-
-fn completed(matches: usize) -> QueryJobState {
-    QueryJobState::Completed {
-        queries: vec![QueryCounts {
-            matches,
-            tracks_with_matches: usize::from(matches > 0),
-            skipped: 0,
-        }],
-    }
 }

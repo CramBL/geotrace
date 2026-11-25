@@ -13,12 +13,13 @@ use gt_ui_types::{DisplayCategory, MapElementRef, MatchHighlight, MatchRevealTar
 use rstest::rstest;
 use uuid::Uuid;
 
-use super::{App, ui_tests};
+use crate::app::test_util::{harness, session};
+use crate::app::{App, ui_tests};
 
 #[test]
 fn session_map_frames_a_range_when_the_map_draws() {
     let mut harness = ui_tests::app_with_a_recording();
-    let reference = super::first_track_reference(&mut harness);
+    let reference = session::first_track_reference(&mut harness);
     let initial = harness.state().map.viewport_geo_bounds().unwrap();
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, false);
@@ -28,7 +29,7 @@ fn session_map_frames_a_range_when_the_map_draws() {
         .set_time_bounds(Some(ui_tests::base_time() + TimeDelta::seconds(30)), None);
 
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::ShowOnMap(ShowOnMap {
                 target: RangeTarget::Track {
@@ -89,7 +90,7 @@ fn session_map_discards_a_query_match_without_a_status_request(
         .borrow_mut()
         .filter
         .set_time_bounds(Some(ui_tests::base_time() + TimeDelta::seconds(20)), None);
-    let job = super::start(
+    let job = session::start_query(
         &mut harness,
         "points | where velocity > 300 km/h\n\npoints | where velocity > 1 km/h",
     );
@@ -105,22 +106,22 @@ fn session_map_discards_a_query_match_without_a_status_request(
         },
     });
     assert_eq!(
-        super::execute(&mut harness, request.clone()),
+        session::execute(&mut harness, request.clone()),
         ErrorCode::QueryNotComplete.into()
     );
     assert!(matches!(
-        super::complete(&mut harness, job),
+        session::wait_for_query_to_stop(&mut harness, job),
         QueryJobState::Completed { .. }
     ));
-    let (matches, _) = super::match_page(
-        super::results(
+    let (matches, _) = session::match_page(
+        session::results(
             &mut harness,
             GetQueryResults {
                 query: 1,
                 page: QueryPageRequest::Matches {
                     start: Some(position),
                 },
-                ..super::first_page(job)
+                ..session::first_query_match_request(job)
             },
         )
         .page,
@@ -135,7 +136,7 @@ fn session_map_discards_a_query_match_without_a_status_request(
     app.tiles_tree.set_visible(app.map_tile_id, map_visible);
 
     assert_eq!(
-        super::execute(&mut harness, request.clone()),
+        session::execute(&mut harness, request.clone()),
         Reply::MapPresentationQueued
     );
     harness.step();
@@ -150,7 +151,7 @@ fn session_map_discards_a_query_match_without_a_status_request(
 
     let expected_error = match invalidation {
         MatchInvalidation::ReplaceJob => {
-            assert_ne!(super::start(&mut harness, "points"), job);
+            assert_ne!(session::start_query(&mut harness, "points"), job);
             ErrorCode::QueryJobNotFound
         }
         MatchInvalidation::StaleInputs => {
@@ -169,7 +170,10 @@ fn session_map_discards_a_query_match_without_a_status_request(
         assert_eq!(shared.highlight.presented_match, None);
         assert!(shared.pending_session_map.is_none());
     }
-    assert_eq!(super::execute(&mut harness, request), expected_error.into());
+    assert_eq!(
+        session::execute(&mut harness, request),
+        expected_error.into()
+    );
 }
 
 enum PresentationStage {
@@ -185,8 +189,11 @@ enum MatchInvalidation {
 #[test]
 fn session_map_validates_query_match_indices_and_geometry() {
     let mut harness = ui_tests::app_with_a_recording();
-    let job = super::start(&mut harness, "points | where velocity > 1 km/h");
-    assert_eq!(super::complete(&mut harness, job), super::completed(1));
+    let job = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, job),
+        session::completed_single_track_query(1)
+    );
     let position = QueryMatchPosition::default();
     let other_session = QueryJobId {
         session: Uuid::from_u128(2),
@@ -230,7 +237,7 @@ fn session_map_validates_query_match_indices_and_geometry() {
                 matched,
             },
         });
-        assert_eq!(super::execute(&mut harness, request), error.into());
+        assert_eq!(session::execute(&mut harness, request), error.into());
     }
     assert!(
         harness
@@ -252,7 +259,7 @@ fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] sta
             start_lat_deg,
             ..ui_tests::minimal_gtd_spec()
         }));
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let point = 20;
     let request = Request::OpenPoint(OpenPoint { track, point });
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
@@ -267,7 +274,7 @@ fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] sta
     };
     for _ in 0..2 {
         assert_eq!(
-            super::execute(&mut harness, request.clone()),
+            session::execute(&mut harness, request.clone()),
             Reply::MapPresentationQueued
         );
         harness.step();
@@ -284,7 +291,7 @@ fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] sta
     harness.step();
     assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
     assert_eq!(
-        super::execute(&mut harness, request),
+        session::execute(&mut harness, request),
         ErrorCode::NoVisibleMapGeometry.into()
     );
 }
@@ -295,10 +302,10 @@ fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] sta
 fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filter: bool) {
     let mut harness = ui_tests::app_with_a_recording();
     harness.set_size(egui::vec2(1400.0, 900.0));
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let point = 20;
     assert_eq!(
-        super::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
+        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
         Reply::MapPresentationQueued,
     );
     harness.run_steps(2);
@@ -344,7 +351,7 @@ fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filte
     );
     if !change_filter {
         assert_eq!(
-            super::execute(
+            session::execute(
                 &mut harness,
                 Request::ShowOnMap(ShowOnMap {
                     target: RangeTarget::Track {
@@ -370,7 +377,7 @@ fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filte
 #[case::gui_last_with_zero_height(CameraOrder::GuiLastWithZeroHeight)]
 fn the_latest_camera_request_applies_when_the_map_draws(#[case] order: CameraOrder) {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let point = 60;
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     let (gui_latitude, session_latitude) = {
@@ -403,7 +410,7 @@ fn the_latest_camera_request_applies_when_the_map_draws(#[case] order: CameraOrd
         queue_gui_reveal(&mut harness);
     }
     assert_eq!(
-        super::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
+        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
         Reply::MapPresentationQueued,
     );
     if !session_last {
@@ -456,15 +463,13 @@ enum CameraOrder {
 fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
     let mut harness = ui_tests::app_with_query_window_open();
     ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
-    let row = ui_tests::query_results::topmost_point_row(&harness)
-        .0
-        .center();
+    let row = harness::topmost_point_row(&harness).0.center();
     harness.press_drag_release(row, egui::Vec2::ZERO, 1);
     harness.run_steps(2);
     let Some(MapElementRef::Fix(fix)) = harness.state().shared.borrow().highlight.sticky() else {
         panic!("the result row pins a fix");
     };
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let requests = [
         Request::OpenPoint(OpenPoint {
             track,
@@ -480,7 +485,7 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
     ];
     for request in requests {
         assert_eq!(
-            super::execute(&mut harness, request),
+            session::execute(&mut harness, request),
             Reply::MapPresentationQueued,
         );
         harness.step();
@@ -498,7 +503,7 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
     app.tiles_tree.set_visible(app.map_tile_id, false);
     harness.step();
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::OpenPoint(OpenPoint {
                 track,
@@ -507,9 +512,7 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
         ),
         Reply::MapPresentationQueued,
     );
-    let row = ui_tests::query_results::topmost_point_row(&harness)
-        .0
-        .center();
+    let row = harness::topmost_point_row(&harness).0.center();
     harness.press_drag_release(row, egui::Vec2::ZERO, 1);
     assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
 
@@ -526,9 +529,7 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, false);
     harness.step();
-    let row = ui_tests::query_results::topmost_point_row(&harness)
-        .0
-        .center();
+    let row = harness::topmost_point_row(&harness).0.center();
     harness.press_drag_release(row, egui::Vec2::ZERO, 1);
     let (gui_pin, gui_placement) = {
         let shared = harness.state().shared.borrow();
@@ -537,7 +538,7 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
             shared.popup_pos_request.unwrap(),
         )
     };
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let point = 60;
     assert_ne!(
         gui_pin,
@@ -547,7 +548,7 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
         )),
     );
     assert_eq!(
-        super::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
+        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
         Reply::MapPresentationQueued,
     );
     let app = harness.state_mut();
@@ -566,7 +567,7 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
 #[test]
 fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let custom_mask = {
         let mut shared = harness.state_mut().shared.borrow_mut();
         shared
@@ -575,7 +576,7 @@ fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
         shared.display_mask
     };
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::ShowOnMap(ShowOnMap {
                 target: RangeTarget::Track {
@@ -615,7 +616,7 @@ fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
 #[test]
 fn session_map_drops_a_queued_range_when_its_inputs_change() {
     let mut harness = ui_tests::app_with_a_recording();
-    let track = super::first_track_reference(&mut harness);
+    let track = session::first_track_reference(&mut harness);
     let request = Request::ShowOnMap(ShowOnMap {
         target: RangeTarget::Track {
             track,
@@ -624,7 +625,7 @@ fn session_map_drops_a_queued_range_when_its_inputs_change() {
         },
     });
     assert_eq!(
-        super::execute(&mut harness, request.clone()),
+        session::execute(&mut harness, request.clone()),
         Reply::MapPresentationQueued
     );
     self::exclude_recording_times(&mut harness);
@@ -634,7 +635,7 @@ fn session_map_drops_a_queued_range_when_its_inputs_change() {
         None
     );
     assert_eq!(
-        super::execute(&mut harness, request),
+        session::execute(&mut harness, request),
         ErrorCode::NoVisibleMapGeometry.into()
     );
 }
@@ -648,12 +649,12 @@ fn session_map_rejects_invalid_point_references(
     #[case] expected: ErrorCode,
 ) {
     let mut harness = ui_tests::app_with_a_recording();
-    let mut track = super::first_track_reference(&mut harness);
+    let mut track = session::first_track_reference(&mut harness);
     if stale {
         track.revision += 1;
     }
     assert_eq!(
-        super::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
+        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
         expected.into()
     );
 }

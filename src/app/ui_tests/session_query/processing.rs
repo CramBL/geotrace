@@ -12,18 +12,18 @@ use gt_store::{ReadOnlyHistoryDatabase as _, Store};
 use gt_test_utils::HarnessInteraction as _;
 use gt_types::{FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::MapElementRef;
-use uuid::Uuid;
 
-use super::{App, ui_tests};
 use crate::app::test_util::harness::{self, TestDroppedFile};
+use crate::app::test_util::session;
+use crate::app::{App, ui_tests};
 
 #[test]
 fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests() {
     let mut harness = ui_tests::app_with_recording_bytes(ui_tests::two_track_gtd_bytes());
-    let old_track = super::first_track_reference(&mut harness);
-    let job = super::start(&mut harness, "points");
+    let old_track = session::first_track_reference(&mut harness);
+    let job = session::start_query(&mut harness, "points");
     assert!(matches!(
-        super::complete(&mut harness, job),
+        session::wait_for_query_to_stop(&mut harness, job),
         QueryJobState::Completed { .. }
     ));
     let target = RangeTarget::Track {
@@ -32,7 +32,7 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
         end: None,
     };
     assert_eq!(
-        super::execute(&mut harness, Request::ShowOnMap(ShowOnMap { target })),
+        session::execute(&mut harness, Request::ShowOnMap(ShowOnMap { target })),
         Reply::MapPresentationQueued
     );
     harness.step();
@@ -46,7 +46,7 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
             .is_some()
     );
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::ShowOnPlot(ShowOnPlot {
                 target,
@@ -61,11 +61,11 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
         2
     );
     assert_eq!(
-        super::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing),
         Reply::ProcessingQueued
     );
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::GetTrack(GetTrack { track: old_track })
         ),
@@ -73,11 +73,14 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
             code: ErrorCode::StaleTrack
         }
     );
-    assert_eq!(super::status(&mut harness, job), QueryJobState::Stale);
     assert_eq!(
-        super::execute(
+        session::query_status(&mut harness, job),
+        QueryJobState::Stale
+    );
+    assert_eq!(
+        session::execute(
             &mut harness,
-            Request::GetQueryResults(super::first_page(job))
+            Request::GetQueryResults(session::first_query_match_request(job))
         ),
         Reply::Error {
             code: ErrorCode::StaleQueryResults
@@ -101,7 +104,7 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
         panic!("expected one merged track");
     };
     let Reply::Track { details } =
-        super::execute(&mut harness, Request::GetTrack(GetTrack { track: *merged }))
+        session::execute(&mut harness, Request::GetTrack(GetTrack { track: *merged }))
     else {
         panic!("expected the fresh track");
     };
@@ -113,11 +116,11 @@ fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
     let mut harness = ui_tests::app_with_recording_bytes(self::recording_with_three_fix_groups());
     harness.state_mut().query_window.open = true;
     ui_tests::run_query(&mut harness, "points | where eph > 10 m | hide");
-    let first = super::first_track_reference(&mut harness);
+    let first = session::first_track_reference(&mut harness);
     let old = self::recording_tracks(&mut harness, first.recording);
     assert_eq!(old.len(), 2);
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::OpenPoint(OpenPoint {
                 track: old[1],
@@ -131,13 +134,13 @@ fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
 
     self::set_track_split_gap(&mut harness, Duration::seconds(30));
     assert_eq!(
-        super::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing),
         Reply::ProcessingQueued
     );
     let fresh = self::recording_tracks(&mut harness, first.recording);
     assert_eq!(fresh.len(), 3);
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::OpenPoint(OpenPoint {
                 track: fresh[1],
@@ -165,9 +168,7 @@ fn reprocessing_dismisses_a_gui_pin_before_the_track_index_addresses_another_fix
     let mut harness = ui_tests::app_with_recording_bytes(self::recording_with_three_fix_groups());
     harness.state_mut().query_window.open = true;
     ui_tests::run_query(&mut harness, "points | where eph > 10 m");
-    let row = ui_tests::query_results::topmost_point_row(&harness)
-        .0
-        .center();
+    let row = harness::topmost_point_row(&harness).0.center();
     harness.press_drag_release(row, egui::Vec2::ZERO, 1);
     harness.run_steps(2);
     let previous_track = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
@@ -179,7 +180,7 @@ fn reprocessing_dismisses_a_gui_pin_before_the_track_index_addresses_another_fix
 
     self::set_track_split_gap(&mut harness, Duration::seconds(30));
     assert_eq!(
-        super::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing),
         Reply::ProcessingQueued
     );
     assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
@@ -192,7 +193,7 @@ fn a_later_settings_input_takes_effect_on_the_next_apply() {
     let mut harness = ui_tests::app_with_recording_bytes(ui_tests::two_track_gtd_bytes());
     let key = self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(
-        super::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
+        session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
         Reply::SettingOpenQueued
     );
     harness.run_steps(5);
@@ -202,7 +203,7 @@ fn a_later_settings_input_takes_effect_on_the_next_apply() {
         .unwrap()
         .set_value_accesskit(0.0);
     assert_eq!(
-        super::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing),
         Reply::ProcessingQueued
     );
     harness.run_steps(2);
@@ -247,7 +248,7 @@ fn applying_processing_requires_nav_points_and_preserves_empty_tracks() {
         .loaded_files
         .data_generation();
     assert_eq!(
-        super::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing),
         Reply::Error {
             code: ErrorCode::NoLoadedNavPoints
         }
@@ -273,7 +274,7 @@ fn an_apply_without_a_reply_handoff_preserves_loaded_tracks() {
         app.execute_session_request_in_test(
             SessionRequest {
                 request: Request::ApplyProcessing,
-                session: Uuid::from_u128(1),
+                session: session::SESSION_ID,
             },
             false,
         ),
@@ -302,7 +303,7 @@ fn a_window_close_request_takes_precedence_over_applying_processing() {
         .push(egui::ViewportEvent::Close);
     let _output = harness.ctx.clone().run_logic(&input, |_| {
         assert_eq!(
-            super::execute(&mut harness, Request::ApplyProcessing),
+            session::execute(&mut harness, Request::ApplyProcessing),
             Reply::Error {
                 code: ErrorCode::ShuttingDown
             }
@@ -347,7 +348,7 @@ fn applying_processing_to_a_stored_recording_keeps_its_history_track_table() {
     assert_eq!(before.track_rows(), ui_tests::two_live_track_ranges());
     self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(
-        super::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing),
         Reply::ProcessingQueued
     );
     harness.run_steps(3);
@@ -371,7 +372,7 @@ fn applying_processing_to_a_stored_recording_keeps_its_history_track_table() {
 fn set_track_split_gap(harness: &mut Harness<'_, App>, gap: Duration) -> SettingKey {
     let key = SettingKey::Processing(ProcessingSettingKey::TrackSplitGap);
     assert!(matches!(
-        super::execute(
+        session::execute(
             harness,
             Request::SetSetting(SetSetting {
                 key,
@@ -387,7 +388,7 @@ fn recording_tracks(
     harness: &mut Harness<'_, App>,
     recording: RecordingReference,
 ) -> Vec<TrackReference> {
-    let Reply::Recording { details } = super::execute(
+    let Reply::Recording { details } = session::execute(
         harness,
         Request::GetRecording(GetRecording {
             recording,

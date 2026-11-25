@@ -5,4 +5,5 @@ pub mod day_archive;
 pub mod harness;
 pub mod listing;
 pub mod recordings;
+pub mod session;
 pub mod snap;

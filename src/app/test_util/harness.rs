@@ -4,12 +4,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{AccessKitNode, NodeT as _, Queryable as _};
 use gt_instance_lock::DataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteAccess};
-use gt_test_utils::HarnessInteraction as _;
+use gt_test_utils::{By, HarnessInteraction as _};
 
+use crate::app::query::results::MATCH_LIST_WINDOW_TITLE;
 use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
 use crate::app::{App, StartupOptions, Storage};
 
@@ -295,6 +297,72 @@ pub fn step_until_a_log_is_loaded(harness: &mut Harness<'_, App>) {
     );
 }
 
+#[derive(Clone, Copy)]
+pub enum ResultsTable {
+    Matches,
+    Points,
+    PoppedOutMatches,
+}
+
+pub fn topmost_point_row(harness: &Harness<'_, App>) -> (egui::Rect, String) {
+    time_rows(harness, ResultsTable::Points)
+        .into_iter()
+        .next()
+        .expect("the results list point rows")
+}
+
+/// The points table aligns its time column with the match caption.
+/// The matches table indents its times after the swatch, number and track columns.
+pub fn time_rows(harness: &Harness<'_, App>, table: ResultsTable) -> Vec<(egui::Rect, String)> {
+    let indented = match table {
+        ResultsTable::Matches => true,
+        ResultsTable::Points => false,
+        ResultsTable::PoppedOutMatches => {
+            return rows_in_reading_order(time_cells_in_window(harness, MATCH_LIST_WINDOW_TITLE));
+        }
+    };
+    let left_edge = harness.get_by_label_contains("Match ").rect().left();
+    rows_in_reading_order(
+        time_cells_in_window(harness, QUERY_WINDOW_TITLE)
+            .into_iter()
+            .filter(|(rect, _)| (rect.left() > left_edge + INDENT_TOLERANCE_PX) == indented)
+            .collect(),
+    )
+}
+
+fn time_cells_in_window(harness: &Harness<'_, App>, title: &str) -> Vec<(egui::Rect, String)> {
+    harness
+        .get_by_role_and_label(Role::Window, title)
+        .query_all(bare_time_labels())
+        .filter_map(|node| Some((node.rect(), node.accesskit_node().value()?)))
+        .collect()
+}
+
+/// A match row has separate start and end time cells.
+fn rows_in_reading_order(mut cells: Vec<(egui::Rect, String)>) -> Vec<(egui::Rect, String)> {
+    cells.sort_by(|(a, _), (b, _)| {
+        a.top()
+            .total_cmp(&b.top())
+            .then_with(|| a.left().total_cmp(&b.left()))
+    });
+    cells.dedup_by(|(a, _), (b, _)| (a.top() - b.top()).abs() < INDENT_TOLERANCE_PX);
+    cells
+}
+
+fn bare_time_labels<'a>() -> By<'a> {
+    By::new()
+        .role(Role::Label)
+        .predicate(|node: &AccessKitNode<'_>| {
+            node.value().is_some_and(|value| {
+                value.len() >= ROW_TIME_LEN
+                    && value.contains(':')
+                    && value
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == ':' || c == '.')
+            })
+        })
+}
+
 /// The fixed version string injected in place of the real crate version in
 /// tests, so every version-bearing UI snapshot stays stable across release
 /// bumps. The one placeholder for the whole app (the About dialog and the
@@ -306,3 +374,10 @@ pub const TEST_APP_VERSION: &str = "0.0.0-test";
 /// measured value counts the frames that the background thread ran for, and
 /// the machine's load changes that count from run to run.
 pub const TEST_LOAD_ELAPSED_SECS: f32 = 0.4;
+
+pub const QUERY_WINDOW_TITLE: &str = "Query";
+
+const ROW_TIME_LEN: usize = "14:00:19".len();
+
+/// The tolerance for identifying an indented column or cells in the same row.
+const INDENT_TOLERANCE_PX: f32 = 2.0;

@@ -26,9 +26,7 @@ use gt_track_builder::SegmentationConfig;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use hdf5_pure::{AttrValue, File as Hdf5File};
 use rstest::rstest;
-use uuid::Uuid;
 
-use super::{App, ui_tests};
 use crate::app::archive_recovery::UnavailableArchives;
 use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::auto_prune::AutoPruneOutcome;
@@ -38,6 +36,8 @@ use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
 use crate::app::storage::OpenStorage;
 use crate::app::test_util::harness::{self, TestDroppedFile};
 use crate::app::test_util::recordings;
+use crate::app::test_util::session;
+use crate::app::{App, ui_tests};
 
 const UNFILTERED: ListHistoryRecordings = ListHistoryRecordings {
     cursor: None,
@@ -66,12 +66,12 @@ fn a_history_open_starts_after_handoff_and_reports_the_loaded_recording() {
     let disconnected = self::open_status(&harness.state_mut().execute_session_request_in_test(
         SessionRequest {
             request: request.clone(),
-            session: Uuid::from_u128(1),
+            session: session::SESSION_ID,
         },
         false,
     ));
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
                 operation: disconnected.operation
@@ -82,14 +82,14 @@ fn a_history_open_starts_after_handoff_and_reports_the_loaded_recording() {
     assert!(harness.state().shared.borrow().loaded_files.is_empty());
     let accepted = {
         let _access = HistoryAccess::lock();
-        let accepted = self::open_status(&super::execute(&mut harness, request.clone()));
+        let accepted = self::open_status(&session::execute(&mut harness, request.clone()));
         assert_eq!(accepted.state, HistoryOpenState::Reading);
         assert_eq!(
-            self::open_status(&super::execute(&mut harness, request.clone())),
+            self::open_status(&session::execute(&mut harness, request.clone())),
             accepted
         );
         assert_eq!(
-            super::execute(
+            session::execute(
                 &mut harness,
                 Request::OpenHistoryRecording(OpenHistoryRecording {
                     recording: page.recordings[1].id,
@@ -106,7 +106,7 @@ fn a_history_open_starts_after_handoff_and_reports_the_loaded_recording() {
     else {
         panic!("expected a loaded recording");
     };
-    let Reply::Recordings { page } = super::execute(
+    let Reply::Recordings { page } = session::execute(
         &mut harness,
         Request::ListRecordings(ListRecordings {
             after: None,
@@ -117,7 +117,7 @@ fn a_history_open_starts_after_handoff_and_reports_the_loaded_recording() {
     };
     assert_eq!(page.recordings.len(), 1);
     assert_eq!(page.recordings[0].id, recording);
-    let repeated = self::open_status(&super::execute(&mut harness, request));
+    let repeated = self::open_status(&session::execute(&mut harness, request));
     assert_eq!(
         self::after_loading(&mut harness, repeated.operation),
         HistoryOpenState::Ready {
@@ -161,16 +161,16 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
     let request = Request::OpenHistoryRecording(OpenHistoryRecording {
         recording: page.recordings[0].id,
     });
-    let initial = self::open_status(&super::execute(&mut harness, request.clone()));
+    let initial = self::open_status(&session::execute(&mut harness, request.clone()));
     assert!(matches!(
         self::after_loading(&mut harness, initial.operation),
         HistoryOpenState::Ready { .. }
     ));
     let old_visibility_read = if matches!(decision, HistoryDecision::Recalculate) {
-        let hidden_job = super::start(&mut harness, "points");
+        let hidden_job = session::start_query(&mut harness, "points");
         assert_eq!(
-            super::complete(&mut harness, hidden_job),
-            super::completed(0)
+            session::wait_for_query_to_stop(&mut harness, hidden_job),
+            session::completed_single_track_query(0)
         );
         harness
             .state()
@@ -199,7 +199,7 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
             .unwrap();
         file.commit().unwrap();
     }
-    let reopened = self::open_status(&super::execute(&mut harness, request));
+    let reopened = self::open_status(&session::execute(&mut harness, request));
     assert_eq!(
         self::after_loading(&mut harness, reopened.operation),
         HistoryOpenState::AwaitingTrackSettings
@@ -268,8 +268,11 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
         harness
             .state_mut()
             .handle_history_response(old_visibility_read);
-        let job = super::start(&mut harness, "points");
-        assert_eq!(super::complete(&mut harness, job), super::completed(1));
+        let job = session::start_query(&mut harness, "points");
+        assert_eq!(
+            session::wait_for_query_to_stop(&mut harness, job),
+            session::completed_single_track_query(1)
+        );
         assert_eq!(
             store
                 .open_recordings()
@@ -286,10 +289,10 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
         }
         harness.run_steps(3);
         assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
-        let retained_hidden_job = super::start(&mut harness, "points");
+        let retained_hidden_job = session::start_query(&mut harness, "points");
         assert_eq!(
-            super::complete(&mut harness, retained_hidden_job),
-            super::completed(0)
+            session::wait_for_query_to_stop(&mut harness, retained_hidden_job),
+            session::completed_single_track_query(0)
         );
         harness
             .state()
@@ -335,12 +338,15 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
                 })
         }));
         assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
-        let job = super::start(&mut harness, "points");
-        assert_eq!(super::complete(&mut harness, job), super::completed(1));
+        let job = session::start_query(&mut harness, "points");
+        assert_eq!(
+            session::wait_for_query_to_stop(&mut harness, job),
+            session::completed_single_track_query(1)
+        );
         drop(harness);
         let mut restarted = self::owner_app(&store);
         let page = self::await_page(&mut restarted, UNFILTERED);
-        let open = self::open_status(&super::execute(
+        let open = self::open_status(&session::execute(
             &mut restarted,
             Request::OpenHistoryRecording(OpenHistoryRecording {
                 recording: page.recordings[0].id,
@@ -350,8 +356,11 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
             self::after_loading(&mut restarted, open.operation),
             HistoryOpenState::Ready { .. }
         ));
-        let job = super::start(&mut restarted, "points");
-        assert_eq!(super::complete(&mut restarted, job), super::completed(1));
+        let job = session::start_query(&mut restarted, "points");
+        assert_eq!(
+            session::wait_for_query_to_stop(&mut restarted, job),
+            session::completed_single_track_query(1)
+        );
     } else {
         assert_eq!(
             store
@@ -413,7 +422,7 @@ fn a_disk_copy_with_different_track_ranges_keeps_its_visibility_local() {
     let recording = ui_tests::insert_recording_into(&store, &bytes, &one_track, stored);
     let mut harness = self::owner_app(&store);
     let page = self::await_page(&mut harness, UNFILTERED);
-    let opening = self::open_status(&super::execute(
+    let opening = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
@@ -460,9 +469,9 @@ fn a_disk_copy_with_different_track_ranges_keeps_its_visibility_local() {
             .tree
             .hide_track(TrackRef::new(FileIdx::new(1), TrackIdx::new(0)));
     }
-    let job = super::start(&mut harness, "points");
+    let job = session::start_query(&mut harness, "points");
     assert_eq!(
-        super::complete(&mut harness, job),
+        session::wait_for_query_to_stop(&mut harness, job),
         QueryJobState::Completed {
             queries: vec![QueryCounts {
                 matches: 2,
@@ -506,8 +515,11 @@ fn desktop_history_recalculation_clears_visibility_before_reopening() {
     self::await_page(&mut harness, UNFILTERED);
     harness.state().history.open(recording.clone());
     assert!(harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1));
-    let original = super::start(&mut harness, "points");
-    assert_eq!(super::complete(&mut harness, original), super::completed(1));
+    let original = session::start_query(&mut harness, "points");
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, original),
+        session::completed_single_track_query(1)
+    );
 
     let merge_gap = TimeDelta::hours(2);
     harness
@@ -549,8 +561,11 @@ fn desktop_history_recalculation_clears_visibility_before_reopening() {
     self::await_page(&mut reopened, UNFILTERED);
     reopened.state().history.open(recording);
     assert!(reopened.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1));
-    let job = super::start(&mut reopened, "points");
-    assert_eq!(super::complete(&mut reopened, job), super::completed(1));
+    let job = session::start_query(&mut reopened, "points");
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut reopened, job),
+        session::completed_single_track_query(1)
+    );
 }
 
 #[rstest]
@@ -640,7 +655,7 @@ fn a_checked_history_open_requires_the_stored_layout_when_present(
         );
     }
     let page = self::await_page(&mut harness, UNFILTERED);
-    let opening = self::open_status(&super::execute(
+    let opening = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
@@ -704,7 +719,7 @@ fn history_open_status_checks_the_layout_after_apply_processing(
     );
     let mut harness = self::owner_app(&store);
     let page = self::await_page(&mut harness, UNFILTERED);
-    let open = self::open_status(&super::execute(
+    let open = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
@@ -717,7 +732,7 @@ fn history_open_status_checks_the_layout_after_apply_processing(
         .track_layout
         .track_split_gap = split_gap;
     assert_eq!(
-        super::execute(&mut harness, Request::ApplyProcessing),
+        session::execute(&mut harness, Request::ApplyProcessing),
         Reply::ProcessingQueued,
     );
     harness.run_steps(3);
@@ -770,7 +785,7 @@ fn history_open_status_checks_the_selected_recording_after_unload(
         .find(|entry| entry.identity == selected.identity)
         .unwrap()
         .id;
-    let open = self::open_status(&super::execute(
+    let open = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: selected_id,
@@ -870,7 +885,7 @@ fn an_open_reports_errors_reading_the_selected_history_recording(
         HistoryChange::Replaced => self::replace_history_payload(&store, &removed),
         HistoryChange::Unreadable => std::fs::write(store.recordings_path(), []).unwrap(),
     }
-    let opening = self::open_status(&super::execute(
+    let opening = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
@@ -916,7 +931,7 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
     drop(db);
     let mut harness = self::owner_app(&store);
     let page = self::await_page(&mut harness, UNFILTERED);
-    let open = self::open_status(&super::execute(
+    let open = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
@@ -937,7 +952,7 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
         assert!(harness.state().history.restoring_session_recordings());
         assert!(harness.state().logs.is_empty());
         assert!(matches!(
-            self::open_status(&super::execute(
+            self::open_status(&session::execute(
                 &mut harness,
                 Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
                     operation: open.operation,
@@ -946,8 +961,11 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
             .state,
             HistoryOpenState::Ready { .. }
         ));
-        let job = super::start(&mut harness, "points");
-        assert_eq!(super::complete(&mut harness, job), super::completed(0));
+        let job = session::start_query(&mut harness, "points");
+        assert_eq!(
+            session::wait_for_query_to_stop(&mut harness, job),
+            session::completed_single_track_query(0)
+        );
     }
 
     while harness.state().logs.is_empty() {
@@ -992,7 +1010,7 @@ fn a_history_open_leaves_saved_logs_unloaded_when_a_disk_copy_shares_the_entry()
         shared.plot_state.rebuild_all(&shared.loaded_files);
     }
     let page = self::await_page(&mut harness, UNFILTERED);
-    let opening = self::open_status(&super::execute(
+    let opening = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
@@ -1054,7 +1072,7 @@ fn a_history_open_expires_when_the_recording_changes_before_adoption(
     }
     let mut harness = self::owner_app(&store);
     let page = self::await_page(&mut harness, UNFILTERED);
-    let opening = self::open_status(&super::execute(
+    let opening = self::open_status(&session::execute(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
@@ -1120,7 +1138,7 @@ fn open_status(reply: &Reply) -> HistoryOpenStatus {
 fn after_loading(harness: &mut Harness<'_, App>, operation: HistoryOpenId) -> HistoryOpenState {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let state = self::open_status(&super::execute(
+        let state = self::open_status(&session::execute(
             harness,
             Request::GetHistoryOpenStatus(GetHistoryOpenStatus { operation }),
         ))
@@ -1139,7 +1157,7 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
     let store = Store::open_in(dir.path());
     let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
     assert_eq!(
-        super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
+        session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
         Reply::from(ErrorCode::HistoryNotReady)
     );
     databases
@@ -1150,7 +1168,7 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
         ))
         .unwrap();
     assert_eq!(
-        super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
+        session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
         Reply::from(ErrorCode::HistoryNotReady)
     );
 
@@ -1165,7 +1183,7 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
     {
         let _access = HistoryAccess::lock();
         assert_eq!(
-            super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
+            session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
             Reply::from(ErrorCode::HistoryListingFailed)
         );
         harness.state_mut().history_window.open = true;
@@ -1179,7 +1197,7 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
     {
         let _access = HistoryAccess::lock();
         assert_eq!(
-            super::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
+            session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
             Reply::from(ErrorCode::HistoryNotReady)
         );
         harness.state_mut().handle_history_response(obsolete);
@@ -1271,7 +1289,7 @@ fn history_discovery_reports_when_read_only_startup_has_no_database() {
     let store = Store::open_in(dir.path());
     let mut reader = self::read_only_app(&store);
     assert_eq!(
-        super::execute(&mut reader, Request::ListHistoryRecordings(UNFILTERED)),
+        session::execute(&mut reader, Request::ListHistoryRecordings(UNFILTERED)),
         Reply::from(ErrorCode::HistoryUnavailable)
     );
     assert!(!store.recordings_path().exists());
@@ -1316,7 +1334,7 @@ fn a_partial_history_write_expires_the_list_cursor(#[case] completion: Response)
         .unwrap();
     harness.state_mut().handle_history_response(completion);
     assert_eq!(
-        super::execute(
+        session::execute(
             &mut harness,
             Request::ListHistoryRecordings(ListHistoryRecordings {
                 cursor: Some(cursor),
@@ -1437,7 +1455,7 @@ fn read_only_app(store: &Store) -> Harness<'static, App> {
 fn await_page(harness: &mut Harness<'_, App>, request: ListHistoryRecordings) -> HistoryRecordings {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        match super::execute(harness, Request::ListHistoryRecordings(request)) {
+        match session::execute(harness, Request::ListHistoryRecordings(request)) {
             Reply::HistoryRecordings { page } => return page,
             Reply::Error {
                 code: ErrorCode::HistoryNotReady,
