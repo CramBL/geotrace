@@ -26,9 +26,25 @@ pub(super) struct SessionHistory {
     operation: Option<Operation>,
 }
 
-pub(super) struct StagedHistoryOpen {
-    operation: Operation,
+pub(super) enum HistoryOpenPreparation {
+    Pending(HistoryOpenStatus),
+    Start(Box<PreparedHistoryOpen>),
+}
+
+pub(super) struct PreparedHistoryOpen {
+    id: HistoryOpenId,
+    recording: HistoryRecordingId,
+    reuse: Option<ReadyRecording>,
     selection: HistoryOpenSelection,
+}
+
+impl PreparedHistoryOpen {
+    pub(super) fn status(&self) -> HistoryOpenStatus {
+        HistoryOpenStatus {
+            operation: self.id,
+            state: HistoryOpenState::Reading,
+        }
+    }
 }
 
 struct Operation {
@@ -149,7 +165,7 @@ impl Operation {
         )
     }
 
-    fn reply(&self, files: LoadedFilesView<'_>) -> Reply {
+    fn status(&self, files: LoadedFilesView<'_>) -> HistoryOpenStatus {
         let state = match &self.phase {
             Phase::Reading(_) => HistoryOpenState::Reading,
             Phase::AwaitingTrackSettings(_) => HistoryOpenState::AwaitingTrackSettings,
@@ -165,11 +181,9 @@ impl Operation {
             Phase::Terminal(OpenStop::Cancelled) => HistoryOpenState::Cancelled,
             Phase::Terminal(OpenStop::Failed(code)) => HistoryOpenState::Failed { code: *code },
         };
-        Reply::HistoryOpen {
-            operation: HistoryOpenStatus {
-                operation: self.id,
-                state,
-            },
+        HistoryOpenStatus {
+            operation: self.id,
+            state,
         }
     }
 }
@@ -459,8 +473,7 @@ impl App {
         &mut self,
         session: Uuid,
         request: OpenHistoryRecording,
-        staged: &mut Option<StagedHistoryOpen>,
-    ) -> Result<Reply, ErrorCode> {
+    ) -> Result<HistoryOpenPreparation, ErrorCode> {
         if self.shutdown_requested() {
             return Err(ErrorCode::ShuttingDown);
         }
@@ -470,7 +483,9 @@ impl App {
         let previous = self.session_history.operation.as_ref();
         if let Some(operation) = previous.filter(|operation| operation.pending()) {
             return if operation.selection == request.recording && operation.id.session == session {
-                Ok(operation.reply(files.loaded_files.view()))
+                Ok(HistoryOpenPreparation::Pending(
+                    operation.status(files.loaded_files.view()),
+                ))
             } else {
                 Err(ErrorCode::Busy)
             };
@@ -487,48 +502,50 @@ impl App {
         let selection = self
             .session_history_listing(session)?
             .select_for_open(request.recording)?;
-        let operation = Operation {
-            id: HistoryOpenId {
-                session,
-                id: Uuid::new_v4(),
+        Ok(HistoryOpenPreparation::Start(Box::new(
+            PreparedHistoryOpen {
+                id: HistoryOpenId {
+                    session,
+                    id: Uuid::new_v4(),
+                },
+                recording: request.recording,
+                reuse,
+                selection,
             },
-            selection: request.recording,
-            phase: Phase::Reading(reuse),
-        };
-        let reply = operation.reply(self.shared.borrow().loaded_files.view());
-        *staged = Some(StagedHistoryOpen {
-            selection,
-            operation,
-        });
-        Ok(reply)
+        )))
     }
 
     pub(super) fn accept_history_open(
         &mut self,
-        StagedHistoryOpen {
-            mut operation,
+        PreparedHistoryOpen {
+            id,
+            recording,
+            reuse,
             selection,
-        }: StagedHistoryOpen,
+        }: PreparedHistoryOpen,
     ) {
-        let reuse_bytes = match &operation.phase {
-            Phase::Reading(Some(ready)) => ready.bytes.upgrade(),
-            _ => None,
-        };
-        if !self.history.open_checked_recording(
-            RecordingOperationOrigin::SessionHistory(operation.id),
+        let reuse_bytes = reuse.as_ref().and_then(|ready| ready.bytes.upgrade());
+        let phase = if self.history.open_checked_recording(
+            RecordingOperationOrigin::SessionHistory(id),
             selection,
             reuse_bytes,
         ) {
-            operation.phase = Phase::Terminal(OpenStop::Failed(ErrorCode::HistoryUnavailable));
-        }
-        self.session_history.operation = Some(operation);
+            Phase::Reading(reuse)
+        } else {
+            Phase::Terminal(OpenStop::Failed(ErrorCode::HistoryUnavailable))
+        };
+        self.session_history.operation = Some(Operation {
+            id,
+            selection: recording,
+            phase,
+        });
     }
 
     pub(super) fn history_open_status(
         &mut self,
         session: Uuid,
         request: GetHistoryOpenStatus,
-    ) -> Result<Reply, ErrorCode> {
+    ) -> Result<HistoryOpenStatus, ErrorCode> {
         if request.operation.session != session {
             return Err(ErrorCode::StaleSession);
         }
@@ -538,7 +555,7 @@ impl App {
             .operation
             .as_ref()
             .filter(|operation| operation.id == request.operation)
-            .map(|operation| operation.reply(self.shared.borrow().loaded_files.view()))
+            .map(|operation| operation.status(self.shared.borrow().loaded_files.view()))
             .ok_or(ErrorCode::HistoryOpenNotFound)
     }
 

@@ -70,14 +70,21 @@ async fn local_request_dispatches_on_the_calling_thread() {
                 .unwrap(),
             Some(())
         );
-        server.dispatch(|request| {
+        let effect = server.dispatch(|request| {
             let Request::ListRecordings(args) = request.request else {
                 panic!("expected a recording list request");
             };
-            Inspection::new(files.view(), "{title} ({filename})", request.session)
+            let reply = Inspection::new(files.view(), "{title} ({filename})", request.session)
                 .execute(InspectionRequest::ListRecordings(args))
-                .unwrap_or_else(Reply::from)
+                .unwrap_or_else(Reply::from);
+            (reply, request.session)
         });
+        assert_eq!(effect, Some(id.session));
+        assert!(
+            server
+                .dispatch::<()>(|_| panic!("unexpected request"))
+                .is_none()
+        );
     });
     assert_eq!(
         reply.unwrap(),
@@ -99,7 +106,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
 }
 
 #[test]
-fn dispatcher_reports_a_reply_receiver_closed_during_execution() {
+fn dispatcher_discards_the_effect_when_the_reply_receiver_closes_during_preparation() {
     let (sender, pending) = mpsc::channel(1);
     let (reply, receiver) = oneshot::channel();
     sender
@@ -114,11 +121,12 @@ fn dispatcher_reports_a_reply_receiver_closed_during_execution() {
         stop: None,
         worker: None,
     };
-    assert!(!server.dispatch(|request| {
+    let effect = server.dispatch(|request| {
         drop(receiver);
         assert_eq!(request.request, REQUEST);
-        Reply::from(ErrorCode::InvalidRequest)
-    }));
+        (Reply::from(ErrorCode::InvalidRequest), request.session)
+    });
+    assert_eq!(effect, None);
 }
 
 #[test]
@@ -447,14 +455,16 @@ async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
             .await
             .unwrap()
             .unwrap();
-        server.dispatch(|request| {
+        let effect = server.dispatch(|request| {
             let Request::CheckQuery(args) = request.request else {
                 panic!("expected a query check request");
             };
-            Inspection::new(files.view(), "{filename}", request.session)
+            let reply = Inspection::new(files.view(), "{filename}", request.session)
                 .execute(InspectionRequest::CheckQuery(args))
-                .unwrap_or_else(Reply::from)
+                .unwrap_or_else(Reply::from);
+            (reply, ())
         });
+        assert_eq!(effect, Some(()));
     });
     assert_eq!(reply.unwrap(), ErrorCode::ReplyTooLarge.into());
 }
