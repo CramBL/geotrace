@@ -64,16 +64,10 @@ impl fmt::Display for Expr {
         match self {
             Expr::Number(lit) => write!(f, "{}", Lit(lit)),
             Expr::Metric(m) => write!(f, "{}", m.metric),
-            Expr::Unary {
-                op: UnaryOp::Not,
-                operand,
-                ..
-            } => write!(f, "(not {operand})"),
-            Expr::Unary {
-                op: UnaryOp::Neg,
-                operand,
-                ..
-            } => write!(f, "(-{operand})"),
+            Expr::Unary { op, operand, .. } => {
+                let separator = if *op == UnaryOp::Not { " " } else { "" };
+                write!(f, "({}{separator}{operand})", op.text())
+            }
             Expr::Binary { op, lhs, rhs, .. } => write!(f, "({lhs} {} {rhs})", op.text()),
             Expr::Call { func, arg, .. } => write!(f, "{func}({arg})"),
             Expr::Power { base, exponent, .. } => write!(f, "({base}{})", Superscript(*exponent)),

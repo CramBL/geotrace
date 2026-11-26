@@ -40,6 +40,7 @@ pub use position::{
     ChannelCompletions, ChannelSuggestion, CompletionTrigger, Completions, channel_at,
     channel_completions_at, completions_at, construct_at,
 };
+pub use reference::query_language_reference;
 pub use unit::Unit;
 
 pub mod ast;
@@ -53,6 +54,7 @@ mod metric;
 mod parser;
 mod pipeline;
 mod position;
+mod reference;
 mod test_util;
 mod unit;
 mod wrap;

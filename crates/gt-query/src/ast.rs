@@ -209,7 +209,16 @@ pub enum UnaryOp {
     Not,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl UnaryOp {
+    pub(crate) const fn text(self) -> &'static str {
+        match self {
+            Self::Neg => "-",
+            Self::Not => "not",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum BinaryOp {
     Add,
     And,
@@ -227,7 +236,7 @@ pub enum BinaryOp {
 
 impl BinaryOp {
     /// Source spelling, used by error messages and the canonical formatter.
-    pub fn text(self) -> &'static str {
+    pub const fn text(self) -> &'static str {
         match self {
             BinaryOp::Or => "or",
             BinaryOp::And => "and",
