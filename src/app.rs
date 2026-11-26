@@ -38,6 +38,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use session_plot::PlotPresentation;
+use session_traffic_window::SessionTrafficWindow;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use settings_ui::search::SettingsSearch;
 use settings_ui::{SettingReveal, SettingsPage};
@@ -103,6 +104,7 @@ mod session_history;
 mod session_map;
 mod session_plot;
 mod session_query;
+mod session_traffic_window;
 mod settings_autosave;
 mod settings_ui;
 pub(crate) mod shutdown;
@@ -403,6 +405,7 @@ pub struct App {
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
     session_bridge: Option<SessionBridge>,
+    session_traffic_window: SessionTrafficWindow,
     session_history: SessionHistory,
     pending_session_query_draft: Option<String>,
     pending_session_setting: Option<SettingKey>,
@@ -656,6 +659,7 @@ impl App {
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
             session_bridge: None,
+            session_traffic_window: SessionTrafficWindow::default(),
             session_history: SessionHistory::default(),
             pending_session_query_draft: None,
             pending_session_setting: None,

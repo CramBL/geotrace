@@ -106,7 +106,7 @@ impl Endpoint {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) fn in_directory(directory: PathBuf) -> Self {
         Self {
             directory,
