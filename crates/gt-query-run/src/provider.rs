@@ -5,7 +5,9 @@ use chrono::{DateTime, TimeDelta, Utc};
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_filter::GlobalFilter;
-use gt_query::{ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, Unit};
+use gt_query::{
+    ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, TimeSpan, Unit,
+};
 use gt_types::satellites::Constellation;
 use gt_types::time_types::SysTime;
 use gt_types::{Channel, NavPoint, SatelliteQueryScope, SystemBootDelta};
@@ -95,14 +97,14 @@ impl TrackQueryData {
     }
 }
 
-pub struct PointResultValues<'a> {
+pub(crate) struct PointResultValues<'a> {
     provider: TrackProvider<'a>,
     slice: SliceProvider<'a>,
     slice_start: usize,
 }
 
 impl<'a> PointResultValues<'a> {
-    pub fn new(points: &'a [NavPoint], data: Option<&'a TrackQueryData>) -> Self {
+    pub(crate) fn new(points: &'a [NavPoint], data: Option<&'a TrackQueryData>) -> Self {
         let provider = TrackProvider::new(points, &[], data);
         let filtered = data.map_or_else(
             || TimeFilteredPoints::whole_track(points.len()),
@@ -115,11 +117,7 @@ impl<'a> PointResultValues<'a> {
         }
     }
 
-    pub fn provider(&self) -> &TrackProvider<'a> {
-        &self.provider
-    }
-
-    pub fn value(&self, metric: QueryMetric, point_index: usize) -> Option<f64> {
+    pub(crate) fn value(&self, metric: QueryMetric, point_index: usize) -> Option<f64> {
         if metric == QueryMetric::Accel {
             let relative = point_index.checked_sub(self.slice_start)?;
             return gt_query::derived_accel(&self.slice, relative);
@@ -192,9 +190,10 @@ impl<'a> TrackProvider<'a> {
     /// `[t_lo, t_hi]`, each with its own timestamp in Unix seconds and its
     /// values in base units. [`MetricProvider::channel_span`] serves the same
     /// samples without their timestamps, which the evaluator does not read.
-    pub fn channel_span_timeline(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelTimeline {
+    pub(crate) fn channel_span_timeline(&self, name: &str, span: TimeSpan) -> ChannelTimeline {
+        let (lo, hi) = span.bounds();
         self.resolve_channel(name)
-            .map(|resolved| resolved.timeline_in_span(t_lo, t_hi))
+            .map(|resolved| resolved.timeline_in_span(lo, hi))
             .unwrap_or_default()
     }
 
@@ -1260,7 +1259,8 @@ mod tests {
         let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
-        let timeline = provider.channel_span_timeline("accel", base, base + 1.0);
+        let timeline = provider
+            .channel_span_timeline("accel", TimeSpan::covering([base, base + 1.0]).unwrap());
 
         let g = Unit::G.to_base();
         assert_eq!(timeline.columns, 1);
@@ -1278,7 +1278,8 @@ mod tests {
         let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
-        let timeline = provider.channel_span_timeline("missing", 0.0, f64::MAX);
+        let timeline =
+            provider.channel_span_timeline("missing", TimeSpan::covering([0.0, f64::MAX]).unwrap());
 
         assert!(timeline.times.is_empty());
         assert!(timeline.values.is_empty());
@@ -1298,7 +1299,7 @@ mod tests {
             without
                 .clone()
                 .with_channels(&channels)
-                .channel_span_timeline("accel", base, base)
+                .channel_span_timeline("accel", TimeSpan::covering([base]).unwrap())
                 .times,
             vec![base]
         );

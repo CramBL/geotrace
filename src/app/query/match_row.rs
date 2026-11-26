@@ -7,7 +7,7 @@ use std::ops::Range;
 use chrono::{DateTime, Utc};
 use egui::{Align, Layout};
 use gt_fmt::DurationClockFormat;
-use gt_query_run::{ResultTime, RetainedResults};
+use gt_query_run::{MatchPosition, ResultTime, RetainedResults};
 #[cfg(test)]
 use gt_types::{FileIdx, TrackIdx};
 use gt_types::{LoadedFile, TrackRef};
@@ -15,7 +15,6 @@ use gt_ui_theme::buttons::SortCaret;
 use strum::EnumIter;
 
 use super::column_format;
-use super::value_bar::ColumnValueRange;
 
 /// A match's identity across reruns: the track it is on and the row it starts
 /// at. A rerun over unchanged data lists the same key, so the selection stays
@@ -39,9 +38,7 @@ pub(super) struct MatchRow {
     /// Indices into the track's row source: its nav points, or the samples of
     /// the channel timeline.
     pub(super) rows: Range<usize>,
-    /// One value per aggregate column of the query, in table order. `None`
-    /// where the aggregate has no value over this match.
-    pub(super) aggregates: Vec<Option<f64>>,
+    pub(super) position: MatchPosition,
     start: Option<DateTime<Utc>>,
     /// When the match's last row was recorded, absent for a single-row match.
     end: Option<DateTime<Utc>>,
@@ -154,30 +151,11 @@ impl MatchRows {
                     end: last.and_then(wall_clock),
                     duration_secs,
                     rows: range,
-                    aggregates: matched.aggregates().to_vec(),
+                    position: matched.position(),
                 });
             }
         }
         Self::from_rows(rows)
-    }
-
-    /// The range one column's values span over every matched row of the query
-    /// at `query_index`, valued by `value` from the match it belongs to and its
-    /// index in that match's source. The bars behind that column's cells keep
-    /// their scale when another match is picked: the range covers all of the
-    /// query's matches.
-    pub(super) fn column_range(
-        &self,
-        query_index: usize,
-        value: impl Fn(&MatchRow, usize) -> Option<f64>,
-    ) -> Option<ColumnValueRange> {
-        ColumnValueRange::of_values(
-            self.rows
-                .iter()
-                .filter(|row| row.query_index == query_index)
-                .flat_map(|row| row.rows.clone().map(move |index| (row, index)))
-                .filter_map(|(row, index)| value(row, index)),
-        )
     }
 
     pub(super) fn rows(&self) -> &[MatchRow] {
@@ -449,7 +427,7 @@ mod tests {
                 number: 1,
                 track: track(0),
                 rows: 0..62,
-                aggregates: Vec::new(),
+                position: MatchPosition::default(),
                 start: at(14, 0, 18),
                 end: at(14, 1, 19),
                 duration_secs: Some(61),
@@ -459,7 +437,7 @@ mod tests {
                 number: 2,
                 track: track(1),
                 rows: 100..112,
-                aggregates: Vec::new(),
+                position: MatchPosition::default(),
                 start: at(14, 2, 19),
                 end: at(14, 2, 31),
                 duration_secs: Some(12),
@@ -469,7 +447,7 @@ mod tests {
                 number: 3,
                 track: track(0),
                 rows: 200..201,
-                aggregates: Vec::new(),
+                position: MatchPosition::default(),
                 start: at(14, 5, 0),
                 end: None,
                 duration_secs: None,
@@ -488,7 +466,7 @@ mod tests {
                     number: index + 1,
                     track: track(0),
                     rows: index..index + 2,
-                    aggregates: Vec::new(),
+                    position: MatchPosition::default(),
                     start: at(14, 0, 0),
                     end: at(14, 0, 0),
                     duration_secs: Some(*secs),
@@ -621,37 +599,6 @@ mod tests {
         assert_eq!(
             rows.duration_clock_format(),
             DurationClockFormat::HoursMinutesSeconds
-        );
-    }
-
-    /// Picking another match of a query leaves its bars where they are: they
-    /// scale to every match of that query. The matches of the run's other
-    /// queries stay out of it: each query tables its own columns.
-    #[test]
-    fn a_column_range_covers_every_match_of_its_query() {
-        let rows = test_rows();
-        // A range states which rows went into it: every row is valued by its
-        // index in the track. Query 0 matched rows 0..62 and 100..112, query 1
-        // the single row 200.
-        let value_of_index = |_row: &MatchRow, index: usize| Some(index as f64);
-        let range = rows
-            .column_range(0, value_of_index)
-            .expect("the query matched rows");
-        assert_eq!(range.bar_fraction(Some(0.0)), Some(0.0));
-        assert_eq!(range.bar_fraction(Some(111.0)), Some(1.0));
-        assert_eq!(
-            range.bar_fraction(Some(55.5)),
-            Some(0.5),
-            "the range runs to the last row of the query's last match"
-        );
-
-        let single_row = rows
-            .column_range(1, value_of_index)
-            .expect("the query matched a row");
-        assert_eq!(
-            single_row.bar_fraction(Some(200.0)),
-            None,
-            "a query whose rows all read the same value spans nothing"
         );
     }
 

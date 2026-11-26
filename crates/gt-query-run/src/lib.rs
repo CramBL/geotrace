@@ -33,9 +33,7 @@
 pub use check::{QueryChunk, analysis_context, check_all, check_chunks, check_text, split_queries};
 pub use dependencies::RunDependencies;
 pub use fingerprint::{JammingValues, RunInputs, SnapErrorValues};
-pub use provider::{
-    PointResultValues, SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData,
-};
+pub use provider::{SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData};
 pub use results::{
     ChannelResults, ChannelTrackResult, HiddenPoints, MatchValues, PanelQuery, PointsResults,
     QuerySummary, RunResults, TrackMatchValues,
@@ -43,8 +41,9 @@ pub use results::{
 pub use run::{PreparedRun, RunHandle, RunKind, RunOutcome};
 pub use schema::schema_from_files;
 pub use session::retained::{
-    CurrentRetainedResults, MatchExtent, MatchPosition, ResultTime, RetainedMatch, RetainedQuery,
-    RetainedResultError, RetainedResults, RetainedRow, RetainedRowIter, RetainedRows, RowColumn,
+    CurrentRetainedResults, MatchExtent, MatchPosition, ReducedChannelSamples, ResultTime,
+    RetainedColumn, RetainedMatch, RetainedQuery, RetainedResultError, RetainedResults,
+    RetainedRow, RetainedRowIter, RetainedRows, RowColumn,
 };
 pub use session::{
     CheckRefresh, CheckedQueryText, MIXED_CHANNEL_MESSAGE, QueryProgress, QuerySession,

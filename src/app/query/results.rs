@@ -1,9 +1,7 @@
 //! The results tab: what each query of the run counted, the run's matches as a
 //! table to pick from, and the rows of the picked match under their columns.
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::ops::Range;
 
 use egui::{
     Align, Button, CursorIcon, Label, Layout, RichText, ScrollArea, Sense, TextStyle, TextWrapMode,
@@ -15,14 +13,15 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::INFO as ICON_INFO;
+use geotrace_sdk_units::ChannelUnit;
 use gt_loaded_files::LoadedFilesView;
-use gt_query::{AggregateColumn, ChannelTimeline, Construct, QueryMetric, TableColumn};
+use gt_query::{AggregateColumn, Construct, QueryMetric};
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, PointResultValues, PointsResults, QuerySession,
-    QuerySummary, RunResults, TrackProvider,
+    QuerySession, QuerySummary, ResultTime, RetainedColumn, RetainedMatch, RetainedQuery,
+    RetainedRow, RetainedRows, RowColumn, RunResults,
 };
 use gt_side_panel::widgets::{self, PointClickRequests};
-use gt_types::{Channel, FixRef, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef};
+use gt_types::{LoadedFile, ResolvedPosition};
 use gt_ui_theme::buttons::{self, SortHeaderButton};
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
@@ -70,6 +69,33 @@ struct QuerySection<'a> {
     /// without repeats. Empty for a query whose aggregate columns reduce
     /// metrics only, and for one with no aggregate column.
     reduced_channels: Vec<&'a str>,
+    retained: Option<RetainedQuery<'a>>,
+}
+
+impl<'a> QuerySection<'a> {
+    fn new(
+        summary: &'a QuerySummary,
+        color: Option<egui::Color32>,
+        retained: Option<RetainedQuery<'a>>,
+        unit: Option<&'a ChannelUnit>,
+    ) -> Self {
+        let (columns, reduced_channels) = retained.as_ref().map_or_else(
+            || (Vec::new(), Vec::new()),
+            |query| {
+                (
+                    result_columns(query, unit),
+                    reduced_channels(query.aggregate_columns().map(|(_, column)| column)),
+                )
+            },
+        );
+        Self {
+            summary,
+            color,
+            columns,
+            reduced_channels,
+            retained,
+        }
+    }
 }
 
 /// One column of the points table: what its header names, the documentation
@@ -82,13 +108,13 @@ struct ResultColumn<'a> {
     source: ColumnSource,
 }
 
-impl ResultColumn<'static> {
-    fn of_metric(metric: QueryMetric) -> Self {
+impl ResultColumn<'_> {
+    fn of_metric(ordinal: usize, metric: QueryMetric) -> Self {
         Self {
             name: metric.to_string(),
             doc: gt_query::metric_documentation(metric),
             format: ColumnFormat::of_metric(metric),
-            source: ColumnSource::Metric(metric),
+            source: ColumnSource::Value(ordinal),
         }
     }
 
@@ -102,6 +128,17 @@ impl ResultColumn<'static> {
             source: ColumnSource::Aggregate(index),
         }
     }
+
+    fn value(&self, row: &RetainedRow<'_, '_>) -> Option<f64> {
+        match self.source {
+            ColumnSource::Aggregate(index) => row.aggregate(index),
+            ColumnSource::SampleTime => match row.time()? {
+                ResultTime::ChannelSeconds(seconds) => Some(seconds),
+                ResultTime::PointUtc(_) => None,
+            },
+            ColumnSource::Value(ordinal) => row.value(ordinal),
+        }
+    }
 }
 
 /// Where one points-table column reads its value.
@@ -111,197 +148,8 @@ enum ColumnSource {
     /// aggregate columns. The table shows that one value in every row of the
     /// match.
     Aggregate(usize),
-    /// One component of a channel, by its index into the sample's values.
-    ChannelComponent(usize),
-    Metric(QueryMetric),
-    /// When a channel sample was recorded.
     SampleTime,
-}
-
-/// One track's values, as the run computed them. A row reads its value without
-/// rebuilding a provider: this is built once per track the run matched.
-struct TrackValues<'a> {
-    /// Where the map draws the track's points, absent for a track with no
-    /// geometry.
-    placed: Option<PlacedPoints<'a>>,
-    points: PointResultValues<'a>,
-    /// The track's channels, which only the samples listed under a match are
-    /// read from.
-    channels: &'a [Channel],
-}
-
-impl<'a> TrackValues<'a> {
-    /// A provider reading the track's channels as well, for the samples an
-    /// aggregate reduced. The provider the rows read through leaves them out:
-    /// a table of metric columns needs no channel.
-    fn provider_with_channels(&self) -> TrackProvider<'a> {
-        self.points.provider().clone().with_channels(self.channels)
-    }
-
-    /// The closed time extent of the points in `rows`, in Unix seconds, which
-    /// is the extent an aggregate reduced a channel's samples over. `None` for
-    /// an empty range, and for one whose first or last point has no time.
-    fn time_extent(&self, rows: &Range<usize>) -> Option<(f64, f64)> {
-        if rows.is_empty() {
-            return None;
-        }
-        let last = rows.end.checked_sub(1)?;
-        let first_time = self.points.value(QueryMetric::Time, rows.start)?;
-        Some((first_time, self.points.value(QueryMetric::Time, last)?))
-    }
-
-    fn resolved_position(&self, point_index: usize) -> Option<ResolvedPosition> {
-        Some(self.placed?.get(point_index)?.resolved())
-    }
-}
-
-/// Where the rows of one run come from: the nav points a points query matched,
-/// or the samples a channel-source query matched on the channel's own timeline.
-enum RowSource<'a> {
-    ChannelSamples {
-        results: &'a ChannelResults,
-    },
-    NavPoints {
-        /// One entry per track the run matched, in track order.
-        track_values: Vec<(TrackRef, TrackValues<'a>)>,
-    },
-}
-
-impl RowSource<'_> {
-    /// The value under `column` of the row `source_index` addresses within
-    /// `match_row`. An aggregate column has one value per match, which the
-    /// table shows in every row of that match.
-    fn value(
-        &self,
-        match_row: &MatchRow,
-        source_index: usize,
-        column: ColumnSource,
-    ) -> Option<f64> {
-        let track = match_row.track;
-        match (self, column) {
-            (_, ColumnSource::Aggregate(index)) => {
-                match_row.aggregates.get(index).copied().flatten()
-            }
-            (Self::NavPoints { track_values }, ColumnSource::Metric(metric)) => {
-                values_of(track_values, track)?
-                    .points
-                    .value(metric, source_index)
-            }
-            (Self::ChannelSamples { results }, ColumnSource::SampleTime) => {
-                timeline_of(results, track)?
-                    .times
-                    .get(source_index)
-                    .copied()
-            }
-            (Self::ChannelSamples { results }, ColumnSource::ChannelComponent(component)) => {
-                timeline_of(results, track)?.value(source_index, component)
-            }
-            (Self::NavPoints { .. } | Self::ChannelSamples { .. }, _) => None,
-        }
-    }
-
-    /// The samples of `channel` that `match_row`'s aggregate columns reduced,
-    /// `None` where the run has no rows for the match's track. On the points
-    /// source those are the channel's samples inside the closed time extent of
-    /// the match's points, and there are none of them for a track that recorded
-    /// no such channel. On a channel source they are the match's own rows of
-    /// the source timeline, which is the only channel a query on it reads.
-    fn reduced_channel(&self, match_row: &MatchRow, channel: &str) -> Option<ReducedChannel> {
-        match self {
-            Self::NavPoints { track_values } => {
-                let values = values_of(track_values, match_row.track)?;
-                let recorded = values
-                    .channels
-                    .iter()
-                    .find(|candidate| candidate.name == channel);
-                let samples = values.time_extent(&match_row.rows).map_or_else(
-                    ChannelTimeline::default,
-                    |(first_time, last_time)| {
-                        values
-                            .provider_with_channels()
-                            .channel_span_timeline(channel, first_time, last_time)
-                    },
-                );
-                Some(ReducedChannel::new(
-                    channel,
-                    recorded.map_or(&[], |recorded| recorded.components.as_slice()),
-                    recorded.and_then(|recorded| recorded.unit.clone()),
-                    samples,
-                ))
-            }
-            Self::ChannelSamples { results } => {
-                if results.channel != channel {
-                    return None;
-                }
-                let track_result = track_result_of(results, match_row.track)?;
-                Some(ReducedChannel::new(
-                    channel,
-                    &results.components,
-                    track_result.unit.clone(),
-                    track_result.timeline.slice_rows(match_row.rows.clone()),
-                ))
-            }
-        }
-    }
-
-    /// The point on the map a row addresses, absent for a channel sample: a
-    /// sample has no position of its own.
-    fn map_point(&self, track: TrackRef, source_index: usize) -> Option<MapElementRef> {
-        match self {
-            Self::NavPoints { .. } => Some(MapElementRef::Fix(FixRef::new(
-                track,
-                PointIdx::new(source_index),
-            ))),
-            Self::ChannelSamples { .. } => None,
-        }
-    }
-
-    fn resolved_position(&self, track: TrackRef, source_index: usize) -> Option<ResolvedPosition> {
-        match self {
-            Self::NavPoints { track_values } => {
-                values_of(track_values, track)?.resolved_position(source_index)
-            }
-            Self::ChannelSamples { .. } => None,
-        }
-    }
-
-    /// Where double-clicking a row centres the map, in degrees: the position
-    /// the map draws that row's point at.
-    fn map_center(&self, track: TrackRef, source_index: usize) -> Option<(f64, f64)> {
-        let (latitude, longitude) = self.resolved_position(track, source_index)?.coordinates();
-        Some((latitude.as_degrees(), longitude.as_degrees()))
-    }
-
-    /// What one row's hover states: which row of its source it holds, and where
-    /// the map draws it.
-    fn row_hover_text(&self, track: TrackRef, source_index: usize) -> String {
-        match self {
-            Self::NavPoints { .. } => {
-                point_hover_text(source_index, self.resolved_position(track, source_index))
-            }
-            Self::ChannelSamples { .. } => {
-                format!("#{source_index}\n{SAMPLE_WITHOUT_POSITION}")
-            }
-        }
-    }
-}
-
-fn values_of<'a, 'b>(
-    track_values: &'a [(TrackRef, TrackValues<'b>)],
-    track: TrackRef,
-) -> Option<&'a TrackValues<'b>> {
-    track_values
-        .iter()
-        .find(|(candidate, _)| *candidate == track)
-        .map(|(_, values)| values)
-}
-
-fn timeline_of(results: &ChannelResults, track: TrackRef) -> Option<&ChannelTimeline> {
-    Some(&track_result_of(results, track)?.timeline)
-}
-
-fn track_result_of(results: &ChannelResults, track: TrackRef) -> Option<&ChannelTrackResult> {
-    results.tracks.iter().find(|result| result.track == track)
+    Value(usize),
 }
 
 /// What a click in the points table requests from the app, applied once the
@@ -377,7 +225,6 @@ pub(super) struct ResultsTables<'a> {
     /// One per query of the run, in editor order.
     queries: Vec<QuerySection<'a>>,
     matches: MatchRows,
-    source: RowSource<'a>,
     row_noun: RowNoun,
     /// Whether the run drew any halo on the map, which is what the run-wide
     /// button frames.
@@ -398,123 +245,51 @@ impl<'a> ResultsTables<'a> {
         let matches = retained
             .as_ref()
             .map_or_else(MatchRows::default, MatchRows::of_retained);
-        let files = files.files();
-        Some(match results {
+        let stale = results.stale() || structurally_stale;
+        let query_at = |ordinal| retained.as_ref()?.query(ordinal).ok();
+        let (row_noun, queries) = match results {
             RunResults::Points(points) => {
-                Self::of_points(files, points, matches, structurally_stale)
+                let queries = points
+                    .queries
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, query)| {
+                        QuerySection::new(
+                            &query.summary,
+                            query
+                                .color
+                                .map(|color| gt_ui_theme::query_halo_color(color, stale)),
+                            query_at(ordinal),
+                            None,
+                        )
+                    })
+                    .collect();
+                (RowNoun::Point, queries)
             }
-            RunResults::Channel(channel) => {
-                Self::of_channel_samples(files, channel, matches, structurally_stale)
-            }
-        })
-    }
-
-    /// The tables of a points run: every query's matches, listing nav points
-    /// under the metric columns that query tables.
-    fn of_points(
-        files: &'a [LoadedFile],
-        results: &'a PointsResults,
-        matches: MatchRows,
-        structurally_stale: bool,
-    ) -> Self {
-        let stale = results.matches.stale || structurally_stale;
-        let tracks: BTreeSet<TrackRef> = matches.rows().iter().map(|row| row.track).collect();
-        let queries = results
-            .queries
-            .iter()
-            .map(|query| QuerySection {
-                summary: &query.summary,
-                color: query
-                    .color
-                    .map(|color| gt_ui_theme::query_halo_color(color, stale)),
-                columns: result_columns(&query.columns),
-                reduced_channels: reduced_channels(gt_query::aggregate_columns(&query.columns)),
-            })
-            .collect();
-        Self {
-            files,
-            run: results.matches.run,
+            RunResults::Channel(channel) => (
+                RowNoun::Sample,
+                vec![QuerySection::new(
+                    &channel.summary,
+                    channel
+                        .matches
+                        .draws
+                        .first()
+                        .map(|layer| gt_ui_theme::query_halo_color(layer.color, stale)),
+                    query_at(0),
+                    channel.tracks.iter().find_map(|track| track.unit.as_ref()),
+                )],
+            ),
+        };
+        Some(Self {
+            files: files.files(),
+            run: results.matches().run,
             queries,
             matches,
-            source: RowSource::NavPoints {
-                track_values: tracks
-                    .into_iter()
-                    .filter_map(|track| Some((track, track_values(files, results, track)?)))
-                    .collect(),
-            },
-            row_noun: RowNoun::Point,
-            draws_halos: results.matches.has_halos(),
+            row_noun,
+            draws_halos: results.matches().has_halos(),
             stale,
             structurally_stale,
-        }
-    }
-
-    /// The tables of a channel-source run: every track's matched stretch of
-    /// samples, listing them under the sample time and one column per channel
-    /// component.
-    ///
-    /// The whole table reads in the unit the first track declared: the
-    /// evaluator timed and valued every track's samples in base units, and a
-    /// run whose tracks declare incompatible units is rejected by the check
-    /// before it gets here.
-    fn of_channel_samples(
-        files: &'a [LoadedFile],
-        channel: &'a ChannelResults,
-        matches: MatchRows,
-        structurally_stale: bool,
-    ) -> Self {
-        let stale = channel.matches.stale || structurally_stale;
-        // Samples are timed finer than points, so their times keep the
-        // milliseconds the point tables leave out.
-        let mut columns = vec![ResultColumn {
-            name: "time".to_owned(),
-            doc: None,
-            format: ColumnFormat::time_of_day_with_millis(),
-            source: ColumnSource::SampleTime,
-        }];
-        let unit = channel
-            .tracks
-            .iter()
-            .find_map(|result| result.unit.as_ref());
-        columns.extend(
-            channel
-                .component_labels()
-                .iter()
-                .enumerate()
-                .map(|(component, name)| ResultColumn {
-                    name: name.clone(),
-                    doc: None,
-                    format: ColumnFormat::of_channel_unit(unit),
-                    source: ColumnSource::ChannelComponent(component),
-                }),
-        );
-        columns.extend(
-            channel
-                .aggregate_columns
-                .iter()
-                .enumerate()
-                .map(|(index, aggregate)| ResultColumn::of_aggregate(aggregate, index)),
-        );
-        Self {
-            files,
-            run: channel.matches.run,
-            queries: vec![QuerySection {
-                summary: &channel.summary,
-                color: channel
-                    .matches
-                    .draws
-                    .first()
-                    .map(|layer| gt_ui_theme::query_halo_color(layer.color, stale)),
-                columns,
-                reduced_channels: reduced_channels(channel.aggregate_columns.iter()),
-            }],
-            matches,
-            source: RowSource::ChannelSamples { results: channel },
-            row_noun: RowNoun::Sample,
-            draws_halos: channel.matches.has_halos(),
-            stale,
-            structurally_stale,
-        }
+        })
     }
 
     pub(super) fn stale(&self) -> bool {
@@ -872,16 +647,36 @@ impl<'a> ResultsTables<'a> {
         (!reduces_a_channel).then_some("No aggregate column of this query reduces a channel")
     }
 
-    /// The channels the picked match's aggregate columns reduced, each with the
-    /// samples it reduced over that match.
+    fn retained_match(&self, row: &MatchRow) -> Option<RetainedMatch<'a>> {
+        self.queries
+            .get(row.query_index)?
+            .retained
+            .as_ref()?
+            .match_at(row.position)
+            .ok()
+    }
+
+    fn retained_rows(&self, row: &MatchRow) -> Option<RetainedRows<'a>> {
+        self.retained_match(row)?.rows(None).ok()
+    }
+
     fn reduced_channels(&self, selected: &MatchRow) -> Vec<ReducedChannel> {
         let Some(query) = self.queries.get(selected.query_index) else {
             return Vec::new();
         };
-        query
-            .reduced_channels
-            .iter()
-            .filter_map(|channel| self.source.reduced_channel(selected, channel))
+        let Some(matched) = self.retained_match(selected) else {
+            return Vec::new();
+        };
+        matched
+            .reduced_channels(&query.reduced_channels)
+            .map(|(channel, preview)| {
+                ReducedChannel::new(
+                    channel,
+                    preview.components,
+                    preview.unit.cloned(),
+                    preview.samples,
+                )
+            })
             .collect()
     }
 
@@ -1005,12 +800,12 @@ impl<'a> ResultsTables<'a> {
         if self.stale {
             return Err(StaleRunNote::RunAgainToFrameThisMatch.to_string());
         }
-        match self.source {
-            RowSource::NavPoints { .. } => Ok(MatchRevealTarget::OneMatch {
+        match self.row_noun {
+            RowNoun::Point => Ok(MatchRevealTarget::OneMatch {
                 track: match_row.track,
                 points: match_row.rows.clone(),
             }),
-            RowSource::ChannelSamples { .. } => Err("Channel samples have no position of their \
+            RowNoun::Sample => Err("Channel samples have no position of their \
                  own: the button above frames the whole run"
                 .to_owned()),
         }
@@ -1020,7 +815,7 @@ impl<'a> ResultsTables<'a> {
     /// indexes the channel's own timeline, so it bands nothing on the map: its
     /// track still takes focus.
     fn hover_match(&self, match_row: &MatchRow, highlight: &mut MapHighlight) {
-        if let RowSource::NavPoints { .. } = self.source {
+        if matches!(self.row_noun, RowNoun::Point) {
             highlight.hover_match = Some(MatchHighlight::new(match_row.track, &match_row.rows));
         }
         // Track focus alongside the band: the map fades the other tracks and
@@ -1097,11 +892,12 @@ impl<'a> ResultsTables<'a> {
         let Some(query) = self.queries.get(selected.query_index) else {
             return;
         };
+        let Some(rows) = self.retained_rows(selected) else {
+            return;
+        };
         let columns = query.columns.as_slice();
         let cells = PointColumns {
             columns,
-            // A stale run's rows read data that changed after it: their bars
-            // come back with the next run.
             ranges: if self.stale {
                 &[]
             } else {
@@ -1156,19 +952,13 @@ impl<'a> ResultsTables<'a> {
                     header.col(|_| {});
                 })
                 .body(|body| {
-                    body.rows(row_height, selected.rows.len(), |mut row| {
-                        let Some(source_index) = selected.rows.start.checked_add(row.index())
-                        else {
+                    body.rows(row_height, rows.iter().len(), |mut row| {
+                        let Some(data) = rows.iter().nth(row.index()) else {
                             return;
                         };
-                        if let Some(taken) = self.point_row_ui(
-                            &mut row,
-                            &cells,
-                            selected,
-                            source_index,
-                            scope,
-                            out.highlight,
-                        ) {
+                        if let Some(taken) =
+                            self.point_row_ui(&mut row, &cells, &data, scope, out.highlight)
+                        {
                             click = Some(taken);
                         }
                     });
@@ -1196,28 +986,34 @@ impl<'a> ResultsTables<'a> {
         &self,
         row: &mut TableRow<'_, '_>,
         cells: &PointColumns<'_>,
-        match_row: &MatchRow,
-        source_index: usize,
+        data: &RetainedRow<'_, '_>,
         scope: MapPresence<'_>,
         highlight: &mut MapHighlight,
     ) -> Option<PointClick> {
-        let track = match_row.track;
-        let point = self.source.map_point(track, source_index);
+        let fix = data.fix();
+        let point = fix.map(MapElementRef::Fix);
+        let position = fix.and_then(|fix| {
+            let track = fix.track.resolve(self.files)?;
+            Some(track.placed_points()?.get(fix.point.as_usize())?.resolved())
+        });
         row.set_selected(point.is_some_and(|point| highlight.is_sticky(point)));
         for (index, column) in cells.columns.iter().enumerate() {
-            let value = self.source.value(match_row, source_index, column.source);
+            let value = column.value(data);
             let bar = cells.bar(index, value);
             row.col(|ui| column.format.value_ui(ui, value, bar));
         }
         row.col(|_| {});
 
-        let response = row
-            .response()
-            .on_hover_text(self.source.row_hover_text(track, source_index));
+        let hover = if fix.is_some() {
+            point_hover_text(data.index(), position)
+        } else {
+            format!("#{}\n{SAMPLE_WITHOUT_POSITION}", data.index())
+        };
+        let response = row.response().on_hover_text(hover);
         let point = point?;
         if response.hovered()
             && scope.draws(point)
-            && let Some(fix) = point.fix()
+            && let Some(fix) = fix
         {
             // The ring the plot cursor draws, restricted to a point the map
             // draws: the row and the map then agree on which point is meant.
@@ -1228,7 +1024,10 @@ impl<'a> ResultsTables<'a> {
         }
         Some(PointClick {
             point,
-            map_center: self.source.map_center(track, source_index),
+            map_center: position.map(|position| {
+                let (latitude, longitude) = position.coordinates();
+                (latitude.as_degrees(), longitude.as_degrees())
+            }),
             response,
         })
     }
@@ -1237,24 +1036,39 @@ impl<'a> ResultsTables<'a> {
     /// matched rows, in editor order. A column of times or blanks holds none:
     /// it states no magnitude to compare.
     fn column_ranges(&self) -> Vec<Vec<Option<ColumnValueRange>>> {
-        self.queries
+        let mut ranges: Vec<Vec<Option<ColumnValueRange>>> = self
+            .queries
             .iter()
-            .enumerate()
-            .map(|(query_index, query)| {
-                query
-                    .columns
-                    .iter()
-                    .map(|column| {
-                        if !column.format.holds_magnitudes() {
-                            return None;
-                        }
-                        self.matches.column_range(query_index, |match_row, index| {
-                            self.source.value(match_row, index, column.source)
-                        })
-                    })
-                    .collect()
-            })
-            .collect()
+            .map(|query| vec![None; query.columns.len()])
+            .collect();
+        for matched in self.matches.rows() {
+            let (Some(query), Some(ranges)) = (
+                self.queries.get(matched.query_index),
+                ranges.get_mut(matched.query_index),
+            ) else {
+                continue;
+            };
+            let mut columns = query
+                .columns
+                .iter()
+                .zip(ranges)
+                .filter(|(column, _)| column.format.holds_magnitudes())
+                .peekable();
+            if columns.peek().is_none() {
+                continue;
+            }
+            let Some(rows) = self.retained_rows(matched) else {
+                continue;
+            };
+            for (column, range) in columns {
+                if let Some(values) =
+                    ColumnValueRange::of_values(rows.iter().filter_map(|row| column.value(&row)))
+                {
+                    *range = Some(range.map_or(values, |previous| previous.union(values)));
+                }
+            }
+        }
+        ranges
     }
 
     /// Every match of the run as tab-separated values, in the order the table
@@ -1280,12 +1094,15 @@ impl<'a> ResultsTables<'a> {
                 .iter()
                 .filter(|row| row.query_index == query_index);
             for match_row in rows {
-                for source_index in match_row.rows.clone() {
+                let Some(data) = self.retained_rows(match_row) else {
+                    continue;
+                };
+                for row in &data {
                     // Writing to a String cannot fail.
-                    write!(tsv, "{}\t{source_index}", match_row.number).ok();
+                    write!(tsv, "{}\t{}", match_row.number, row.index()).ok();
                     for column in &query.columns {
                         tsv.push('\t');
-                        let value = self.source.value(match_row, source_index, column.source);
+                        let value = column.value(&row);
                         if let Some(value) = value {
                             tsv.push_str(&column.format.cell_text(Some(value)));
                         }
@@ -1458,34 +1275,32 @@ fn reduced_channels<'a>(columns: impl Iterator<Item = &'a AggregateColumn>) -> V
     channels
 }
 
-/// The table columns of a query, in table order.
-fn result_columns(columns: &[TableColumn]) -> Vec<ResultColumn<'static>> {
-    let mut aggregates = 0;
+fn result_columns<'a>(
+    query: &RetainedQuery<'a>,
+    unit: Option<&'a ChannelUnit>,
+) -> Vec<ResultColumn<'a>> {
+    let mut columns = Vec::new();
+    if query.channel_name().is_some() {
+        columns.push(ResultColumn {
+            name: "time".to_owned(),
+            doc: None,
+            format: ColumnFormat::time_of_day_with_millis(),
+            source: ColumnSource::SampleTime,
+        });
+    }
+    columns.extend(query.columns().map(|(ordinal, column)| match column {
+        RetainedColumn::Aggregate { index, column } => ResultColumn::of_aggregate(column, index),
+        RetainedColumn::Value(RowColumn::Metric(metric)) => {
+            ResultColumn::of_metric(ordinal, metric)
+        }
+        RetainedColumn::Value(RowColumn::ChannelComponent(name)) => ResultColumn {
+            name: name.to_owned(),
+            doc: None,
+            format: ColumnFormat::of_channel_unit(unit),
+            source: ColumnSource::Value(ordinal),
+        },
+    }));
     columns
-        .iter()
-        .map(|column| match column {
-            TableColumn::Metric(metric) => ResultColumn::of_metric(*metric),
-            TableColumn::Aggregate(aggregate) => {
-                let column = ResultColumn::of_aggregate(aggregate, aggregates);
-                aggregates += 1;
-                column
-            }
-        })
-        .collect()
-}
-
-/// One track's providers, absent for a track that is no longer loaded.
-fn track_values<'a>(
-    files: &'a [LoadedFile],
-    results: &'a PointsResults,
-    track: TrackRef,
-) -> Option<TrackValues<'a>> {
-    let loaded = track.resolve(files)?;
-    Some(TrackValues {
-        placed: loaded.placed_points(),
-        channels: &loaded.channels,
-        points: PointResultValues::new(&loaded.points, results.track_data(track)),
-    })
 }
 
 /// Vertical padding a row adds around its text.
@@ -1530,13 +1345,75 @@ const SAMPLE_WITHOUT_POSITION: &str = "Samples have no position: nothing to pin"
 
 #[cfg(test)]
 mod tests {
+    use chrono::{DateTime, Utc};
     use geotrace_sdk_units::ChannelUnit;
+    use gt_filter::GlobalFilter;
+    use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_query::{ChannelInfo, ChannelSchema, CheckedQuery};
+    use gt_query_run::{JammingValues, RunInputs, SnapErrorValues};
+    use gt_types::fixtures::{self, NavPointSpec};
     use gt_types::{Latitude, Longitude};
     use gt_ui_theme::EM_DASH;
+    use gt_ui_types::{GeomagneticSeries, TecSeries, TrackDataVisibility};
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn value_bars_share_a_range_across_matches_of_one_query() {
+        let eph = [1.0, 3.0, 101.0, 103.0, 6.0, 11.0];
+        let points = fixtures::nav_points_from_specs(
+            DateTime::<Utc>::UNIX_EPOCH,
+            eph.len(),
+            1_000,
+            |index| NavPointSpec {
+                eph_m: Some(eph[index]),
+                ..NavPointSpec::default()
+            },
+        );
+        let track = gt_test_utils::loaded_track_with_points(points);
+        let mut files = LoadedFiles::new();
+        files.push(
+            gt_test_utils::loaded_file_with_tracks(vec![track]),
+            FileHistory::None,
+        );
+        let mut session = QuerySession::new();
+        session.set_text(
+            concat!(
+                "points | where eph < 20 m | table eph | draw\n\n",
+                "points | where eph > 20 m | table eph | draw",
+            )
+            .to_owned(),
+        );
+        session.sync_checks(&ChannelSchema::new());
+        let inputs = RunInputs {
+            loaded_files: files.view(),
+            visibility: &TrackDataVisibility::from_loaded(files.files()),
+            filter: &GlobalFilter::default(),
+            snap_errors: &SnapErrorValues::default(),
+            jamming: &JammingValues::default(),
+            geomagnetic: &GeomagneticSeries::default(),
+            tec: &TecSeries::default(),
+        };
+        let run = session.start_run(inputs).unwrap();
+        session.finish_run(run.execute());
+
+        let tables = ResultsTables::of_session(files.view(), &session).unwrap();
+        let matches: Vec<_> = tables
+            .matches
+            .rows()
+            .iter()
+            .map(|row| row.rows.clone())
+            .collect();
+        assert_eq!(matches, [0..2, 4..6, 2..4]);
+        let ranges = tables.column_ranges();
+        let first = ranges[0][1].unwrap();
+        let second = ranges[1][1].unwrap();
+        assert_eq!(first.bar_fraction(Some(1.0)), Some(0.0));
+        assert_eq!(first.bar_fraction(Some(6.0)), Some(0.5));
+        assert_eq!(first.bar_fraction(Some(11.0)), Some(1.0));
+        assert_eq!(second.bar_fraction(Some(102.0)), Some(0.5));
+    }
 
     /// A checked query over a three-component `@accel` channel in g.
     fn checked_query(text: &str) -> CheckedQuery {
@@ -1550,34 +1427,6 @@ mod tests {
             },
         );
         gt_query_run::check_text(text, &schema).expect("the fixture query checks")
-    }
-
-    #[test]
-    fn a_table_lists_its_columns_in_query_order_and_numbers_its_aggregates() {
-        let query = checked_query(
-            "points | window 1 | where avg(velocity) > 1 km/h \
-             | table max(@accel.x), velocity, min(@accel.y)",
-        );
-        let columns = result_columns(query.columns());
-        assert_eq!(
-            columns
-                .iter()
-                .map(|column| column.name.clone())
-                .collect::<Vec<_>>(),
-            ["time", "max(@accel.x)", "velocity", "min(@accel.y)"]
-        );
-        assert_eq!(
-            columns
-                .iter()
-                .map(|column| column.source)
-                .collect::<Vec<_>>(),
-            [
-                ColumnSource::Metric(QueryMetric::Time),
-                ColumnSource::Aggregate(0),
-                ColumnSource::Metric(QueryMetric::Velocity),
-                ColumnSource::Aggregate(1),
-            ]
-        );
     }
 
     /// The table shows an aggregate column's value in the unit of the quantity
@@ -1596,10 +1445,10 @@ mod tests {
         let query = checked_query(&format!(
             "points | window 1 | where avg(velocity) > 1 km/h | table {call}"
         ));
-        let columns = result_columns(query.columns());
-        let aggregate = columns
-            .get(1)
-            .expect("the table lists the aggregate after time");
+        let aggregate = ResultColumn::of_aggregate(
+            gt_query::aggregate_columns(query.columns()).next().unwrap(),
+            0,
+        );
         assert_eq!(aggregate.format.cell_text(Some(base_value)), cell);
         assert_eq!(aggregate.format.cell_text(None), EM_DASH);
         assert_eq!(aggregate.format.header_with_unit(&aggregate.name), header);

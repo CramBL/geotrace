@@ -288,14 +288,14 @@ impl AggregateColumn {
             CheckedSource::Points => {
                 // The channel span is the closed time extent of the match's
                 // points, as a count window's is.
-                let point_times: Vec<Option<f64>> = rows
-                    .clone()
-                    .map(|index| ctx.raw(QueryMetric::Time, index))
-                    .collect();
+                let span = TimeSpan::covering(
+                    rows.clone()
+                        .filter_map(|index| ctx.raw(QueryMetric::Time, index)),
+                );
                 let window = WindowScope {
                     start: rows.start,
                     end: rows.end,
-                    span: TimeSpan::covering(&point_times),
+                    span,
                 };
                 eval_num(&mut ctx, &self.expr, Scope::Window(window))
             }
@@ -427,7 +427,14 @@ fn evaluate_points(
                 let window = WindowScope {
                     start,
                     end,
-                    span: TimeSpan::covering(times.get(start..end).unwrap_or_default()),
+                    span: TimeSpan::covering(
+                        times
+                            .get(start..end)
+                            .unwrap_or_default()
+                            .iter()
+                            .flatten()
+                            .copied(),
+                    ),
                 };
                 apply_window(query, &mut ctx, &mut matched, &mut skips, window);
             }
@@ -768,7 +775,7 @@ fn verdict<P: MetricProvider>(
 /// The closed time span `[lo, hi]` (seconds) a window's channel samples are
 /// gathered from.
 #[derive(Clone, Copy)]
-struct TimeSpan {
+pub struct TimeSpan {
     lo: f64,
     hi: f64,
 }
@@ -776,8 +783,8 @@ struct TimeSpan {
 impl TimeSpan {
     /// The closed extent of the timestamps present in `point_times`, `None`
     /// when none of the points has one.
-    fn covering(point_times: &[Option<f64>]) -> Option<Self> {
-        let mut present = point_times.iter().flatten().copied();
+    pub fn covering(point_times: impl IntoIterator<Item = f64>) -> Option<Self> {
+        let mut present = point_times.into_iter();
         let first = present.next()?;
         Some(present.fold(
             Self {
@@ -789,6 +796,10 @@ impl TimeSpan {
                 hi: span.hi.max(time),
             },
         ))
+    }
+
+    pub fn bounds(self) -> (f64, f64) {
+        (self.lo, self.hi)
     }
 }
 

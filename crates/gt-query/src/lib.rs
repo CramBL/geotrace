@@ -29,7 +29,7 @@ pub use check::{
 pub use construct::{Construct, ConstructKind, catalog, metric_documentation};
 pub use dimension::Dimension;
 pub use eval::{
-    ChannelSamples, ChannelTimeline, MetricProvider, RunOutput, RunSummary, TrackInput,
+    ChannelSamples, ChannelTimeline, MetricProvider, RunOutput, RunSummary, TimeSpan, TrackInput,
     TrackMatches, derived_accel, run, run_cancellable,
 };
 pub use lexer::{Tok, Token, TokenClass, channel_reference, highlight_classes, tokenize};

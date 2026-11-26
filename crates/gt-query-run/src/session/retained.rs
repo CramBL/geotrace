@@ -1,13 +1,15 @@
+use std::cell::LazyCell;
 use std::ops::{Deref, Range};
+use std::slice;
 
 use chrono::{DateTime, Utc};
 use geotrace_sdk_units::ChannelUnit;
 use gt_loaded_files::{LoadedFilesView, SessionTrackRef};
-use gt_query::{AggregateColumn, QueryMetric, TableColumn};
-use gt_types::{NavPoint, TrackRef};
+use gt_query::{AggregateColumn, ChannelTimeline, QueryMetric, TableColumn, TimeSpan};
+use gt_types::{FixRef, LoadedTrack, PointIdx, TrackRef};
 
 use super::QuerySession;
-use crate::provider::{PointResultValues, TrackQueryData};
+use crate::provider::{PointResultValues, TrackProvider, TrackQueryData};
 use crate::results::{
     ChannelResults, ChannelTrackResult, MatchValues, PanelQuery, PointsResults, RunResults,
 };
@@ -114,28 +116,19 @@ impl<'a> RetainedQuery<'a> {
         }
     }
 
+    pub fn columns(&self) -> impl Iterator<Item = (usize, RetainedColumn<'a>)> {
+        match self.result {
+            QuerySource::Channel(channel) => ResultColumns::Channel(channel),
+            QuerySource::Points { query, .. } => ResultColumns::Points(&query.columns),
+        }
+        .columns_with_ordinals()
+    }
+
     pub fn aggregate_columns(&self) -> impl Iterator<Item = (usize, &'a AggregateColumn)> {
-        let (points, channels, component_count) = match self.result {
-            QuerySource::Channel(channel) => (
-                &[][..],
-                channel.aggregate_columns.as_slice(),
-                channel.component_labels().len(),
-            ),
-            QuerySource::Points { query, .. } => (query.columns.as_slice(), &[][..], 0),
-        };
-        points
-            .iter()
-            .enumerate()
-            .filter_map(|(ordinal, column)| match column {
-                TableColumn::Aggregate(aggregate) => Some((ordinal, aggregate)),
-                TableColumn::Metric(_) => None,
-            })
-            .chain(
-                channels
-                    .iter()
-                    .enumerate()
-                    .map(move |(ordinal, aggregate)| (component_count + ordinal, aggregate)),
-            )
+        self.columns().filter_map(|(ordinal, column)| match column {
+            RetainedColumn::Aggregate { column, .. } => Some((ordinal, column)),
+            RetainedColumn::Value(_) => None,
+        })
     }
 
     pub fn first_match(&self) -> Option<MatchPosition> {
@@ -178,7 +171,7 @@ impl<'a> RetainedQuery<'a> {
                     track.track,
                     &track.matches,
                     MatchSource::Points {
-                        points: &loaded.points,
+                        loaded,
                         data: results.track_data(track.track),
                         columns: &query.columns,
                     },
@@ -207,6 +200,7 @@ impl<'a> RetainedQuery<'a> {
             None
         };
         Ok(RetainedMatch {
+            position,
             track,
             reference,
             matched,
@@ -239,6 +233,7 @@ pub enum MatchExtent<'a> {
 }
 
 pub struct RetainedMatch<'a> {
+    position: MatchPosition,
     track: TrackRef,
     reference: SessionTrackRef,
     matched: &'a MatchValues,
@@ -248,6 +243,10 @@ pub struct RetainedMatch<'a> {
 }
 
 impl<'a> RetainedMatch<'a> {
+    pub fn position(&self) -> MatchPosition {
+        self.position
+    }
+
     pub fn track(&self) -> TrackRef {
         self.track
     }
@@ -291,14 +290,82 @@ impl<'a> RetainedMatch<'a> {
         }
         let point_values = match self.source {
             MatchSource::Channel { .. } => None,
-            MatchSource::Points { points, data, .. } => Some(PointResultValues::new(points, data)),
+            MatchSource::Points { loaded, data, .. } => {
+                Some(PointResultValues::new(&loaded.points, data))
+            }
         };
         Ok(RetainedRows {
             source: self.source,
+            track: self.track,
+            aggregates: self.aggregates(),
             range: start..self.matched.rows.end,
             point_values,
         })
     }
+
+    pub fn reduced_channels<'names>(
+        &self,
+        channels: &'names [&'names str],
+    ) -> impl Iterator<Item = (&'names str, ReducedChannelSamples<'a>)> {
+        let span = LazyCell::new(|| match self.source {
+            MatchSource::Points { loaded, .. } => {
+                loaded.points.get(self.range()).and_then(|points| {
+                    TimeSpan::covering(
+                        points
+                            .iter()
+                            .map(|point| point.tpv.time().as_secs_f64_with_subseconds()),
+                    )
+                })
+            }
+            MatchSource::Channel { .. } => None,
+        });
+        channels.iter().filter_map(move |&channel| {
+            self.reduced_channel(channel, || *span)
+                .map(|preview| (channel, preview))
+        })
+    }
+
+    fn reduced_channel(
+        &self,
+        channel: &str,
+        span: impl FnOnce() -> Option<TimeSpan>,
+    ) -> Option<ReducedChannelSamples<'a>> {
+        match self.source {
+            MatchSource::Channel { result, track } => {
+                (result.channel == channel).then(|| ReducedChannelSamples {
+                    components: &result.components,
+                    unit: track.unit.as_ref(),
+                    samples: track.timeline.slice_rows(self.range()),
+                })
+            }
+            MatchSource::Points { loaded, .. } => {
+                let recorded = loaded
+                    .channels
+                    .iter()
+                    .find(|candidate| candidate.name == channel);
+                let samples = recorded
+                    .and_then(|recorded| {
+                        let span = span()?;
+                        Some(
+                            TrackProvider::new(&loaded.points, slice::from_ref(recorded), None)
+                                .channel_span_timeline(channel, span),
+                        )
+                    })
+                    .unwrap_or_default();
+                Some(ReducedChannelSamples {
+                    components: recorded.map_or(&[], |recorded| recorded.components.as_slice()),
+                    unit: recorded.and_then(|recorded| recorded.unit.as_ref()),
+                    samples,
+                })
+            }
+        }
+    }
+}
+
+pub struct ReducedChannelSamples<'a> {
+    pub components: &'a [String],
+    pub unit: Option<&'a ChannelUnit>,
+    pub samples: ChannelTimeline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -312,31 +379,79 @@ pub enum RowColumn<'a> {
     Metric(QueryMetric),
 }
 
+pub enum RetainedColumn<'a> {
+    Aggregate {
+        index: usize,
+        column: &'a AggregateColumn,
+    },
+    Value(RowColumn<'a>),
+}
+
+enum ResultColumns<'a> {
+    Channel(&'a ChannelResults),
+    Points(&'a [TableColumn]),
+}
+
+impl<'a> ResultColumns<'a> {
+    fn columns_with_ordinals(self) -> impl Iterator<Item = (usize, RetainedColumn<'a>)> {
+        let (points, components, aggregates) = match self {
+            Self::Channel(channel) => (
+                &[][..],
+                channel.component_labels(),
+                channel.aggregate_columns.as_slice(),
+            ),
+            Self::Points(columns) => (columns, &[][..], &[][..]),
+        };
+        points
+            .iter()
+            .enumerate()
+            .scan(0, |aggregate_index, (ordinal, column)| {
+                let column = match column {
+                    TableColumn::Metric(metric) => {
+                        RetainedColumn::Value(RowColumn::Metric(*metric))
+                    }
+                    TableColumn::Aggregate(column) => {
+                        let index = *aggregate_index;
+                        *aggregate_index += 1;
+                        RetainedColumn::Aggregate { index, column }
+                    }
+                };
+                Some((ordinal, column))
+            })
+            .chain(components.iter().enumerate().map(|(ordinal, name)| {
+                (
+                    ordinal,
+                    RetainedColumn::Value(RowColumn::ChannelComponent(name)),
+                )
+            }))
+            .chain(aggregates.iter().enumerate().map(move |(index, column)| {
+                (
+                    components.len() + index,
+                    RetainedColumn::Aggregate { index, column },
+                )
+            }))
+    }
+}
+
 pub struct RetainedRows<'a> {
     source: MatchSource<'a>,
+    track: TrackRef,
+    aggregates: &'a [Option<f64>],
     range: Range<usize>,
     point_values: Option<PointResultValues<'a>>,
 }
 
 impl<'a> RetainedRows<'a> {
     pub fn columns(&self) -> impl Iterator<Item = (usize, RowColumn<'a>)> {
-        let (metrics, components) = match self.source {
-            MatchSource::Channel { result, .. } => (&[][..], result.component_labels()),
-            MatchSource::Points { columns, .. } => (columns, &[][..]),
-        };
-        metrics
-            .iter()
-            .enumerate()
-            .filter_map(|(ordinal, column)| match column {
-                TableColumn::Metric(metric) => Some((ordinal, RowColumn::Metric(*metric))),
-                TableColumn::Aggregate(_) => None,
-            })
-            .chain(
-                components
-                    .iter()
-                    .enumerate()
-                    .map(|(ordinal, label)| (ordinal, RowColumn::ChannelComponent(label.as_str()))),
-            )
+        match self.source {
+            MatchSource::Channel { result, .. } => ResultColumns::Channel(result),
+            MatchSource::Points { columns, .. } => ResultColumns::Points(columns),
+        }
+        .columns_with_ordinals()
+        .filter_map(|(ordinal, column)| match column {
+            RetainedColumn::Aggregate { .. } => None,
+            RetainedColumn::Value(value) => Some((ordinal, value)),
+        })
     }
 
     pub fn channel_unit(&self) -> Option<&'a ChannelUnit> {
@@ -372,8 +487,12 @@ impl<'page, 'data> Iterator for RetainedRowIter<'page, 'data> {
     type Item = RetainedRow<'page, 'data>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.nth(0)
+    }
+
+    fn nth(&mut self, offset: usize) -> Option<Self::Item> {
         Some(RetainedRow {
-            index: self.indices.next()?,
+            index: self.indices.nth(offset)?,
             rows: self.rows,
         })
     }
@@ -393,6 +512,15 @@ pub struct RetainedRow<'page, 'data> {
 impl RetainedRow<'_, '_> {
     pub fn index(&self) -> usize {
         self.index
+    }
+
+    pub fn fix(&self) -> Option<FixRef> {
+        matches!(self.rows.source, MatchSource::Points { .. })
+            .then(|| FixRef::new(self.rows.track, PointIdx::new(self.index)))
+    }
+
+    pub fn aggregate(&self, index: usize) -> Option<f64> {
+        self.rows.aggregates.get(index).copied().flatten()
     }
 
     pub fn time(&self) -> Option<ResultTime> {
@@ -419,7 +547,7 @@ enum MatchSource<'a> {
         track: &'a ChannelTrackResult,
     },
     Points {
-        points: &'a [NavPoint],
+        loaded: &'a LoadedTrack,
         data: Option<&'a TrackQueryData>,
         columns: &'a [TableColumn],
     },
@@ -436,8 +564,9 @@ impl<'a> MatchSource<'a> {
                     .get(rows)
                     .ok_or(RetainedResultError::InvalidPosition)?,
             },
-            Self::Points { points, .. } => {
-                points
+            Self::Points { loaded, .. } => {
+                loaded
+                    .points
                     .get(rows.clone())
                     .ok_or(RetainedResultError::InvalidPosition)?;
                 MatchExtent::Points(rows)
@@ -454,9 +583,9 @@ impl<'a> MatchSource<'a> {
                 .copied()
                 .filter(|seconds| seconds.is_finite())
                 .map(ResultTime::ChannelSeconds),
-            Self::Points { points, .. } => {
-                Some(ResultTime::PointUtc(points.get(index)?.tpv.time().utc()))
-            }
+            Self::Points { loaded, .. } => Some(ResultTime::PointUtc(
+                loaded.points.get(index)?.tpv.time().utc(),
+            )),
         }
     }
 }
