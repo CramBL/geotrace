@@ -264,7 +264,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Frame and highlight a track, a half-open range of original point indices, or a retained point-query match on the map.",
+        description = "Frame and highlight a track, a half-open range of original point indices, or a retained point-query match on the map. Requires Query highlights.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -420,6 +420,9 @@ impl Companion {
                 "The selected range has no visible plot timestamps under the current filter and track visibility."
             }
             ErrorCode::QueryColumnsTooLarge => "Query result columns exceed the page size limit.",
+            ErrorCode::QueryHighlightsDisabled => {
+                "Enable Query highlights in the map's visibility controls before showing a range."
+            }
             ErrorCode::QueryJobNotFound => {
                 "GeoTrace no longer has that query job. Start the query again."
             }

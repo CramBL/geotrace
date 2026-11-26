@@ -276,6 +276,7 @@ pub enum ErrorCode {
     NoVisibleMapGeometry,
     NoVisiblePlotTime,
     QueryColumnsTooLarge,
+    QueryHighlightsDisabled,
     QueryJobNotFound,
     QueryMatchIsChannel,
     QueryNotComplete,

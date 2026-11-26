@@ -6,15 +6,15 @@ use std::time::Duration;
 use chrono::{DateTime, NaiveDate, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
-    AnalysisSettingKey, ApplyProcessing, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
-    HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus, HistoryRecordings,
-    ListHistoryRecordings, ListMetrics, ListRecordings, Metrics, NumericObservation,
-    OpenHistoryRecording, OpenPoint, PointDetails, QueryJobId, QueryJobRequest, QueryJobState,
-    QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage,
-    QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText, QueryValidation,
-    RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request,
-    SetSetting, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
-    SettingValue, ShowOnMap, ShowOnPlot, TrackReference,
+    AnalysisSettingKey, ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults,
+    GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
+    HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings, Metrics,
+    NumericObservation, OpenHistoryRecording, OpenPoint, PointDetails, QueryJobId, QueryJobRequest,
+    QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
+    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText,
+    QueryValidation, RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply,
+    Request, SetSetting, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection,
+    SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -28,6 +28,44 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
+
+#[tokio::test]
+async fn show_on_map_reports_disabled_query_highlights() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|request| {
+        assert_eq!(
+            *request,
+            Request::ShowOnMap(ShowOnMap {
+                target: RangeTarget::Track {
+                    track: self::track_reference(),
+                    start: None,
+                    end: None,
+                },
+            })
+        );
+        Ok(Reply::from(ErrorCode::QueryHighlightsDisabled))
+    }));
+    client.initialize().await;
+    let result = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "show_on_map", "arguments": {
+                "target": {"kind": "track", "track": self::track_reference()}
+            }}
+        }))
+        .await;
+    assert_eq!(result.pointer("/result/isError"), Some(&json!(true)));
+    assert_eq!(
+        result.pointer("/result/content/0/text"),
+        Some(&json!(
+            "Enable Query highlights in the map's visibility controls before showing a range."
+        ))
+    );
+    drop(client);
+    tokio::time::timeout(Duration::from_secs(2), worker)
+        .await
+        .unwrap()
+        .unwrap();
+}
 
 #[tokio::test]
 async fn the_query_language_resource_is_available_without_the_desktop() {
