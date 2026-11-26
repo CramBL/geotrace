@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use chrono::DateTime;
 use gt_query::QueryMetric;
-use gt_types::{FileIdx, TrackIdx, TrackRef};
+use gt_types::{FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
 
-use super::{MatchExtent, MatchPosition, ResultTime, RetainedResultError, RowColumn};
+use super::{
+    MatchExtent, MatchPosition, ResultTime, RetainedColumn, RetainedResultError, RowColumn,
+};
 use crate::session::QuerySession;
 use crate::test_util::{self, LoadedState, TEST_EPOCH};
 
@@ -27,13 +29,10 @@ fn retained_results_require_the_completed_recording_generation() {
         assert_eq!(matched.track(), track);
         assert_eq!(matched.extent(), &MatchExtent::Points(1..2));
         let rows = matched.rows(None).unwrap();
-        assert_eq!(
-            (&rows)
-                .into_iter()
-                .map(|row| row.index())
-                .collect::<Vec<_>>(),
-            [1]
-        );
+        let row = rows.iter().next().unwrap();
+        assert_eq!(row.index(), 1);
+        assert_eq!(row.fix(), Some(FixRef::new(track, PointIdx::new(1))));
+        assert!(rows.iter().nth(usize::MAX).is_none());
         assert!(matches!(
             matched.rows(Some(0)),
             Err(RetainedResultError::InvalidPosition)
@@ -143,6 +142,7 @@ fn a_channel_match_extent_uses_the_retained_filtered_timeline() {
         Some(ResultTime::ChannelSeconds((TEST_EPOCH + 3) as f64))
     );
     assert_eq!(row.value(0), Some(7.0));
+    assert_eq!(row.fix(), None);
     assert!(matches!(
         matched.rows(Some(3)),
         Err(RetainedResultError::InvalidPosition)
@@ -156,20 +156,24 @@ fn retained_point_columns_preserve_ordinals_and_values() {
     test_util::run_text(
         &mut session,
         &state,
-        "points | window 2 | table eph, max(lat), velocity",
+        "points | window 2 | table eph, max(lat), velocity, min(lat)",
     );
     let results = session
         .retained_results(state.inputs().loaded_files)
         .unwrap();
     let query = results.query(0).unwrap();
     let matched = query.match_at(query.first_match().unwrap()).unwrap();
-    assert_eq!(matched.aggregates(), &[Some(55.6)]);
+    assert_eq!(matched.aggregates(), &[Some(55.6), Some(55.5)]);
+    let (ordinal, RetainedColumn::Aggregate { index, .. }) = query.columns().nth(4).unwrap() else {
+        panic!("expected the aggregate after velocity");
+    };
+    assert_eq!((ordinal, index), (4, 1));
     assert_eq!(
         query
             .aggregate_columns()
             .map(|(ordinal, column)| (ordinal, column.label()))
             .collect::<Vec<_>>(),
-        [(2, "max(lat)")],
+        [(2, "max(lat)"), (4, "min(lat)")],
     );
     let rows = matched.rows(None).unwrap();
     let columns: Vec<_> = rows
@@ -191,7 +195,13 @@ fn retained_point_columns_preserve_ordinals_and_values() {
     );
     let values: Vec<_> = (&rows)
         .into_iter()
-        .map(|row| (row.index(), row.value(1), row.value(3)))
+        .map(|row| (row.index(), row.value(1), row.aggregate(0), row.value(3)))
         .collect();
-    assert_eq!(values, [(0, Some(2.5), Some(10.0)), (1, None, None)]);
+    assert_eq!(
+        values,
+        [
+            (0, Some(2.5), Some(55.6), Some(10.0)),
+            (1, None, Some(55.6), None)
+        ]
+    );
 }

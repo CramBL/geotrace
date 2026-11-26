@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, TimeDelta};
 use egui::Role;
 use egui_kittest::{Harness, OsThreshold, kittest::NodeT as _, kittest::Queryable as _};
 use egui_phosphor::regular::COPY as ICON_COPY;
@@ -13,7 +13,7 @@ use gt_store::{EnvironmentArchive, JamStore};
 use gt_test_utils::{
     By, CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, HarnessInteraction as _, TestHarness, fixtures,
 };
-use gt_types::{DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
+use gt_types::{Channel, DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
 use gt_ui_types::{DisplayCategory, MapElementRef, MapEligibility, PointVisibility, StaleRunNote};
 use rstest::rstest;
@@ -1449,6 +1449,62 @@ fn expanding_a_points_match_lists_the_samples_its_aggregate_reduced() {
             > 0,
         "the listing states each sample's x component in the unit the track declared"
     );
+}
+
+#[test]
+fn a_match_preview_includes_samples_at_an_interior_latest_fix_time() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    let base = ui_tests::base_time();
+    let at = |seconds| base + TimeDelta::seconds(seconds);
+    let points = [-1, 0, 2, 1]
+        .into_iter()
+        .flat_map(|seconds| fixtures::nav_points_from(at(seconds), 1, 1))
+        .collect();
+    let mut track = gt_test_utils::loaded_track_with_points(points);
+    track.channels.push(Channel {
+        name: "sensor".to_owned(),
+        unit: None,
+        period: None,
+        description: None,
+        components: Vec::new(),
+        times: (-1..=3).map(at).collect(),
+        values: vec![99.0, 1.0, 2.0, 3.0, 100.0],
+    });
+    let app = harness.state_mut();
+    {
+        let mut shared = app.shared.borrow_mut();
+        shared.loaded_files.replace_file(
+            0,
+            gt_test_utils::loaded_file_with_tracks(vec![track]),
+            FileHistory::None,
+        );
+        shared.sync_tree_from_loaded_files();
+        let shared = &mut *shared;
+        shared.plot_state.rebuild_all(&shared.loaded_files);
+        shared.filter.set_time_bounds(Some(at(0)), Some(at(2)));
+    }
+    app.on_track_indices_changed();
+    ui_tests::run_query(&mut harness, "points | window 3 | table max(@sensor)");
+    open_samples_listing(&mut harness);
+    harness.get_by_label_contains(&format!("@sensor {MIDDLE_DOT} 3 samples"));
+
+    harness
+        .get_by_role_and_label(Role::Button, ICON_COPY)
+        .click();
+    harness.run_steps(1);
+    let copied = harness.copied_text().expect("the app copied text");
+    let cells: Vec<_> = copied
+        .lines()
+        .skip(1)
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect();
+    let indices: Vec<_> = cells.iter().map(|row| row[1]).collect();
+    let maxima: Vec<_> = cells
+        .iter()
+        .map(|row| row[3].parse::<f64>().unwrap())
+        .collect();
+    assert_eq!(indices, ["1", "2", "3"]);
+    assert_eq!(maxima, [3.0; 3]);
 }
 
 /// The listing counts every sample the aggregate reduced and draws the rows it

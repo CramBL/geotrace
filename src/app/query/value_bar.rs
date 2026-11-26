@@ -33,6 +33,13 @@ impl ColumnValueRange {
         )
     }
 
+    pub(super) fn union(self, other: Self) -> Self {
+        Self {
+            lowest: self.lowest.min(other.lowest),
+            highest: self.highest.max(other.highest),
+        }
+    }
+
     /// How much of the cell the bar behind `value` fills: nothing at the
     /// column's lowest value, all of it at its highest. A column whose values
     /// are all the same spans nothing to place a value in and returns [`None`].
