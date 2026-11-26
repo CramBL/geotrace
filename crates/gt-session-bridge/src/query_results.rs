@@ -2,13 +2,10 @@ use std::num::NonZeroUsize;
 use std::ops::Range;
 
 use chrono::{DateTime, Utc};
-use gt_loaded_files::LoadedFilesView;
-use gt_query::{AggregateColumn, Quantity, TableColumn, Unit};
+use gt_query::{AggregateColumn, Quantity, Unit};
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, MatchPosition, MatchValues, PanelQuery, PointResultValues,
-    PointsResults, RetainedResultError, RunResults, TrackQueryData,
+    MatchPosition, ResultTime, RetainedQuery, RetainedResultError, RetainedResults, RowColumn,
 };
-use gt_types::{NavPoint, TrackRef};
 use serde::{Deserialize, Serialize};
 
 use crate::framing::{Frame, MAX_REPLY_BYTES};
@@ -60,6 +57,20 @@ impl From<QueryMatchPosition> for MatchPosition {
     }
 }
 
+impl From<MatchPosition> for QueryMatchPosition {
+    fn from(
+        MatchPosition {
+            track_ordinal,
+            match_ordinal,
+        }: MatchPosition,
+    ) -> Self {
+        Self {
+            track_ordinal,
+            match_ordinal,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueryResults {
     pub job: QueryJobId,
@@ -71,26 +82,28 @@ pub struct QueryResults {
 
 impl QueryResults {
     pub fn project(
-        results: &RunResults,
-        files: LoadedFilesView<'_>,
+        results: &RetainedResults<'_>,
         args: GetQueryResults,
     ) -> Result<Self, ErrorCode> {
-        let query = ResultQuery::select(results, args.query)?;
+        let query = results.query(args.query)?;
         let (columns, page) = match args.page {
-            QueryPageRequest::Matches { start } => query.matches(files, args, start)?,
-            QueryPageRequest::Rows { matched, start } => query.rows(files, args, matched, start)?,
+            QueryPageRequest::Matches { start } => self::matches(&query, args, start)?,
+            QueryPageRequest::Rows { matched, start } => {
+                self::rows(&query, args.limit, matched, start)?
+            }
         };
         Frame::encode(&columns, MAX_QUERY_COLUMN_BYTES)
             .map_err(|_error| ErrorCode::QueryColumnsTooLarge)?;
         Ok(Self {
             job: args.job,
             query: args.query,
-            source: match query {
-                ResultQuery::Channel(result) => QueryResultSource::Channel {
-                    channel: result.channel.clone(),
-                },
-                ResultQuery::Points { .. } => QueryResultSource::Points,
-            },
+            source: query
+                .channel_name()
+                .map_or(QueryResultSource::Points, |channel| {
+                    QueryResultSource::Channel {
+                        channel: channel.to_owned(),
+                    }
+                }),
             columns,
             page,
         })
@@ -153,6 +166,15 @@ pub enum QueryResultTime {
     Utc(DateTime<Utc>),
 }
 
+impl From<ResultTime> for QueryResultTime {
+    fn from(time: ResultTime) -> Self {
+        match time {
+            ResultTime::ChannelSeconds(seconds) => Self::UnixSeconds(seconds),
+            ResultTime::PointUtc(time) => Self::Utc(time),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueryResultColumn {
     pub ordinal: usize,
@@ -183,334 +205,108 @@ impl QueryResultColumn {
     }
 }
 
-enum ResultQuery<'a> {
-    Channel(&'a ChannelResults),
-    Points {
-        results: &'a PointsResults,
-        query: &'a PanelQuery,
-    },
+fn matches(
+    query: &RetainedQuery<'_>,
+    args: GetQueryResults,
+    start: Option<QueryMatchPosition>,
+) -> Result<(Vec<QueryResultColumn>, QueryResultPage), ErrorCode> {
+    let columns: Vec<_> = query
+        .aggregate_columns()
+        .map(|(ordinal, aggregate)| QueryResultColumn::aggregate(ordinal, aggregate))
+        .collect();
+    let limit = self::page_limit(args.limit, columns.len())?;
+    let mut matches = Vec::new();
+    let mut next = start
+        .map(MatchPosition::from)
+        .or_else(|| query.first_match());
+    while let Some(position) = next.filter(|_| matches.len() < limit) {
+        let matched = query.match_at(position)?;
+        matches.push(QueryMatch {
+            position: position.into(),
+            track: TrackReference::new(args.job.session, matched.reference()),
+            range: matched.range(),
+            first_time: matched.first_time().map(Into::into),
+            last_time: matched.last_time().map(Into::into),
+            aggregates: matched
+                .aggregates()
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect(),
+        });
+        next = matched.next_position();
+    }
+    Ok((
+        columns,
+        QueryResultPage::Matches {
+            matches,
+            next_start: next.map(Into::into),
+        },
+    ))
 }
 
-impl<'a> ResultQuery<'a> {
-    fn select(results: &'a RunResults, query: usize) -> Result<Self, ErrorCode> {
-        if results.stale() {
-            return Err(ErrorCode::StaleQueryResults);
-        }
-        match results {
-            RunResults::Channel(channel) if query == 0 => Ok(Self::Channel(channel)),
-            RunResults::Channel(_) => Err(ErrorCode::InvalidQueryCursor),
-            RunResults::Points(results) => Ok(Self::Points {
-                results,
-                query: results
-                    .queries
-                    .get(query)
-                    .ok_or(ErrorCode::InvalidQueryCursor)?,
-            }),
-        }
-    }
-
-    fn matches(
-        &self,
-        files: LoadedFilesView<'_>,
-        args: GetQueryResults,
-        start: Option<QueryMatchPosition>,
-    ) -> Result<(Vec<QueryResultColumn>, QueryResultPage), ErrorCode> {
-        let columns = self.aggregate_columns();
-        let limit = self::page_limit(args.limit, columns.len())?;
-        let mut matches = Vec::new();
-        let mut next_start =
-            start.or_else(|| (self.track_count() > 0).then(QueryMatchPosition::default));
-        while let Some(position) = next_start.filter(|_| matches.len() < limit) {
-            let matched_track = self.track(files, position.track_ordinal)?;
-            let matched = matched_track.matched(position)?;
-            let track = files
-                .session_track_ref(matched_track.track)
-                .map(|track| TrackReference::new(args.job.session, track))
-                .ok_or(ErrorCode::StaleTrack)?;
-            let first_time = matched_track.source.time(matched.rows.start);
-            let last_time = matched
-                .rows
-                .end
-                .checked_sub(1)
-                .and_then(|index| matched_track.source.time(index));
-            matches.push(QueryMatch {
-                position,
-                track,
-                range: matched.rows.clone(),
-                first_time,
-                last_time,
-                aggregates: matched.aggregates.iter().copied().map(Into::into).collect(),
-            });
-            next_start = self.next_match(position, matched_track.matches.len());
-        }
-        Ok((
-            columns,
-            QueryResultPage::Matches {
-                matches,
-                next_start,
-            },
-        ))
-    }
-
-    fn rows(
-        &self,
-        files: LoadedFilesView<'_>,
-        args: GetQueryResults,
-        position: QueryMatchPosition,
-        start: Option<usize>,
-    ) -> Result<(Vec<QueryResultColumn>, QueryResultPage), ErrorCode> {
-        let track = self.track(files, position.track_ordinal)?;
-        let matched = track.matched(position)?;
-        let start = start.unwrap_or(matched.rows.start);
-        if !matched.rows.contains(&start) {
-            return Err(ErrorCode::InvalidQueryCursor);
-        }
-        let range = start..matched.rows.end;
-        match track.source {
-            MatchSource::Channel {
-                channel,
-                track: samples,
-            } => {
-                let columns = self::channel_columns(channel, samples)?;
-                let component_count = columns.len();
-                let from_base = samples
-                    .unit
-                    .as_ref()
-                    .and_then(|unit| unit.as_recognized())
-                    .map_or(1.0, Unit::from_base);
-                track
-                    .source
-                    .row_page(position, range, args.limit, columns, |index| {
-                        (0..component_count)
-                            .map(|component| {
-                                samples
-                                    .timeline
-                                    .value(index, component)
-                                    .map(|value| value * from_base)
-                                    .into()
-                            })
-                            .collect()
-                    })
-            }
-            MatchSource::Points {
-                points,
-                data,
-                columns,
-            } => {
-                let metrics: Vec<_> = columns
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(ordinal, column)| match column {
-                        TableColumn::Metric(metric) => Some((ordinal, *metric)),
-                        TableColumn::Aggregate(_) => None,
-                    })
-                    .collect();
-                let columns = metrics
-                    .iter()
-                    .map(|&(ordinal, metric)| {
-                        QueryResultColumn::new(ordinal, metric.to_string(), Some(metric.quantity()))
-                    })
-                    .collect();
-                let values = PointResultValues::new(points, data);
-                track
-                    .source
-                    .row_page(position, range, args.limit, columns, |index| {
-                        metrics
-                            .iter()
-                            .map(|&(_, metric)| values.value(metric, index).into())
-                            .collect()
-                    })
-            }
-        }
-    }
-
-    fn aggregate_columns(&self) -> Vec<QueryResultColumn> {
-        match self {
-            Self::Channel(channel) => {
-                let offset = channel.component_labels().len();
-                channel
-                    .aggregate_columns
-                    .iter()
-                    .enumerate()
-                    .map(|(index, aggregate)| {
-                        QueryResultColumn::aggregate(offset + index, aggregate)
-                    })
-                    .collect()
-            }
-            Self::Points { query, .. } => query
-                .columns
-                .iter()
-                .enumerate()
-                .filter_map(|(index, column)| match column {
-                    TableColumn::Aggregate(aggregate) => {
-                        Some(QueryResultColumn::aggregate(index, aggregate))
+fn rows(
+    query: &RetainedQuery<'_>,
+    limit: Option<NonZeroUsize>,
+    position: QueryMatchPosition,
+    start: Option<usize>,
+) -> Result<(Vec<QueryResultColumn>, QueryResultPage), ErrorCode> {
+    let matched = query.match_at(position.into())?;
+    let page_rows = matched.rows(start)?;
+    let unit = page_rows.channel_unit();
+    let label = unit.map(|unit| unit.label());
+    let from_base = unit
+        .and_then(|unit| unit.as_recognized())
+        .map_or(1.0, Unit::from_base);
+    let mut remaining = MAX_QUERY_COLUMN_BYTES;
+    let columns = page_rows
+        .columns()
+        .take(MAX_QUERY_VALUES_PER_PAGE + 1)
+        .map(|(ordinal, column)| {
+            Ok(match column {
+                RowColumn::ChannelComponent(component) => {
+                    remaining = remaining
+                        .checked_sub(component.len())
+                        .and_then(|bytes| bytes.checked_sub(label.map_or(0, str::len)))
+                        .ok_or(ErrorCode::QueryColumnsTooLarge)?;
+                    QueryResultColumn {
+                        ordinal,
+                        label: component.to_owned(),
+                        unit: label.map(str::to_owned),
                     }
-                    TableColumn::Metric(_) => None,
+                }
+                RowColumn::Metric(metric) => {
+                    QueryResultColumn::new(ordinal, metric.to_string(), Some(metric.quantity()))
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, ErrorCode>>()?;
+    let limit = self::page_limit(limit, columns.len())?;
+    let mut row_source = (&page_rows).into_iter();
+    let rows = row_source
+        .by_ref()
+        .take(limit)
+        .map(|row| QueryResultRow {
+            index: row.index(),
+            time: row.time().map(Into::into),
+            values: columns
+                .iter()
+                .map(|column| {
+                    row.value(column.ordinal)
+                        .map(|value| value * from_base)
+                        .into()
                 })
                 .collect(),
-        }
-    }
-
-    fn track_count(&self) -> usize {
-        match self {
-            Self::Channel(result) => result.tracks.len(),
-            Self::Points { query, .. } => query.matches.len(),
-        }
-    }
-
-    fn next_match(
-        &self,
-        mut position: QueryMatchPosition,
-        match_count: usize,
-    ) -> Option<QueryMatchPosition> {
-        position.match_ordinal += 1;
-        if position.match_ordinal == match_count {
-            position.match_ordinal = 0;
-            position.track_ordinal += 1;
-        }
-        (position.track_ordinal < self.track_count()).then_some(position)
-    }
-
-    fn track(
-        &self,
-        files: LoadedFilesView<'a>,
-        index: usize,
-    ) -> Result<MatchedTrack<'a>, ErrorCode> {
-        match self {
-            Self::Channel(result) => {
-                let track = result
-                    .tracks
-                    .get(index)
-                    .ok_or(ErrorCode::InvalidQueryCursor)?;
-                Ok(MatchedTrack {
-                    track: track.track,
-                    matches: &track.matches,
-                    source: MatchSource::Channel {
-                        channel: result,
-                        track,
-                    },
-                })
-            }
-            Self::Points { results, query } => {
-                let track = query
-                    .matches
-                    .get(index)
-                    .ok_or(ErrorCode::InvalidQueryCursor)?;
-                let loaded = track
-                    .track
-                    .resolve(files.files())
-                    .ok_or(ErrorCode::StaleTrack)?;
-                Ok(MatchedTrack {
-                    track: track.track,
-                    matches: &track.matches,
-                    source: MatchSource::Points {
-                        points: &loaded.points,
-                        data: results.track_data(track.track),
-                        columns: &query.columns,
-                    },
-                })
-            }
-        }
-    }
-}
-
-struct MatchedTrack<'a> {
-    track: TrackRef,
-    matches: &'a [MatchValues],
-    source: MatchSource<'a>,
-}
-
-impl MatchedTrack<'_> {
-    fn matched(&self, position: QueryMatchPosition) -> Result<&MatchValues, ErrorCode> {
-        self.matches
-            .get(position.match_ordinal)
-            .ok_or(ErrorCode::InvalidQueryCursor)
-    }
-}
-
-enum MatchSource<'a> {
-    Channel {
-        channel: &'a ChannelResults,
-        track: &'a ChannelTrackResult,
-    },
-    Points {
-        points: &'a [NavPoint],
-        data: Option<&'a TrackQueryData>,
-        columns: &'a [TableColumn],
-    },
-}
-
-impl MatchSource<'_> {
-    fn row_page(
-        &self,
-        matched: QueryMatchPosition,
-        range: Range<usize>,
-        limit: Option<NonZeroUsize>,
-        columns: Vec<QueryResultColumn>,
-        values: impl Fn(usize) -> Vec<NumericObservation>,
-    ) -> Result<(Vec<QueryResultColumn>, QueryResultPage), ErrorCode> {
-        let limit = self::page_limit(limit, columns.len())?;
-        let end = range.start.saturating_add(limit).min(range.end);
-        let rows = (range.start..end)
-            .map(|index| QueryResultRow {
-                index,
-                time: self.time(index),
-                values: values(index),
-            })
-            .collect();
-        Ok((
-            columns,
-            QueryResultPage::Rows {
-                matched,
-                rows,
-                next_start: (end < range.end).then_some(end),
-            },
-        ))
-    }
-
-    fn time(&self, index: usize) -> Option<QueryResultTime> {
-        match self {
-            Self::Channel { track, .. } => track
-                .timeline
-                .times
-                .get(index)
-                .copied()
-                .filter(|seconds| seconds.is_finite())
-                .map(QueryResultTime::UnixSeconds),
-            Self::Points { points, .. } => {
-                Some(QueryResultTime::Utc(points.get(index)?.tpv.time().utc()))
-            }
-        }
-    }
-}
-
-fn channel_columns(
-    channel: &ChannelResults,
-    track: &ChannelTrackResult,
-) -> Result<Vec<QueryResultColumn>, ErrorCode> {
-    let labels = channel.component_labels();
-    if labels.len() > MAX_QUERY_VALUES_PER_PAGE {
-        return Err(ErrorCode::QueryColumnsTooLarge);
-    }
-    let unit = track.unit.as_ref().map(|unit| unit.label());
-    labels
-        .iter()
-        .try_fold(MAX_QUERY_COLUMN_BYTES, |remaining, label| {
-            remaining
-                .checked_sub(label.len())?
-                .checked_sub(unit.map_or(0, str::len))
-        })
-        .ok_or(ErrorCode::QueryColumnsTooLarge)?;
-    let columns: Vec<_> = labels
-        .iter()
-        .enumerate()
-        .map(|(ordinal, label)| QueryResultColumn {
-            ordinal,
-            label: label.clone(),
-            unit: unit.map(str::to_owned),
         })
         .collect();
-    Ok(columns)
+    Ok((
+        columns,
+        QueryResultPage::Rows {
+            matched: position,
+            rows,
+            next_start: row_source.next().map(|row| row.index()),
+        },
+    ))
 }
 
 fn page_limit(limit: Option<NonZeroUsize>, columns: usize) -> Result<usize, ErrorCode> {

@@ -677,6 +677,13 @@ fn session_query_status_becomes_stale_after_replacing_the_recording() {
         .replace_file(0, replacement, FileHistory::None);
 
     assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::GetQueryResults(session::first_query_match_request(job)),
+        ),
+        ErrorCode::StaleQueryResults.into(),
+    );
+    assert_eq!(
         session::query_status(&mut harness, job),
         QueryJobState::Stale
     );

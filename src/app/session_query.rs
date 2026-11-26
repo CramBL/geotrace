@@ -433,8 +433,9 @@ impl App {
                 .map(|operation| ReplyOnly(Reply::HistoryOpen { operation })),
             Request::GetQueryResults(args) => self.execute_with_session_query(|app, queries| {
                 let run = queries.result_session(app, session, args.job)?;
-                let results = run.results().ok_or(ErrorCode::QueryResultsUnavailable)?;
-                QueryResults::project(results, app.shared.borrow().loaded_files.view(), args)
+                let shared = app.shared.borrow();
+                let results = run.retained_results(shared.loaded_files.view())?;
+                QueryResults::project(&results, args)
                     .map(|results| ReplyOnly(Reply::QueryResults { results }))
             }),
             Request::GetQueryStatus(args) => self.execute_with_session_query(|app, queries| {
