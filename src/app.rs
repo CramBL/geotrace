@@ -986,6 +986,7 @@ impl App {
             s.plot_state.rebuild_all(&s.loaded_files);
             s.tree.reset_for_resegmented_files(s.loaded_files.view());
         }
+        self.store_the_hidden_tracks_the_user_changed();
         self.on_track_indices_changed();
         self.ctx.request_repaint();
     }

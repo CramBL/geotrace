@@ -268,6 +268,28 @@ pub fn next_response(worker: &HistoryWorker) -> Response {
     }
 }
 
+pub fn next_visibility_response(harness: &mut Harness<'_, App>) -> Response {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut visibility = None;
+        for response in harness.state().history.poll() {
+            if matches!(response, Response::RecordingUiStateLoaded(_)) {
+                visibility = Some(response);
+            } else {
+                harness.state_mut().handle_history_response(response);
+            }
+        }
+        if let Some(response) = visibility {
+            return response;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out reading track visibility"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// The recordings the worker's database holds, as the History window lists
 /// them.
 pub fn listed_recordings(worker: &HistoryWorker) -> Vec<RecordingEntry> {

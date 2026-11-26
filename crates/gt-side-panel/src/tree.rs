@@ -280,6 +280,7 @@ impl FileNode {
 struct StoredHiddenTracks {
     layout: StoredLayoutRevision,
     hidden: Option<BTreeSet<usize>>,
+    cleared_at: Option<u64>,
     // Retain edits after writes to reconcile both addresses of a checked rename.
     edits: BTreeMap<usize, StoredTrackCheckEdit>,
 }
@@ -295,6 +296,7 @@ impl StoredHiddenTracks {
         Self {
             layout: layout.clone(),
             hidden: None,
+            cleared_at: None,
             edits: BTreeMap::new(),
         }
     }
@@ -319,6 +321,7 @@ impl StoredHiddenTracks {
     }
 
     fn reconcile_successor(&mut self, successor: Self) {
+        self.cleared_at = self.cleared_at.max(successor.cleared_at);
         for (number, edit) in successor.edits {
             self.edits
                 .entry(number)
@@ -329,10 +332,30 @@ impl StoredHiddenTracks {
                 })
                 .or_insert(edit);
         }
-        if let Some(mut hidden) = successor.hidden.or_else(|| self.hidden.take()) {
+        let baseline = if let Some(cleared_at) = self.cleared_at {
+            self.edits.retain(|_, edit| edit.sequence > cleared_at);
+            Some(BTreeSet::new())
+        } else {
+            successor.hidden.or_else(|| self.hidden.take())
+        };
+        if let Some(mut hidden) = baseline {
             self.apply_edits(&mut hidden);
             self.hidden = Some(hidden);
         }
+    }
+
+    fn clear_visibility(&mut self, sequence: u64) -> bool {
+        let changed = self
+            .hidden
+            .replace(BTreeSet::new())
+            .is_none_or(|hidden| !hidden.is_empty());
+        self.edits.clear();
+        self.cleared_at = Some(sequence);
+        changed
+    }
+
+    fn has_local_change(&self) -> bool {
+        self.cleared_at.is_some() || !self.edits.is_empty()
     }
 
     fn apply_edits(&self, hidden: &mut BTreeSet<usize>) -> bool {
@@ -455,7 +478,7 @@ impl TreeState {
             .is_some_and(|stored| {
                 stored.layout.same_observation(&layout)
                     && stored.hidden.is_some()
-                    && !stored.edits.is_empty()
+                    && stored.has_local_change()
             })
         {
             return;
@@ -469,6 +492,7 @@ impl TreeState {
         let mut stored = StoredHiddenTracks {
             layout,
             hidden: None,
+            cleared_at: None,
             edits,
         };
         let changed = stored.apply_edits(&mut track_numbers);
@@ -642,7 +666,7 @@ impl TreeState {
             {
                 stored.reconcile_successor(successor);
             }
-            if stored.hidden.is_some() && !stored.edits.is_empty() {
+            if stored.hidden.is_some() && stored.has_local_change() {
                 self.recordings_with_hidden_tracks_to_store
                     .insert(after_recording.clone());
             } else {
@@ -707,6 +731,7 @@ impl TreeState {
                 StoredHiddenTracks {
                     layout: observation,
                     hidden: Some(BTreeSet::new()),
+                    cleared_at: None,
                     edits: BTreeMap::new(),
                 },
             );
@@ -722,7 +747,7 @@ impl TreeState {
     /// number from the previous segmentation addresses another stretch of the
     /// recording.
     pub fn reset_for_resegmented_files(&mut self, files: LoadedFilesView<'_>) {
-        self.drop_hidden_tracks_of_the_loaded_recordings();
+        self.clear_saved_track_visibility();
         self.files = files
             .entries()
             .map(|entry| {
@@ -787,37 +812,27 @@ impl TreeState {
         }
     }
 
-    fn drop_hidden_tracks_of_the_loaded_recordings(&mut self) {
+    fn clear_saved_track_visibility(&mut self) {
         for file_node in &self.files {
             let Some(layout) = file_node.current_visibility_layout() else {
                 continue;
             };
             let recording = layout.recording();
-            let Some(stored) = self
+            let stored = self
                 .hidden_tracks_by_recording
-                .get_mut(recording)
-                .filter(|stored| stored.layout.same_observation(layout))
-            else {
-                continue;
-            };
-            let Some(hidden) = &mut stored.hidden else {
-                stored.edits.clear();
-                continue;
-            };
-            if !hidden.is_empty() {
-                for number in mem::take(hidden) {
-                    stored.edits.insert(
-                        number,
-                        StoredTrackCheckEdit {
-                            check: CheckState::On,
-                            sequence: self.next_track_check_edit,
-                        },
-                    );
+                .entry(recording.clone())
+                .or_insert_with(|| StoredHiddenTracks::awaiting_read(layout));
+            if !stored.layout.same_observation(layout) {
+                if stored.layout.is_current() {
+                    continue;
                 }
-                self.next_track_check_edit += 1;
+                *stored = StoredHiddenTracks::awaiting_read(layout);
+            }
+            if stored.clear_visibility(self.next_track_check_edit) {
                 self.recordings_with_hidden_tracks_to_store
                     .insert(recording.clone());
             }
+            self.next_track_check_edit += 1;
         }
     }
 

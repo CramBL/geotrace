@@ -55,6 +55,7 @@
 - **Recordings:** Fixed permanent track deletion reassigning fixes to different tracks in recordings with backward time steps.
 - **Recordings:** Fixed History merging surviving tracks on reopen after permanent deletion of a track between them.
 - **Recordings:** Fixed track visibility changes failing to persist after a History rename or merge.
+- **Recordings:** Fixed a recording reopening with old track visibility when GeoTrace closed immediately after "Apply to loaded data".
 - **Interface:** Fixed a load error disappearing when another file finished loading after it.
 - **Log Viewer:** Fixed logs from a device that loses its clock on reboot getting the wrong year or failing to load.
 - **Log Viewer:** Fixed log entries appearing at unrelated recording positions when the device resets its clock on reboot.

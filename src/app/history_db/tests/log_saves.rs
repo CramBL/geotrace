@@ -348,6 +348,7 @@ fn save_operations_complete_after_live_worker_rejection_or_storage_failure(
     let Response::LogSaved(completion) = history_db::run_write_request(
         &mut db,
         WriteRequest::SaveLog(request),
+        None,
         &registry,
         &UiStateVersionReporter::default(),
     ) else {

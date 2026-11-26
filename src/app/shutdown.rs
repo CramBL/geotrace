@@ -330,6 +330,7 @@ impl App {
         }
         self.session_bridge = None;
         self.session_query = Default::default();
+        self.store_the_hidden_tracks_the_user_changed();
         self.pending_writes.begin_shutdown();
         self.snap.stop_starting_runs();
         self.flush_settings_during_shutdown();

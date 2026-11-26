@@ -337,6 +337,50 @@ fn checkbox_edits_across_a_rename_follow_the_latest_action(
     self::reopen_recordings_with_checks(&store, &[(destination, checks)]);
 }
 
+#[test]
+fn applying_processing_during_a_rename_keeps_only_later_visibility_edits() {
+    let (mut harness, dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    let store = Store::open_in(dir.path());
+    store
+        .open_recordings()
+        .unwrap()
+        .set_recording_ui_state(
+            &recording,
+            &RecordingUiState::with_hidden_track_numbers([1, 7]),
+            &UiStateVersionReporter::default(),
+        )
+        .unwrap();
+    self::open_recording(&mut harness, &recording);
+    let app = harness.state_mut();
+    app.history
+        .rename_identity(recording.identity, "renamed".to_owned());
+    let rename_replies = self::replies_through_listing(&app.history);
+    let successor = self::single_rename_successor(&rename_replies);
+    let destination = successor.recording().clone();
+    self::load_disk_copy_before_history_replies(app, successor);
+    let old_reads = self::replies_through_listing(&app.history);
+
+    let original_second = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
+    let copy_first = TrackRef::new(FileIdx::new(1), TrackIdx::new(0));
+    app.shared.borrow_mut().tree.hide_track(original_second);
+    app.apply_resegmentation();
+    app.shared.borrow_mut().tree.hide_track(copy_first);
+    for reply in rename_replies.into_iter().chain(old_reads) {
+        app.handle_history_response(reply);
+    }
+    let writes = self::replies_through_listing(&app.history);
+    assert!(
+        writes
+            .iter()
+            .any(|reply| matches!(reply, Response::RecordingUiStateStored(Ok(()))))
+    );
+    assert_eq!(
+        self::saved_visibility(&store, &destination),
+        RecordingUiState::with_hidden_track_numbers([1])
+    );
+}
+
 #[derive(Clone, Copy)]
 enum RenameDelivery {
     Sequential,
