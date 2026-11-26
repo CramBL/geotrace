@@ -233,7 +233,7 @@ fn snapshot_app_sahara_tracks() {
 
     {
         let mut state = harness.inner.state().shared.borrow_mut();
-        state.tree.show_only_tracks(&sahara_tracks);
+        state.tree.show_only_tracks(sahara_tracks.iter().copied());
         state.zoom_to_visible_request = true;
     }
 

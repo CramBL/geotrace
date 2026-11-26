@@ -4,9 +4,10 @@ use std::thread;
 use egui_kittest::Harness;
 use gt_session_bridge::test_util::TestEndpoint;
 use gt_session_bridge::{
-    GetQueryResults, GetRecording, ListRecordings, QueryCounts, QueryJobId, QueryJobRequest,
-    QueryJobState, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultPage,
-    QueryResultRow, QueryResults, QueryText, Reply, Request, SessionRequest, TrackReference,
+    GetQueryResults, GetRecording, GetTrack, ListRecordings, QueryCounts, QueryJobId,
+    QueryJobRequest, QueryJobState, QueryMatch, QueryMatchPosition, QueryPageRequest,
+    QueryResultPage, QueryResultRow, QueryResults, QueryText, RecordingDetails, Reply, Request,
+    SessionRequest, TrackDetails, TrackReference,
 };
 use gt_test_utils::HarnessInteraction as _;
 use uuid::Uuid;
@@ -147,18 +148,31 @@ pub fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {
     ) else {
         panic!("expected recordings");
     };
-    let Reply::Recording { details } = self::execute(
+    self::recording_details(
         harness,
-        Request::GetRecording(GetRecording {
+        GetRecording {
             recording: page.recordings[0].id,
             after: None,
             stored_track_start: None,
             limit: None,
-        }),
-    ) else {
+        },
+    )
+    .tracks[0]
+}
+
+pub fn recording_details(harness: &mut Harness<'_, App>, args: GetRecording) -> RecordingDetails {
+    let Reply::Recording { details } = self::execute(harness, Request::GetRecording(args)) else {
         panic!("expected recording details");
     };
-    details.tracks[0]
+    details
+}
+
+pub fn track_details(harness: &mut Harness<'_, App>, track: TrackReference) -> TrackDetails {
+    let Reply::Track { details } = self::execute(harness, Request::GetTrack(GetTrack { track }))
+    else {
+        panic!("expected track details");
+    };
+    details
 }
 
 pub fn completed_single_track_query(matches: usize) -> QueryJobState {

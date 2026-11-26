@@ -6,9 +6,8 @@ use egui_kittest::Harness;
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use gt_session_bridge::test_util::TestEndpoint;
 use gt_session_bridge::{
-    ErrorCode, GetRecording, GetTrack, ListRecordings, MAX_TRACKS_PER_PAGE, RecordingDetails,
-    RecordingReference, Reply, Request, StoredTrackRow, StoredTrackState, TrackDetails,
-    TrackReference, TrackTreeState,
+    ErrorCode, GetRecording, GetTrack, ListRecordings, MAX_TRACKS_PER_PAGE, RecordingReference,
+    Reply, Request, StoredTrackRow, StoredTrackState, TrackReference, TrackTreeState,
 };
 use gt_side_panel::NodeKey;
 use gt_store::{Store, TrackRange, TrackState};
@@ -57,13 +56,13 @@ fn inspection_reports_actual_checkbox_and_row_selection_for_each_recording() {
             },
         ),
     ] {
-        let details = self::get_recording(&mut harness, self::first_page(recording));
+        let details = session::recording_details(&mut harness, self::first_page(recording));
         let track = details.tracks[0];
         let track_state = details.track_states[0];
         assert_eq!(track_state.index, track.index);
         assert_eq!(track_state.state.tree, Some(state));
         assert_eq!(
-            self::get_track(&mut harness, track).state,
+            session::track_details(&mut harness, track).state,
             track_state.state
         );
         assert_eq!(track_state.state.stored_state, None);
@@ -71,7 +70,7 @@ fn inspection_reports_actual_checkbox_and_row_selection_for_each_recording() {
     }
     let mut cross_recording = self::first_page(first);
     cross_recording.after =
-        Some(self::get_recording(&mut harness, self::first_page(second)).tracks[0]);
+        Some(session::recording_details(&mut harness, self::first_page(second)).tracks[0]);
     assert_eq!(
         session::execute(&mut harness, Request::GetRecording(cross_recording)),
         Reply::Error {
@@ -97,12 +96,14 @@ fn inspection_pages_shelved_history_rows_and_excludes_expired_membership() {
 
     self::unshelve_before_adoption(&harness, 2);
     let first = self::first_page(track.recording);
-    let expired = self::get_recording(&mut harness, first);
+    let expired = session::recording_details(&mut harness, first);
     assert_eq!(expired.tracks, [track]);
     assert_eq!(expired.track_states[0].state.stored_state, None);
     assert_eq!(expired.stored_tracks, None);
     assert_eq!(
-        self::get_track(&mut harness, track).state.stored_state,
+        session::track_details(&mut harness, track)
+            .state
+            .stored_state,
         None
     );
 
@@ -126,7 +127,7 @@ fn inspection_pages_shelved_history_rows_and_excludes_expired_membership() {
             code: ErrorCode::StaleTrack
         }
     );
-    let refreshed = self::get_recording(
+    let refreshed = session::recording_details(
         &mut harness,
         GetRecording {
             stored_track_start: NonZeroUsize::new(3),
@@ -141,7 +142,7 @@ fn inspection_pages_shelved_history_rows_and_excludes_expired_membership() {
             state: StoredTrackState::Live
         }]
     );
-    let new_track = self::get_recording(
+    let new_track = session::recording_details(
         &mut harness,
         GetRecording {
             after: refreshed.next_after,
@@ -192,7 +193,7 @@ fn assert_stored_track_pages(harness: &mut Harness<'_, App>, track: TrackReferen
         (2, StoredTrackState::Deleted),
         (3, StoredTrackState::Shelved),
     ] {
-        let details = self::get_recording(harness, args);
+        let details = session::recording_details(harness, args);
         assert_eq!(
             details.tracks,
             if number == 1 { vec![track] } else { Vec::new() }
@@ -214,7 +215,7 @@ fn assert_stored_track_pages(harness: &mut Harness<'_, App>, track: TrackReferen
         args.stored_track_start = page.next_start;
     }
     assert_eq!(
-        self::get_track(harness, track).state.stored_state,
+        session::track_details(harness, track).state.stored_state,
         Some(StoredTrackState::Live)
     );
 }
@@ -319,20 +320,4 @@ fn full_loaded_and_stored_track_pages_with_large_metadata_fit_the_wire_reply() {
 fn wire_call(harness: &mut Harness<'_, App>, endpoint: &TestEndpoint, request: &Request) -> Reply {
     let bytes = session::exchange_payload(harness, endpoint, &serde_json::to_vec(request).unwrap());
     serde_json::from_slice(&bytes).unwrap()
-}
-
-fn get_recording(harness: &mut Harness<'_, App>, args: GetRecording) -> RecordingDetails {
-    let Reply::Recording { details } = session::execute(harness, Request::GetRecording(args))
-    else {
-        panic!("expected recording details");
-    };
-    details
-}
-
-fn get_track(harness: &mut Harness<'_, App>, track: TrackReference) -> TrackDetails {
-    let Reply::Track { details } = session::execute(harness, Request::GetTrack(GetTrack { track }))
-    else {
-        panic!("expected track details");
-    };
-    details
 }

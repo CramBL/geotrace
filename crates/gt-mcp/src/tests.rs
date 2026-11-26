@@ -8,13 +8,14 @@ use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
     AnalysisSettingKey, ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults,
     GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
-    HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings, Metrics,
-    NumericObservation, OpenHistoryRecording, OpenPoint, PointDetails, QueryJobId, QueryJobRequest,
-    QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
-    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText,
-    QueryValidation, RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply,
-    Request, SetSetting, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection,
-    SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TrackReference,
+    HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings, MAX_VISIBILITY_TRACKS,
+    Metrics, NumericObservation, OpenHistoryRecording, OpenPoint, PointDetails, QueryJobId,
+    QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest,
+    QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
+    QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget, Recording,
+    RecordingReference, Recordings, Reply, Request, SetSetting, SetTrackVisibility, SettingApply,
+    SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap,
+    ShowOnPlot, TrackReference, TrackVisibilityAction, TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -28,6 +29,45 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
+
+#[tokio::test]
+async fn set_track_visibility_checks_bounds_and_returns_the_actual_reply() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|request| {
+        let Request::SetTrackVisibility(SetTrackVisibility { action, tracks }) = request else {
+            panic!("expected track visibility request");
+        };
+        assert_eq!(*action, TrackVisibilityAction::Solo);
+        assert_eq!(tracks.as_ref(), [self::track_reference()]);
+        Ok(Reply::TrackVisibility(TrackVisibilityResult {
+            action: *action,
+            targeted_tracks: 1,
+            changed_tracks: 2,
+        }))
+    }));
+    client.initialize().await;
+    for (id, count) in (2..).zip([0, MAX_VISIBILITY_TRACKS + 1, 1]) {
+        let reply = client
+            .exchange(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {"name": "set_track_visibility", "arguments": {
+                    "action": "solo", "tracks": vec![self::track_reference(); count]
+                }}
+            }))
+            .await;
+        if count == 1 {
+            assert_eq!(
+                reply.pointer("/result/structuredContent"),
+                Some(&json!({
+                    "status": "track_visibility", "action": "solo", "targeted_tracks": 1, "changed_tracks": 2
+                }))
+            );
+        } else {
+            assert_eq!(reply.pointer("/result/isError"), Some(&json!(true)));
+        }
+    }
+    drop(client);
+    worker.await.unwrap();
+}
 
 #[tokio::test]
 async fn show_on_map_reports_disabled_query_highlights() {
@@ -182,10 +222,20 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "open_setting",
             "run_query",
             "set_setting",
+            "set_track_visibility",
             "show_on_map",
             "show_on_plot",
         ]
     );
+    let visibility_tool = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("set_track_visibility")))
+        .unwrap();
+    let schema = visibility_tool
+        .pointer("/inputSchema/$defs/VisibilityTrackRefs")
+        .unwrap();
+    assert_eq!(schema.get("minItems"), Some(&json!(1)));
+    assert_eq!(schema.get("maxItems"), Some(&json!(MAX_VISIBILITY_TRACKS)));
     let tool = tools
         .iter()
         .find(|tool| tool.get("name") == Some(&json!("list_recordings")))

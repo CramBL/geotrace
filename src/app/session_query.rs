@@ -196,6 +196,7 @@ impl App {
             Request::SetSetting(args) => self
                 .set_session_setting(args)
                 .map(|setting| Reply::Setting { setting }),
+            Request::SetTrackVisibility(args) => self.set_session_track_visibility(session, &args),
             Request::ShowOnMap(args) => {
                 let presentation = self.session_show_on_map(session, args)?;
                 self.shared.borrow_mut().queue_session_map(presentation);

@@ -3122,6 +3122,7 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
+ "thiserror 2.0.20",
  "tokio",
  "uom",
  "uuid",

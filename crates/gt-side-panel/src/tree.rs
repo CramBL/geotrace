@@ -215,9 +215,11 @@ impl TrackNode {
         }
     }
 
-    fn edit_check(&mut self, check: CheckState) {
+    fn edit_check(&mut self, check: CheckState) -> bool {
+        let changed = self.check != check;
         self.check = check;
         self.check_edit = TrackCheckEdit::Unrecorded;
+        changed
     }
 
     fn sync_event_paths_from(&mut self, loaded_track: &LoadedTrack) {
@@ -454,6 +456,18 @@ impl StoredHiddenTracks {
 pub struct VisibleTracksInFile {
     pub file: FileIdx,
     pub tracks: Vec<TrackRef>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct TrackCheckboxChanges {
+    pub tracks: usize,
+    recording_checkbox_changed: bool,
+}
+
+impl TrackCheckboxChanges {
+    pub fn any(self) -> bool {
+        self.tracks != 0 || self.recording_checkbox_changed
+    }
 }
 
 pub struct TreeState {
@@ -1014,19 +1028,6 @@ impl TreeState {
         self.rebuild_visibility();
     }
 
-    /// Set one track's check state and recompute the parent file's aggregate.
-    fn set_track_check(&mut self, track: TrackRef, check: CheckState) {
-        let Some(file_node) = self.file_node_mut(track.fi) else {
-            return;
-        };
-        let Some(track_node) = track.index.get_mut(&mut file_node.tracks) else {
-            return;
-        };
-        track_node.edit_check(check);
-        file_node.recompute_check();
-        self.rebuild_visibility();
-    }
-
     /// Toggle a file's check state with cascade to all child tracks.
     pub fn toggle_file_check(&mut self, fi: FileIdx) {
         let Some(check) = self.file_node(fi).map(|file_node| file_node.check) else {
@@ -1042,7 +1043,22 @@ impl TreeState {
 
     /// Hide one track and recompute the parent file's aggregate.
     pub fn hide_track(&mut self, track: TrackRef) {
-        self.set_track_check(track, CheckState::Off);
+        self.set_track_checks([track], CheckState::Off);
+    }
+
+    pub fn set_tracks_enabled(
+        &mut self,
+        tracks: impl IntoIterator<Item = TrackRef>,
+        enabled: bool,
+    ) -> TrackCheckboxChanges {
+        self.set_track_checks(
+            tracks,
+            if enabled {
+                CheckState::On
+            } else {
+                CheckState::Off
+            },
+        )
     }
 
     /// The tracks whose check is `On`, grouped by their recording, in tree
@@ -1072,7 +1088,7 @@ impl TreeState {
         let Some(check) = self.track_node(track).map(|track_node| track_node.check) else {
             return;
         };
-        self.set_track_check(track, check.toggled());
+        self.set_track_checks([track], check.toggled());
     }
 
     /// Toggle a single event path node and recompute ancestors.
@@ -1235,49 +1251,37 @@ impl TreeState {
     /// Show only the tracks in `tracks`, hiding everything else. Tracks from
     /// files not mentioned in `tracks` are hidden. Within a mentioned file, only
     /// the listed tracks are shown.
-    pub fn show_only_tracks(&mut self, tracks: &[TrackRef]) {
+    pub fn show_only_tracks(
+        &mut self,
+        tracks: impl IntoIterator<Item = TrackRef>,
+    ) -> TrackCheckboxChanges {
+        let included: BTreeSet<_> = tracks.into_iter().collect();
+        let mut changes = TrackCheckboxChanges::default();
         for (i, file_node) in self.files.iter_mut().enumerate() {
             let fi = FileIdx::new(i);
-            let any_shown = tracks.iter().any(|t| t.fi == fi);
-            if !any_shown {
+            let previous_check = file_node.check;
+            for (index, track_node) in file_node.tracks.iter_mut().enumerate() {
+                let track = TrackRef::new(fi, TrackIdx::new(index));
+                let check = if included.contains(&track) {
+                    CheckState::On
+                } else {
+                    CheckState::Off
+                };
+                changes.tracks += usize::from(track_node.edit_check(check));
+            }
+            if file_node.tracks.is_empty() {
                 file_node.check = CheckState::Off;
-                for track_node in &mut file_node.tracks {
-                    track_node.edit_check(CheckState::Off);
-                }
             } else {
-                for (j, track_node) in file_node.tracks.iter_mut().enumerate() {
-                    let ti = TrackIdx::new(j);
-                    track_node.edit_check(if tracks.iter().any(|t| t.fi == fi && t.index == ti) {
-                        CheckState::On
-                    } else {
-                        CheckState::Off
-                    });
-                }
                 file_node.recompute_check();
             }
+            changes.recording_checkbox_changed |= file_node.check != previous_check;
         }
-        self.rebuild_visibility();
+        self.finish_track_checks(changes);
+        changes
     }
 
     pub fn show_only_track(&mut self, track: TrackRef) {
-        for (i, file_node) in self.files.iter_mut().enumerate() {
-            if FileIdx::new(i) == track.fi {
-                for (j, track_node) in file_node.tracks.iter_mut().enumerate() {
-                    track_node.edit_check(if TrackIdx::new(j) == track.index {
-                        CheckState::On
-                    } else {
-                        CheckState::Off
-                    });
-                }
-                file_node.recompute_check();
-            } else {
-                file_node.check = CheckState::Off;
-                for track_node in &mut file_node.tracks {
-                    track_node.edit_check(CheckState::Off);
-                }
-            }
-        }
-        self.rebuild_visibility();
+        self.show_only_tracks([track]);
     }
 
     pub fn apply_click(&mut self, key: NodeKey, ctrl: bool, shift: bool) {
@@ -1372,9 +1376,39 @@ impl TreeState {
             .any(|f| f.enabled && f.tracks.iter().any(|t| t.enabled))
     }
 
+    fn set_track_checks(
+        &mut self,
+        tracks: impl IntoIterator<Item = TrackRef>,
+        check: CheckState,
+    ) -> TrackCheckboxChanges {
+        let mut changes = TrackCheckboxChanges::default();
+        for track in tracks {
+            let Some(file_node) = self.file_node_mut(track.fi) else {
+                continue;
+            };
+            let Some(track_node) = track.index.get_mut(&mut file_node.tracks) else {
+                continue;
+            };
+            changes.tracks += usize::from(track_node.edit_check(check));
+            let previous_check = file_node.check;
+            file_node.recompute_check();
+            changes.recording_checkbox_changed |= file_node.check != previous_check;
+        }
+        self.finish_track_checks(changes);
+        changes
+    }
+
+    fn finish_track_checks(&mut self, changes: TrackCheckboxChanges) {
+        if changes.any() {
+            self.rebuild_visibility();
+        } else {
+            self.record_hidden_tracks_of_the_loaded_recordings();
+        }
+    }
+
     /// Rebuild what the map renderers read from the tree's checks and
     /// category toggles, and record the hidden tracks of the loaded
-    /// recordings. Every method that writes a check calls this.
+    /// recordings.
     fn rebuild_visibility(&mut self) {
         self.record_hidden_tracks_of_the_loaded_recordings();
         let files = &self.files;

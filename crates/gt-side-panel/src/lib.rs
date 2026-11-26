@@ -8,7 +8,8 @@ pub use render::{
     show_side_panel,
 };
 pub use tree::{
-    CheckState, FileNode, NodeKey, ShelveConfirmState, TrackNode, TreeState, VisibleTracksInFile,
+    CheckState, FileNode, NodeKey, ShelveConfirmState, TrackCheckboxChanges, TrackNode, TreeState,
+    VisibleTracksInFile,
 };
 pub use visibility_store::{ObservedVisibilityWrite, VisibilityStoreReceipt};
 

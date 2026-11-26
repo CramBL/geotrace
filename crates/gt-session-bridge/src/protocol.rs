@@ -45,6 +45,7 @@ pub enum Request {
     OpenSetting(SettingSelection),
     RunQuery(QueryText),
     SetSetting(SetSetting),
+    SetTrackVisibility(SetTrackVisibility),
     ShowOnMap(ShowOnMap),
     ShowOnPlot(ShowOnPlot),
 }
@@ -53,6 +54,54 @@ pub enum Request {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplyProcessing {}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SetTrackVisibility {
+    pub action: TrackVisibilityAction,
+    pub tracks: VisibilityTrackRefs,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TrackVisibilityAction {
+    Hide,
+    Show,
+    Solo,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    schemars(extend("minItems" = 1, "maxItems" = MAX_VISIBILITY_TRACKS))
+)]
+#[serde(try_from = "Vec<TrackReference>")]
+pub struct VisibilityTrackRefs(Vec<TrackReference>);
+
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+#[error("Provide 1 to {} track references", MAX_VISIBILITY_TRACKS)]
+pub struct TrackVisibilityCountError;
+
+impl TryFrom<Vec<TrackReference>> for VisibilityTrackRefs {
+    type Error = TrackVisibilityCountError;
+
+    fn try_from(tracks: Vec<TrackReference>) -> Result<Self, Self::Error> {
+        if (1..=MAX_VISIBILITY_TRACKS).contains(&tracks.len()) {
+            Ok(Self(tracks))
+        } else {
+            Err(TrackVisibilityCountError)
+        }
+    }
+}
+
+impl AsRef<[TrackReference]> for VisibilityTrackRefs {
+    fn as_ref(&self) -> &[TrackReference] {
+        &self.0
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -245,6 +294,14 @@ pub enum Reply {
     SettingOpenQueued,
     Settings { settings: Vec<SettingInfo> },
     Track { details: TrackDetails },
+    TrackVisibility(TrackVisibilityResult),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TrackVisibilityResult {
+    pub action: TrackVisibilityAction,
+    pub targeted_tracks: usize,
+    pub changed_tracks: usize,
 }
 
 impl From<ErrorCode> for Reply {
@@ -427,3 +484,4 @@ impl MetadataPreview {
 const JSON_QUOTE_BYTES: usize = 2;
 // Four strings use one fifth each. The remaining fifth covers the row and page structure.
 const MAX_METADATA_JSON_BYTES: usize = MAX_REPLY_BYTES / MAX_RECORDINGS_PER_PAGE / 5;
+pub const MAX_VISIBILITY_TRACKS: usize = 24;

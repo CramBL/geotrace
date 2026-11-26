@@ -7,7 +7,7 @@ use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
     GetRecording, GetTrack, ListHistoryRecordings, ListMetrics, ListRecordings,
     OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
-    SettingSelection, ShowOnMap, ShowOnPlot,
+    SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -264,6 +264,21 @@ impl Companion {
     }
 
     #[tool(
+        description = "Show or hide loaded track rows, or solo them by enabling only the requested rows. Returns target and changed track counts.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_track_visibility(
+        &self,
+        Parameters(args): Parameters<SetTrackVisibility>,
+    ) -> CallToolResult {
+        self.inspect(Request::SetTrackVisibility(args)).await
+    }
+
+    #[tool(
         description = "Frame and highlight a track, a half-open range of original point indices, or a retained point-query match on the map. Requires Query highlights.",
         annotations(
             destructive_hint = false,
@@ -307,7 +322,8 @@ impl Companion {
                 | Reply::ProcessingApplied
                 | Reply::QueryDraftQueued
                 | Reply::SettingOpenQueued
-                | Reply::Settings { .. }),
+                | Reply::Settings { .. }
+                | Reply::TrackVisibility(_)),
             ) => serde_json::to_value(reply),
             Ok(Reply::HistoryOpen { operation }) => serde_json::to_value(operation),
             Ok(Reply::HistoryRecordings { page }) => serde_json::to_value(page),
@@ -363,6 +379,7 @@ impl Companion {
             Request::RunQuery(_) => {
                 matches!(reply, Reply::QueryCheck { .. } | Reply::QueryJob { .. })
             }
+            Request::SetTrackVisibility(_) => matches!(reply, Reply::TrackVisibility(_)),
             Request::ShowOnPlot(_) => matches!(reply, Reply::PlotPresentationQueued),
         }
     }
