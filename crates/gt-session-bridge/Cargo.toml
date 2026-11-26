@@ -17,12 +17,14 @@ test-util = ["dep:tempfile"]
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
 gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-query = { path = "../gt-query" }
 gt-query-run = { path = "../gt-query-run" }
 gt-types = { path = "../gt-types" }
+gt-ui-types = { path = "../gt-ui-types" }
 interprocess = { version = "2.4.9", features = ["tokio"] }
 log.workspace = true
 parking_lot.workspace = true

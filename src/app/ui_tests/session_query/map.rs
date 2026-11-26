@@ -375,6 +375,22 @@ fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filte
             .set_time_bounds(Some(ui_tests::base_time()), None);
     }
     release(&mut harness);
+    let displayed = harness.state().map.viewport_geo_bounds().unwrap();
+    assert_eq!(
+        (
+            displayed.lat_min,
+            displayed.lat_max,
+            displayed.lon_min,
+            displayed.lon_max
+        ),
+        (
+            initial.lat_min,
+            initial.lat_max,
+            initial.lon_min,
+            initial.lon_max
+        ),
+    );
+    harness.step();
     let zoomed = harness.state().map.viewport_geo_bounds().unwrap();
     assert!(zoomed.lat_max - zoomed.lat_min < initial.lat_max - initial.lat_min);
     assert_eq!(

@@ -3,17 +3,20 @@ use std::mem;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta};
+use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime, Velocity};
+use gt_filter::TimeWindow;
 use gt_history_types::RecordingMeta;
 use gt_loaded_files::{FileHistory, LoadedFiles, MAX_RECORDINGS_PER_PAGE};
 use gt_loader::LoadedGtd;
 use gt_query::{ConstructKind, Diagnostic, MetricSource, Span};
 use gt_test_utils::fixtures;
-use gt_types::{FileIdx, PointIdx, TrackIdx, TrackRef};
+use gt_types::{FileIdx, PointIdx, TimeRange, TrackIdx, TrackRef};
+use gt_ui_types::DisplayCategory;
 use proptest::strategy::Strategy as _;
 use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
 use serde_json::{Value, json};
+use strum::IntoEnumIterator as _;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
@@ -25,9 +28,11 @@ use super::traffic_capture::{MAX_CAPTURE_BYTES, MAX_CAPTURE_FRAMES};
 use super::{
     ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, Inspection,
     InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE,
-    MAX_VISIBILITY_TRACKS, NumericObservation, Pending, QueryText, QueryValidation, Recording,
-    RecordingReference, Recordings, Reply, Request, Server, SetTrackVisibility, TrackReference,
-    TrackVisibilityAction, TrafficCapture, TrafficDirection, TrafficFrame, VisibilityTrackRefs,
+    MAX_VISIBILITY_TRACKS, NumericObservation, OpenPoint, Pending, QueryJobId, QueryText,
+    QueryValidation, Recording, RecordingReference, Recordings, Reply, Request, Server,
+    SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel, SessionQueryPhase,
+    SessionQueryState, SessionState, SetTrackVisibility, TrackReference, TrackVisibilityAction,
+    TrafficCapture, TrafficDirection, TrafficFrame, VisibilityTrackRefs,
 };
 
 impl TestEndpoint {
@@ -512,6 +517,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
                     device: None,
                     metadata_truncated: false,
                     time_range: None,
+                    time_range_unrepresentable: false,
                     track_count: 0,
                 }],
                 next_after: None
@@ -910,6 +916,105 @@ async fn a_full_recording_page_with_escaped_metadata_fits_the_frame() {
             && recording.display_name == recording.filename
             && recording.display_name.starts_with("receiver-")
     }));
+}
+
+#[tokio::test]
+async fn a_full_session_preview_with_escaped_metadata_fits_the_reply_frame() {
+    let metadata = format!("{JSON_CONTROL_CHARACTER}\"é📍").repeat(300);
+    let LoadedGtd { mut file, identity } = self::load_recording_with_metadata(&metadata);
+    file.metadata.filename = format!("C:\\private\\receiver-{metadata}");
+    let start = DateTime::UNIX_EPOCH - TimeDelta::nanoseconds(1);
+    let extended_year = Utc.with_ymd_and_hms(10_000, 1, 1, 0, 0, 0).unwrap();
+    file.metadata.time_range = Some(TimeRange::new(start, extended_year));
+    let mut files = LoadedFiles::new();
+    for _ in 0..6 {
+        files.push(
+            file.clone(),
+            FileHistory::recording(identity.clone(), RecordingMeta::default(), None),
+        );
+    }
+    let session = Uuid::from_u128(u128::MAX);
+    let preview = SessionState::recording_preview(files.view(), session, IDENTITY_NAME_TEMPLATE);
+    assert_eq!(preview.recordings.len(), 5);
+    assert!(
+        preview
+            .recordings
+            .iter()
+            .all(|recording| recording.metadata_truncated)
+    );
+    let continuation = preview.next_after.unwrap();
+    assert_eq!(continuation, preview.recordings.last().unwrap().id);
+    let next = self::framed_recording_page(
+        &Inspection::new(files.view(), IDENTITY_NAME_TEMPLATE, session),
+        ListRecordings {
+            after: Some(continuation),
+            limit: None,
+        },
+    )
+    .await;
+    assert_eq!(next.recordings.len(), 1);
+    assert!(next.recordings[0].id.number > continuation.number);
+    assert_eq!(next.next_after, None);
+
+    let reply = Reply::SessionState {
+        state: SessionState {
+            recording_count: files.len(),
+            recording_preview: preview,
+            open_panels: SessionPanel::iter().collect(),
+            time_filter: TimeWindow::from_bounds(Some(start), Some(extended_year)).into(),
+            map: SessionMapState {
+                base_layer: SessionMapLayer::OpenStreetMap,
+                bounds: Some(SessionMapBounds {
+                    south_deg: -70.12345678901234,
+                    north_deg: 71.12345678901234,
+                    west_deg: -179.87654321098765,
+                    east_deg: 180.12345678901235,
+                }),
+                visible_categories: DisplayCategory::iter().collect(),
+                pinned_point: Some(OpenPoint {
+                    track: TrackReference {
+                        recording: continuation,
+                        index: usize::MAX,
+                        revision: u64::MAX,
+                    },
+                    point: usize::MAX,
+                }),
+            },
+            query: Some(SessionQueryState {
+                phase: SessionQueryPhase::Cancelling,
+                job: Some(QueryJobId {
+                    session,
+                    id: Uuid::from_u128(u128::MAX),
+                }),
+            }),
+        },
+    };
+    let mut bytes = Vec::new();
+    Frame::encode(&reply, MAX_REPLY_BYTES)
+        .unwrap()
+        .write(&mut bytes)
+        .await
+        .unwrap();
+    let decoded: Reply = framing::read(&mut bytes.as_slice(), MAX_REPLY_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(decoded, reply);
+    let wire = serde_json::to_value(decoded).unwrap();
+    assert_eq!(
+        wire.pointer("/state/time_filter"),
+        Some(&json!({
+            "kind": "bounds", "start": "1969-12-31T23:59:59.999999999Z", "end": null,
+            "end_unrepresentable": true
+        }))
+    );
+    assert_eq!(
+        wire.pointer("/state/recordings/0/time_range"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        wire.pointer("/state/recordings/0/time_range_unrepresentable"),
+        Some(&json!(true))
+    );
 }
 
 async fn framed_recording_page(view: &Inspection<'_>, request: ListRecordings) -> Recordings {

@@ -832,13 +832,12 @@ pub(crate) fn compute_viewport_bounds(
     map_memory: &MapMemory,
     map_rect: egui::Rect,
 ) -> ViewportBounds {
-    // `my_position` is only used as a fallback when the map is in GPS-follow
-    // mode. `center_at()` is always called explicitly, so `detached()` provides
-    // the actual center. Fall back to (0, 0) if `detached()` is unset.
-    let center = map_memory
-        .detached()
-        .unwrap_or_else(|| walkers::lat_lon(0.0, 0.0));
-    let projector = walkers::Projector::new(map_rect, &MercatorProjection, map_memory, center);
+    let projector = walkers::Projector::new(
+        map_rect,
+        &MercatorProjection,
+        map_memory,
+        crate::default_map_center(),
+    );
 
     let corners = [
         map_rect.left_top(),

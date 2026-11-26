@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 use std::path::Path;
 
-use chrono::{DateTime, Datelike as _, NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime};
 use gt_history_types::{
     DatabaseRef, HistoryEntries, HistoryOpenSelection, HistoryOpenSelectionError, RecordingEntry,
 };
@@ -242,8 +242,7 @@ impl HistoryRecording {
         let time_range = entry.meta.time_range.and_then(|range| {
             let start = DateTime::from_timestamp_micros(range.start_us())?;
             let end = DateTime::from_timestamp_micros(range.end_us())?;
-            (RFC3339_YEARS.contains(&start.year()) && RFC3339_YEARS.contains(&end.year()))
-                .then_some(TimeRange { start, end })
+            TimeRange { start, end }.rfc3339()
         });
         Self {
             id,
@@ -268,7 +267,6 @@ fn metadata_preview(text: &str) -> String {
 
 const MAX_PER_PAGE: usize = 32;
 const MAX_METADATA_BYTES: usize = 512;
-const RFC3339_YEARS: RangeInclusive<i32> = 0..=9_999;
 const UTC_DAY_MICROS: i64 = 86_400_000_000;
 
 #[cfg(test)]

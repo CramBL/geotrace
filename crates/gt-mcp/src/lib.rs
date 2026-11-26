@@ -149,6 +149,14 @@ impl Companion {
     }
 
     #[tool(
+        description = "Summarize the current GeoTrace session: loaded recordings, open panels, global time filter, map, pinned point, and query activity.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_session_state(&self) -> CallToolResult {
+        self.inspect(Request::GetSessionState).await
+    }
+
+    #[tool(
         description = "List Analysis settings and recording Processing settings with their limits and help.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -345,6 +353,7 @@ impl Companion {
             Ok(Reply::Range { details }) => serde_json::to_value(details),
             Ok(Reply::Recording { details }) => serde_json::to_value(details),
             Ok(Reply::Recordings { page }) => serde_json::to_value(page),
+            Ok(Reply::SessionState { state }) => serde_json::to_value(state),
             Ok(Reply::Setting { setting }) => serde_json::to_value(setting),
             Ok(Reply::Track { details }) => serde_json::to_value(details),
             Err(error) => return Self::tool_error(Self::connection_error_message(error.kind())),
@@ -432,6 +441,7 @@ impl Companion {
             Request::GetQueryResults(_) => matches!(reply, Reply::QueryResults { .. }),
             Request::GetRangeDetails(_) => matches!(reply, Reply::Range { .. }),
             Request::GetRecording(_) => matches!(reply, Reply::Recording { .. }),
+            Request::GetSessionState => matches!(reply, Reply::SessionState { .. }),
             Request::GetSettings => matches!(reply, Reply::Settings { .. }),
             Request::GetTrack(_) => matches!(reply, Reply::Track { .. }),
             Request::ListHistoryRecordings(_) => matches!(reply, Reply::HistoryRecordings { .. }),

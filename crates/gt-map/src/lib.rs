@@ -606,7 +606,7 @@ impl NavMap {
 
     /// Return the geographic bounds of the most recently rendered map viewport.
     ///
-    /// Returns `None` before the first call to [`Self::draw`].
+    /// Returns `None` when no usable viewport has been drawn.
     pub fn viewport_geo_bounds(&self) -> Option<ViewportBounds> {
         self.last_viewport_bounds
     }
@@ -778,10 +778,9 @@ impl NavMap {
             MapClickGesture::Single(click) => self.apply_click(click, &mut ctx, &plan),
             MapClickGesture::None => false,
         };
-        self.last_viewport_bounds = Some(viewport::compute_viewport_bounds(
-            &self.map_memory,
-            map_rect,
-        ));
+        self.last_viewport_bounds = (map_rect.is_finite()
+            && map_rect.intersect(ui.clip_rect()).is_positive())
+        .then(|| viewport::compute_viewport_bounds(&response_camera, map_rect));
         self.show_disambiguation_popup(ui, &mut ctx, scope, just_opened_disambig, &map_response);
 
         let mut action = self.show_context_menu(&map_response, &ctx, hover.primary());

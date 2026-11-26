@@ -215,6 +215,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "get_query_status",
             "get_range_details",
             "get_recording",
+            "get_session_state",
             "get_settings",
             "get_track",
             "list_history_recordings",
@@ -230,6 +231,19 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "show_on_map",
             "show_on_plot",
         ]
+    );
+    let state_tool = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("get_session_state")))
+        .unwrap();
+    assert_eq!(
+        state_tool.pointer("/annotations/readOnlyHint"),
+        Some(&json!(true))
+    );
+    client.send_tool(36, "get_session_state", json!({})).await;
+    assert_eq!(
+        client.receive().await.pointer("/result/structuredContent"),
+        Some(&self::session_state_fixture())
     );
     let visibility_tool = tools
         .iter()
@@ -938,6 +952,9 @@ async fn assert_processing_requires_empty_arguments(client: &mut Client) {
 
 fn inspection_fixture(request: &Request) -> io::Result<Reply> {
     match request {
+        Request::GetSessionState => serde_json::from_value(self::session_state_fixture())
+            .map(|state| Reply::SessionState { state })
+            .map_err(io::Error::other),
         Request::OpenHistoryRecording(_) | Request::GetHistoryOpenStatus(_) => {
             self::history_open_fixture(request)
         }
@@ -1146,6 +1163,23 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
     }
 }
 
+fn session_state_fixture() -> Value {
+    json!({
+        "recording_count": 0,
+        "recordings": [],
+        "next_after": null,
+        "open_panels": ["plot", "settings"],
+        "time_filter": {"kind": "all"},
+        "map": {
+            "base_layer": "open_street_map",
+            "visible_categories": ["tracks", "query_highlights"],
+            "bounds": null,
+            "pinned_point": null
+        },
+        "query": null
+    })
+}
+
 fn query_job_id() -> QueryJobId {
     QueryJobId {
         session: Uuid::from_u128(1),
@@ -1164,6 +1198,7 @@ fn recording_page() -> Reply {
                 device: None,
                 metadata_truncated: false,
                 time_range: None,
+                time_range_unrepresentable: false,
                 track_count: 2,
             }],
             next_after: Some(self::recording_id(7)),
