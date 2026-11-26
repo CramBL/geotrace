@@ -1,5 +1,6 @@
 use std::io::{self, ErrorKind};
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -9,13 +10,13 @@ use gt_session_bridge::{
     AnalysisSettingKey, ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults,
     GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
     HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings,
-    MAX_VISIBILITY_TRACKS, Metrics, NumericObservation, OpenHistoryRecording, OpenPoint,
-    PointDetails, QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
-    QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow,
-    QueryResultSource, QueryResultTime, QueryResults, QueryText, QueryValidation, RangeDetails,
-    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, SetSetting,
-    SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection,
-    SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
+    MAX_RECORDING_BATCH, MAX_VISIBILITY_TRACKS, ManageRecordings, Metrics, NumericObservation,
+    OpenHistoryRecording, OpenPoint, PointDetails, QueryCounts, QueryJobId, QueryJobRequest,
+    QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
+    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText,
+    QueryValidation, RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply,
+    Request, SetSetting, SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey,
+    SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
     TrackVisibilityAction, TrackVisibilityResult,
 };
 use gt_types::PointIdx;
@@ -221,6 +222,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "list_history_recordings",
             "list_metrics",
             "list_recordings",
+            "manage_recordings",
             "open_history_recording",
             "open_point",
             "open_query",
@@ -513,6 +515,78 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         .await
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test]
+async fn recording_control_uses_typed_actions_and_reports_their_outcomes() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|request| match request {
+        Request::ManageRecordings(ManageRecordings::Open { paths }) => {
+            assert_eq!(*paths, vec![PathBuf::from("/test.GTD")].try_into().unwrap());
+            Ok(Reply::FilesQueued { queued_files: 1 })
+        }
+        Request::ManageRecordings(ManageRecordings::Unload { recordings }) => {
+            assert_eq!(*recordings, vec![self::recording_id(7)].try_into().unwrap());
+            Ok(Reply::RecordingsUnloaded {
+                unloaded_recordings: 1,
+            })
+        }
+        _ => panic!("unexpected request: {request:?}"),
+    }));
+    client.initialize().await;
+    let listed = client
+        .exchange(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+        .await;
+    let file_schema = listed
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("manage_recordings")))
+        .and_then(|tool| tool.get("inputSchema"))
+        .unwrap();
+    assert_eq!(file_schema.get("type"), Some(&json!("object")));
+    let batch_limits: Vec<_> = file_schema
+        .get("$defs")
+        .and_then(Value::as_object)
+        .unwrap()
+        .values()
+        .filter_map(|definition| {
+            Some((
+                definition.get("minItems")?.as_u64()?,
+                definition.get("maxItems")?.as_u64()?,
+            ))
+        })
+        .collect();
+    assert_eq!(batch_limits, [(1, MAX_RECORDING_BATCH as u64); 2]);
+    for arguments in [
+        json!({"action": "open", "paths": []}),
+        json!({"action": "open", "paths": ["/test.GTD"], "dry_run": true}),
+        json!({"action": "unload", "recordings": [self::recording_id(7)], "paths": ["/test.GTD"]}),
+    ] {
+        client.send_tool(2, "manage_recordings", arguments).await;
+        assert_eq!(
+            client.receive().await.pointer("/result/isError"),
+            Some(&json!(true))
+        );
+    }
+    for (arguments, expected) in [
+        (
+            json!({"action": "open", "paths": ["/test.GTD"]}),
+            json!({"status": "files_queued", "queued_files": 1}),
+        ),
+        (
+            json!({"action": "unload", "recordings": [self::recording_id(7)]}),
+            json!({"status": "recordings_unloaded", "unloaded_recordings": 1}),
+        ),
+    ] {
+        client.send_tool(3, "manage_recordings", arguments).await;
+        assert_eq!(
+            client.receive().await.pointer("/result/structuredContent"),
+            Some(&expected)
+        );
+    }
+    drop(client);
+    worker.await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]

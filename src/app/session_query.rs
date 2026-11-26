@@ -179,6 +179,7 @@ impl App {
             Request::ListRecordings(args) => {
                 self.inspect_session_request(session, InspectionRequest::ListRecordings(args))
             }
+            Request::ManageRecordings(args) => self.manage_recordings(session, args),
             Request::OpenHistoryRecording(args) => self
                 .open_session_history_recording(session, args)
                 .map(|operation| Reply::HistoryOpen { operation }),

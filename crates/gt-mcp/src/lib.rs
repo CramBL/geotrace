@@ -7,8 +7,8 @@ use std::time::Duration;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
     GetRecording, GetTrack, HistoryOpenState, ListHistoryRecordings, ListMetrics, ListRecordings,
-    OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryJobState, QueryText, Reply, Request,
-    SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
+    ManageRecordings, OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryJobState, QueryText,
+    Reply, Request, SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -203,6 +203,21 @@ impl Companion {
     }
 
     #[tool(
+        description = "Open local .gtd or .log files by absolute path, or unload recordings by reference. Opening queues the desktop loader. Unloading keeps History records.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn manage_recordings(
+        &self,
+        Parameters(args): Parameters<ManageRecordings>,
+    ) -> CallToolResult {
+        self.inspect(Request::ManageRecordings(args)).await
+    }
+
+    #[tool(
         description = "Open a recording from list_history_recordings. Waits briefly for the result. Poll get_history_open_status if it is pending. Make any track settings choice in GeoTrace.",
         annotations(
             destructive_hint = false,
@@ -336,10 +351,12 @@ impl Companion {
                 return Self::tool_error("GeoTrace returned an unexpected reply for this tool.");
             }
             Ok(
-                reply @ (Reply::MapPresentationQueued
+                reply @ (Reply::FilesQueued { .. }
+                | Reply::MapPresentationQueued
                 | Reply::PlotPresentationQueued
                 | Reply::ProcessingApplied
                 | Reply::QueryDraftQueued
+                | Reply::RecordingsUnloaded { .. }
                 | Reply::SettingOpenQueued
                 | Reply::Settings { .. }
                 | Reply::TrackVisibility(_)),
@@ -447,6 +464,12 @@ impl Companion {
             Request::ListHistoryRecordings(_) => matches!(reply, Reply::HistoryRecordings { .. }),
             Request::ListMetrics(_) => matches!(reply, Reply::Metrics { .. }),
             Request::ListRecordings(_) => matches!(reply, Reply::Recordings { .. }),
+            Request::ManageRecordings(ManageRecordings::Open { .. }) => {
+                matches!(reply, Reply::FilesQueued { .. })
+            }
+            Request::ManageRecordings(ManageRecordings::Unload { .. }) => {
+                matches!(reply, Reply::RecordingsUnloaded { .. })
+            }
             Request::OpenPoint(_) | Request::ShowOnMap(_) => {
                 matches!(reply, Reply::MapPresentationQueued)
             }
@@ -488,6 +511,7 @@ impl Companion {
             ErrorCode::InvalidHistoryDateRange => {
                 "Choose a History date range in order from earliest to latest."
             }
+            ErrorCode::InvalidLocalFilePath => "Provide an absolute local file path.",
             ErrorCode::InvalidPlotMetric => {
                 "Use metric identifiers from list_metrics that have plot series, such as velocity or eph."
             }
@@ -541,6 +565,7 @@ impl Companion {
             ErrorCode::StaleTrack => {
                 "The track reference is stale. List the recording's tracks from the beginning."
             }
+            ErrorCode::UnsupportedFileExtension => "Choose a .gtd recording or a .log file.",
         }
     }
 
