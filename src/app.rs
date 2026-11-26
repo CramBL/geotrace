@@ -104,6 +104,7 @@ mod session_history;
 mod session_map;
 mod session_plot;
 mod session_query;
+mod session_track_visibility;
 mod session_traffic_window;
 mod settings_autosave;
 mod settings_ui;

@@ -25,9 +25,9 @@ use super::traffic_capture::{MAX_CAPTURE_BYTES, MAX_CAPTURE_FRAMES};
 use super::{
     ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, Inspection,
     InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE,
-    NumericObservation, Pending, QueryText, QueryValidation, Recording, RecordingReference,
-    Recordings, Reply, Request, Server, TrackReference, TrafficCapture, TrafficDirection,
-    TrafficFrame,
+    MAX_VISIBILITY_TRACKS, NumericObservation, Pending, QueryText, QueryValidation, Recording,
+    RecordingReference, Recordings, Reply, Request, Server, SetTrackVisibility, TrackReference,
+    TrackVisibilityAction, TrafficCapture, TrafficDirection, TrafficFrame, VisibilityTrackRefs,
 };
 
 impl TestEndpoint {
@@ -48,6 +48,48 @@ impl TestEndpoint {
             .unwrap();
         stream
     }
+}
+
+#[tokio::test]
+async fn track_visibility_requires_a_bounded_nonempty_array_before_dispatch() {
+    let endpoint = TestEndpoint::new().unwrap();
+    let (_server, mut wakes) = endpoint.start();
+    let track = TrackReference {
+        recording: RecordingReference {
+            session: Uuid::nil(),
+            number: 0,
+        },
+        index: 0,
+        revision: 0,
+    };
+    for count in [0, MAX_VISIBILITY_TRACKS + 1] {
+        let request = json!({"method": "set_track_visibility", "action": "hide", "tracks": vec![track; count]});
+        let payload = serde_json::to_vec(&request).unwrap();
+        let mut stream = endpoint.send_payload(&payload).await.unwrap();
+        let reply = framing::read::<Reply>(&mut stream, MAX_REPLY_BYTES)
+            .await
+            .unwrap();
+        assert_eq!(reply, Reply::from(ErrorCode::InvalidRequest));
+        assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+    }
+}
+
+#[test]
+fn a_full_visibility_request_with_maximum_track_references_fits_the_request_frame() {
+    let track = TrackReference {
+        recording: RecordingReference {
+            session: Uuid::from_u128(u128::MAX),
+            number: u64::MAX,
+        },
+        index: usize::MAX,
+        revision: u64::MAX,
+    };
+    let request = Request::SetTrackVisibility(SetTrackVisibility {
+        action: TrackVisibilityAction::Hide,
+        tracks: VisibilityTrackRefs::try_from(vec![track; MAX_VISIBILITY_TRACKS]).unwrap(),
+    });
+    let encoded = Frame::encode(&request, MAX_REQUEST_BYTES).unwrap();
+    assert!(encoded.payload_len() <= MAX_REQUEST_BYTES);
 }
 
 #[tokio::test]

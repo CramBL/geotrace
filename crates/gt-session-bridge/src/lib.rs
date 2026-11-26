@@ -26,9 +26,10 @@ pub use crate::metrics::{
 };
 pub use crate::protocol::{
     ApplyProcessing, ErrorCode, GetRangeDetails, GetRecording, GetTrack, ListMetrics,
-    ListRecordings, NumericObservation, OpenPoint, QueryText, RangeTarget, Recording,
-    RecordingReference, Recordings, Reply, Request, ShowOnMap, ShowOnPlot, TimeRange,
-    TrackReference,
+    ListRecordings, MAX_VISIBILITY_TRACKS, NumericObservation, OpenPoint, QueryText, RangeTarget,
+    Recording, RecordingReference, Recordings, Reply, Request, SetTrackVisibility, ShowOnMap,
+    ShowOnPlot, TimeRange, TrackReference, TrackVisibilityAction, TrackVisibilityCountError,
+    TrackVisibilityResult, VisibilityTrackRefs,
 };
 pub use crate::query_job::{
     QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,

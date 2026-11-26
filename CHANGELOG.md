@@ -14,7 +14,7 @@
 - **Plots:** Dilution of precision metrics are available for recordings with DOP samples.
 - **Recordings:** Boot readings are available in fix details, with system/boot clock delta in plots and `system_boot_delta` queries.
 - **Log Viewer:** Date policies can be edited and reset with source links, export range status and save status.
-- **Recordings:** The `geotrace-mcp` companion lists and opens recordings in History, inspects loaded recordings, runs queries, frames track ranges on the map, and opens point information through GeoTrace launched with `--session-bridge`.
+- **Recordings:** The `geotrace-mcp` companion lists and opens recordings in History, inspects loaded recordings, controls track visibility, runs queries, frames track ranges on the map, and opens point information through GeoTrace launched with `--session-bridge`.
 
 ### Changed
 

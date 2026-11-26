@@ -30,6 +30,7 @@ mod notices;
 mod plot;
 mod processing;
 mod settings;
+mod visibility;
 
 #[derive(Clone, Copy)]
 enum PresentationPane {

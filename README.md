@@ -162,6 +162,16 @@ Use recording IDs and cursors from the current desktop session.
 Start again with `list_recordings` after restarting GeoTrace.
 Get fresh track references with `get_recording` after changing the loaded recordings.
 
+Use `set_track_visibility` with an `action` and a `tracks` array of 1–24 loaded track references.
+`show` enables the listed tracks and `hide` disables them.
+`solo` enables the listed tracks and disables every other loaded track.
+GeoTrace checks all references before it applies the action and counts duplicate references once.
+`targeted_tracks` counts distinct requested tracks.
+`changed_tracks` counts track checkbox changes.
+The change takes effect in the desktop immediately and applies to the enabled-track scope of `run_query`.
+GeoTrace saves track visibility through the same History process as desktop checkbox edits when a checked layout and saved display settings are available.
+The reply confirms the in-memory change.
+
 `list_metrics` returns the built-in query identifiers, summaries, quantities, accepted unit examples, and sources.
 Metric definitions describe where values can come from, including environment archives and completed road snapping runs.
 Actual values depend on the recording and time range.
