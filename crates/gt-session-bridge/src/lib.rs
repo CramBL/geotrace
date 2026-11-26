@@ -41,6 +41,8 @@ pub use crate::settings::{
     AnalysisSettingKey, ProcessingSettingKey, SetSetting, SettingApply, SettingInfo, SettingInput,
     SettingKey, SettingSelection, SettingUnit, SettingValue,
 };
+use crate::traffic_capture::ExchangeCapture;
+pub use crate::traffic_capture::{TrafficCapture, TrafficDirection, TrafficFrame};
 
 mod endpoint;
 mod framing;
@@ -52,6 +54,7 @@ mod query_job;
 mod query_results;
 mod query_validation;
 mod settings;
+mod traffic_capture;
 
 #[derive(Debug)]
 pub struct Server {
@@ -59,6 +62,7 @@ pub struct Server {
     pending: mpsc::Receiver<Pending>,
     stop: Option<oneshot::Sender<()>>,
     worker: Option<JoinHandle<()>>,
+    traffic_capture: TrafficCapture,
 }
 
 impl Server {
@@ -70,6 +74,8 @@ impl Server {
         let (pending_tx, pending) = mpsc::channel(1);
         let (stop_tx, stop_rx) = oneshot::channel();
         let (ready_tx, ready_rx) = startup::sync_channel(1);
+        let traffic_capture = TrafficCapture::new();
+        let worker_capture = traffic_capture.clone();
         let worker = thread::Builder::new()
             .name("session-bridge".to_owned())
             .spawn(move || {
@@ -91,7 +97,7 @@ impl Server {
                                 tokio::select! {
                                     biased;
                                     _ = stop_rx => {}
-                                    result = self::accept_connections(listener, &pending_tx, &wake) => {
+                                    result = self::accept_connections(listener, &pending_tx, &wake, &worker_capture) => {
                                         if let Err(error) = result {
                                             log::warn!("Local session bridge stopped ({error})");
                                         }
@@ -108,6 +114,7 @@ impl Server {
             pending,
             stop: Some(stop_tx),
             worker: Some(worker),
+            traffic_capture,
         })
     }
 
@@ -124,6 +131,10 @@ impl Server {
             session: self.session,
         });
         drop(pending.reply.send(reply));
+    }
+
+    pub fn traffic_capture(&self) -> TrafficCapture {
+        self.traffic_capture.clone()
     }
 }
 
@@ -168,6 +179,7 @@ async fn accept_connections(
     listener: BoundListener,
     pending: &mpsc::Sender<Pending>,
     wake: &impl Fn(),
+    traffic_capture: &TrafficCapture,
 ) -> io::Result<()> {
     let accept = listener.accept();
     tokio::pin!(accept);
@@ -184,7 +196,9 @@ async fn accept_connections(
                 if exchanges.len() == MAX_ACTIVE_CONNECTIONS {
                     continue;
                 }
-                exchanges.push(self::serve_connection(connection, pending, wake));
+                exchanges.push(self::serve_connection(
+                    connection, pending, wake, traffic_capture.start_exchange(),
+                ));
             }
         }
     }
@@ -194,8 +208,9 @@ async fn serve_connection(
     mut connection: Connection,
     pending: &mpsc::Sender<Pending>,
     wake: &impl Fn(),
+    capture: Option<ExchangeCapture<'_>>,
 ) {
-    let exchange = self::exchange(&mut connection.0, pending, wake);
+    let exchange = self::exchange(&mut connection.0, pending, wake, capture.as_ref());
     if let Ok(Err(error)) = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange).await {
         match error.kind() {
             ErrorKind::BrokenPipe
@@ -212,8 +227,9 @@ async fn exchange(
     stream: &mut interprocess::local_socket::tokio::Stream,
     pending: &mpsc::Sender<Pending>,
     wake: &impl Fn(),
+    capture: Option<&ExchangeCapture<'_>>,
 ) -> io::Result<()> {
-    let reply = match framing::read(stream, MAX_REQUEST_BYTES).await {
+    let reply = match self::read_request(stream, capture).await {
         Ok(request) => {
             let (reply, response) = oneshot::channel();
             match pending.try_send(Pending { request, reply }) {
@@ -254,9 +270,26 @@ async fn exchange(
             }
         })
         .map_err(io::Error::other)?;
-    frame.write(stream).await?;
+    {
+        let payload = frame.write(stream).await?;
+        if let Some(capture) = capture {
+            capture.record(TrafficDirection::Reply, payload);
+        }
+    }
     // The client closes the pipe after reading its reply.
     stream.read_u8().await.map(|_byte| ())
+}
+
+async fn read_request(
+    stream: &mut interprocess::local_socket::tokio::Stream,
+    capture: Option<&ExchangeCapture<'_>>,
+) -> io::Result<Request> {
+    let payload = framing::read_payload(stream, MAX_REQUEST_BYTES).await?;
+    let request = framing::decode(&payload);
+    if let Some(capture) = capture {
+        capture.record(TrafficDirection::Request, payload);
+    }
+    request
 }
 
 struct Pending {

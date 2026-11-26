@@ -8,6 +8,13 @@ pub(crate) async fn read<T: DeserializeOwned>(
     stream: &mut (impl AsyncRead + Unpin),
     limit: usize,
 ) -> io::Result<T> {
+    self::decode(&self::read_payload(stream, limit).await?)
+}
+
+pub(crate) async fn read_payload(
+    stream: &mut (impl AsyncRead + Unpin),
+    limit: usize,
+) -> io::Result<Vec<u8>> {
     let length = usize::try_from(stream.read_u32().await?)
         .map_err(|error| io::Error::new(ErrorKind::FileTooLarge, error))?;
     if length > limit {
@@ -15,7 +22,11 @@ pub(crate) async fn read<T: DeserializeOwned>(
     }
     let mut payload = vec![0; length];
     stream.read_exact(&mut payload).await?;
-    serde_json::from_slice(&payload).map_err(|error| io::Error::new(ErrorKind::InvalidData, error))
+    Ok(payload)
+}
+
+pub(crate) fn decode<T: DeserializeOwned>(payload: &[u8]) -> io::Result<T> {
+    serde_json::from_slice(payload).map_err(|error| io::Error::new(ErrorKind::InvalidData, error))
 }
 
 pub(crate) struct Frame {
@@ -33,11 +44,12 @@ impl Frame {
         Ok(frame)
     }
 
-    pub(crate) async fn write(self, stream: &mut (impl AsyncWrite + Unpin)) -> io::Result<()> {
+    pub(crate) async fn write(self, stream: &mut (impl AsyncWrite + Unpin)) -> io::Result<Vec<u8>> {
         let length = u32::try_from(self.payload.len())
             .map_err(|error| io::Error::new(ErrorKind::FileTooLarge, error))?;
         stream.write_u32(length).await?;
-        stream.write_all(&self.payload).await
+        stream.write_all(&self.payload).await?;
+        Ok(self.payload)
     }
 
     pub(crate) fn payload_len(&self) -> usize {
