@@ -17,7 +17,9 @@ def page_items(fetch, items, next_key):
             return
 
 
-def poll(fetch, is_pending):
+def poll(fetch, is_pending, *, initial=None):
+    if initial is not None and not is_pending(initial):
+        return initial
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         reply = fetch()
@@ -57,6 +59,7 @@ def investigate(call, workflow, requested_mask):
         opened = poll(
             lambda: call("get_history_open_status", operation=opening["operation"]),
             lambda reply: reply["state"]["kind"] in {"reading", "loading"},
+            initial=opening,
         )["state"]
         if opened["kind"] != "ready":
             raise RuntimeError(opened)
@@ -91,12 +94,13 @@ def investigate(call, workflow, requested_mask):
         if checked["status"] != "valid":
             raise RuntimeError(checked)
         started = call("run_query", text=text)
-        if started["status"] != "preparing":
+        if "job" not in started or started["status"] == "busy":
             raise RuntimeError(started)
         job = started["job"]
         finished = poll(
             lambda: call("get_query_status", job=job),
-            lambda reply: reply["status"] in {"preparing", "running"},
+            lambda reply: reply["status"] in {"preparing", "running", "cancelling"},
+            initial=started,
         )
         if finished["status"] != "completed":
             raise RuntimeError(finished)
