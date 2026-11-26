@@ -12,7 +12,8 @@ use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
 use gt_side_panel::widgets::PointClickRequests;
 use gt_side_panel::{
-    DetachRequest, DragDetach, PanelContext, SidePanelEvent, SnapCostingTarget, SnapPanelView,
+    DetachRequest, DragDetach, NodeKey, PanelContext, SidePanelEvent, SnapCostingTarget,
+    SnapPanelView,
 };
 use gt_store::DatabaseRef;
 use gt_types::{FileIdx, FixRef, LoadedFile, TrackIdx, TrackRef};
@@ -1290,23 +1291,9 @@ impl App {
     fn apply_pending_unload_and_removal(&mut self, ui: &egui::Ui) {
         // Unload (context menu / Delete key): remove items from the view only.
         // The recordings stay in history, so no confirmation is needed.
-        let unloaded = {
-            let mut refmut = self.shared.borrow_mut();
-            let s = &mut *refmut;
-            if let Some(items) = s.tree.pending_unload.take() {
-                let removed_recordings =
-                    modals::removed_recording_keys(&items, s.loaded_files.view());
-                modals::remove_items_from_view(&items, &mut s.loaded_files, &mut s.tree);
-                s.plot_state.rebuild_all(&s.loaded_files);
-                Some((items.len(), removed_recordings))
-            } else {
-                None
-            }
-        };
-        if let Some((count, removed_recordings)) = unloaded {
-            self.unload_logs_and_forget_attachments_of(&removed_recordings);
-            self.on_track_indices_changed();
-            log::info!("Unloaded {count} item(s) from view");
+        let pending = self.shared.borrow_mut().tree.pending_unload.take();
+        if let Some(items) = pending {
+            self.unload_items_from_view(&items);
         }
 
         let shelve_outcome = {
@@ -1332,6 +1319,20 @@ impl App {
         if let Some(outcome) = shelve_outcome {
             self.apply_shelve_outcome(outcome);
         }
+    }
+
+    pub(super) fn unload_items_from_view(&mut self, items: &[NodeKey]) {
+        let removed_recordings = {
+            let mut shared = self.shared.borrow_mut();
+            let shared = &mut *shared;
+            let removed = modals::removed_recording_keys(items, shared.loaded_files.view());
+            modals::remove_items_from_view(items, &mut shared.loaded_files, &mut shared.tree);
+            shared.plot_state.rebuild_all(&shared.loaded_files);
+            removed
+        };
+        self.unload_logs_and_forget_attachments_of(&removed_recordings);
+        self.on_track_indices_changed();
+        log::info!("Unloaded {} item(s) from view", items.len());
     }
 }
 

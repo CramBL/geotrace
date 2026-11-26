@@ -39,6 +39,9 @@ pub use crate::query_results::{
     QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResults,
 };
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
+pub use crate::recording_control::{
+    MAX_RECORDING_BATCH, ManageRecordings, RecordingBatch, RecordingBatchSizeError,
+};
 pub use crate::session_state::{
     SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel, SessionQueryPhase,
     SessionQueryState, SessionState, SessionTimeFilter,
@@ -59,6 +62,7 @@ mod protocol;
 mod query_job;
 mod query_results;
 mod query_validation;
+mod recording_control;
 mod session_state;
 mod settings;
 #[cfg(any(test, feature = "test-util"))]

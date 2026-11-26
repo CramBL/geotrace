@@ -9,7 +9,7 @@
 
 use std::borrow::Cow;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::{Label, RichText};
@@ -202,6 +202,25 @@ enum AlreadyInHistoryChoice {
     OpenTheStoredVersion,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum ArrivingFileKind {
+    Log,
+    Recording,
+}
+
+impl ArrivingFileKind {
+    pub(super) fn of_path(path: &Path) -> Option<Self> {
+        let extension = path.extension()?.to_str()?;
+        if extension.eq_ignore_ascii_case("gtd") {
+            Some(Self::Recording)
+        } else if extension.eq_ignore_ascii_case("log") {
+            Some(Self::Log)
+        } else {
+            None
+        }
+    }
+}
+
 impl App {
     /// Load the files that arrived together: one drop, one file-dialog choice,
     /// one command line, one paste, or the ones that waited for the databases
@@ -229,12 +248,7 @@ impl App {
         for file in arriving {
             match file {
                 QueuedLoad::Path { path, mode } => {
-                    let extension = path
-                        .extension()
-                        .and_then(|extension| extension.to_str())
-                        .unwrap_or_default()
-                        .to_ascii_lowercase();
-                    if extension == "gtd" {
+                    if ArrivingFileKind::of_path(&path) == Some(ArrivingFileKind::Recording) {
                         let filename = path
                             .file_name()
                             .map_or_else(String::new, |name| name.to_string_lossy().into_owned());

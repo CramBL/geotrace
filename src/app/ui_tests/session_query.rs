@@ -29,6 +29,7 @@ mod map;
 mod notices;
 mod plot;
 mod processing;
+mod recordings;
 mod settings;
 mod state;
 mod visibility;

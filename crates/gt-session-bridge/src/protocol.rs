@@ -20,6 +20,7 @@ use crate::metrics::Metrics;
 use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
+use crate::recording_control::ManageRecordings;
 use crate::session_state::SessionState;
 use crate::settings::{SetSetting, SettingInfo, SettingSelection};
 
@@ -41,6 +42,7 @@ pub enum Request {
     ListHistoryRecordings(ListHistoryRecordings),
     ListMetrics(ListMetrics),
     ListRecordings(ListRecordings),
+    ManageRecordings(ManageRecordings),
     OpenHistoryRecording(OpenHistoryRecording),
     OpenPoint(OpenPoint),
     OpenQuery(QueryText),
@@ -220,7 +222,7 @@ impl RecordingReference {
         }
     }
 
-    pub(crate) fn resolve(
+    pub fn resolve(
         self,
         files: LoadedFilesView<'_>,
         session: Uuid,
@@ -279,6 +281,7 @@ impl TrackReference {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Reply {
     Error { code: ErrorCode },
+    FilesQueued { queued_files: usize },
     HistoryOpen { operation: HistoryOpenStatus },
     HistoryRecordings { page: HistoryRecordings },
     MapPresentationQueued,
@@ -292,6 +295,7 @@ pub enum Reply {
     Range { details: RangeDetails },
     Recording { details: RecordingDetails },
     Recordings { page: Recordings },
+    RecordingsUnloaded { unloaded_recordings: usize },
     SessionState { state: SessionState },
     Setting { setting: SettingInfo },
     SettingOpenQueued,
@@ -328,6 +332,7 @@ pub enum ErrorCode {
     InactiveSetting,
     InvalidHistoryCursor,
     InvalidHistoryDateRange,
+    InvalidLocalFilePath,
     InvalidPlotMetric,
     InvalidPoint,
     InvalidQueryCursor,
@@ -351,6 +356,7 @@ pub enum ErrorCode {
     StaleQueryResults,
     StaleSession,
     StaleTrack,
+    UnsupportedFileExtension,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

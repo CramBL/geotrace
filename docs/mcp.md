@@ -8,6 +8,7 @@ Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-clie
 |---|---|
 | `get_session_state` | Read a summary of the current desktop session. |
 | `list_recordings` | List loaded recordings and get their references. |
+| `manage_recordings` | Open local recordings or logs, or unload recordings from this session. |
 | `get_recording` | Read a recording summary, loaded track references, and stored track rows. |
 | `get_track` | Read a track's time range, counts, geometry, and visibility. |
 | `get_range_details` | Inspect recorded points by index. |
@@ -54,6 +55,27 @@ The `completed` phase records that the run finished.
 Use `get_query_status` with the job handle to check result freshness.
 
 ## Recordings
+
+Use `manage_recordings` with action `open` and a `paths` array of 1 to 16 absolute local paths on the computer running GeoTrace.
+Use `.gtd` for recordings or `.log` for logs.
+File extensions are case-insensitive.
+On Windows, use local drive paths and escape backslashes in JSON.
+The encoded request must fit within 4 KiB.
+
+```json
+{"action":"open","paths":["/data/survey.gtd","/data/receiver.log"]}
+```
+
+GeoTrace checks each path's form before it queues the batch and counts identical path strings once.
+The `files_queued` reply gives the number of queued paths.
+Use `list_recordings` to check when recordings are loaded.
+Open the Log viewer to see loaded logs.
+GeoTrace shows load failures and requests for History or log association decisions in the same desktop controls as a file drop.
+
+Use action `unload` with a `recordings` array of 1 to 16 IDs from the current session's `list_recordings` or `get_session_state`.
+GeoTrace validates every reference before unloading and counts repeated references once.
+The `recordings_unloaded` reply gives the number removed from the session.
+The original files and stored History recordings stay available.
 
 The `list_recordings` tool lists the recordings that are currently loaded.
 It accepts an optional `limit` and an `after` cursor.

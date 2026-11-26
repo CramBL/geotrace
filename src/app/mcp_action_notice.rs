@@ -11,10 +11,12 @@ pub(super) enum McpActionNotice {
     FramePlot,
     OpenHistoryRecording,
     OpenQueryEditor,
+    QueueFiles,
     QueueQuery,
     ReprocessRecordings,
     RequestQueryCancellation,
     RevealSetting(&'static str),
+    UnloadRecordings,
     UpdateQueryDraft,
 }
 
@@ -30,10 +32,12 @@ impl McpActionNotice {
             Self::CancelQueuedQuery => "cancelled a queued query".into(),
             Self::ChangeTrackVisibility => "changed checkboxes in the track tree".into(),
             Self::OpenQueryEditor => "opened the query editor".into(),
+            Self::QueueFiles => "queued files to open".into(),
             Self::UpdateQueryDraft => "updated the query editor".into(),
             Self::QueueQuery => "queued a query".into(),
             Self::ChangeSetting(label) => format!("changed {label}").into(),
             Self::RevealSetting(label) => format!("revealed {label}").into(),
+            Self::UnloadRecordings => "unloaded recordings".into(),
         };
         toasts
             .info(format!("MCP {action}"))

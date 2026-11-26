@@ -1,6 +1,7 @@
 use std::io::ErrorKind;
 use std::mem;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
@@ -23,6 +24,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
+use super::recording_control::{MAX_RECORDING_BATCH, ManageRecordings};
 use super::test_util::TestEndpoint;
 use super::traffic_capture::{MAX_CAPTURE_BYTES, MAX_CAPTURE_FRAMES};
 use super::{
@@ -77,6 +79,38 @@ async fn track_visibility_requires_a_bounded_nonempty_array_before_dispatch() {
         assert_eq!(reply, Reply::from(ErrorCode::InvalidRequest));
         assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
     }
+}
+
+#[tokio::test]
+async fn recording_control_rejects_invalid_batches_before_dispatch() {
+    let endpoint = TestEndpoint::new().unwrap();
+    let (_server, mut wakes) = endpoint.start();
+    let recording = RecordingReference {
+        session: Uuid::nil(),
+        number: 0,
+    };
+    for request in [
+        json!({"method": "manage_recordings", "action": "open", "paths": []}),
+        json!({"method": "manage_recordings", "action": "unload", "recordings": vec![recording; MAX_RECORDING_BATCH + 1]}),
+        json!({"method": "manage_recordings", "action": "open", "paths": ["/test.GTD"], "recordings": [recording]}),
+        json!({"method": "manage_recordings", "action": "unload", "recordings": [recording], "delete": true}),
+    ] {
+        let payload = serde_json::to_vec(&request).unwrap();
+        let mut stream = endpoint.send_payload(&payload).await.unwrap();
+        let reply: Reply = framing::read(&mut stream, MAX_REPLY_BYTES).await.unwrap();
+        assert_eq!(reply, Reply::from(ErrorCode::InvalidRequest));
+        assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    let path = PathBuf::from(format!("/{}.log", "x".repeat(MAX_REQUEST_BYTES)));
+    let request = Request::ManageRecordings(ManageRecordings::Open {
+        paths: vec![path].try_into().unwrap(),
+    });
+    let error = super::request_at(&endpoint.endpoint, &request)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::FileTooLarge);
+    assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
 }
 
 #[test]
