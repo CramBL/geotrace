@@ -35,6 +35,7 @@
 //! | `build`          | O(n)          | O(n)       |
 //! | `select_slice`   | O(log n)      | O(1)       |
 
+use std::cmp::Ordering;
 use std::ops::{Range, RangeInclusive};
 
 use egui_plot::PlotPoint;
@@ -128,19 +129,10 @@ impl SelectionRange {
         (min, self.viewport_max.min(self.hard_max).max(min))
     }
 
-    /// `inner` extended by one point past each of its edges, cut back to the
-    /// points of `level` inside the hard bound.
-    fn extended_within_hard_bound(self, level: &[PlotPoint], inner: Range<usize>) -> Range<usize> {
-        let start = inner
-            .start
-            .saturating_sub(1)
-            .max(level.partition_point(|p| p.x < self.hard_min));
-        // `start` passes the end when the viewport lies wholly outside the
-        // hard bound, leaving the range empty.
-        let end = (inner.end + 1)
-            .min(level.partition_point(|p| p.x <= self.hard_max))
-            .max(start);
-        start..end
+    fn hard_indices(self, level: &[PlotPoint]) -> Range<usize> {
+        let start = level.partition_point(|point| point.x < self.hard_min);
+        let end = level.partition_point(|point| point.x <= self.hard_max);
+        start..end.max(start)
     }
 }
 
@@ -173,7 +165,7 @@ impl LevelSelection {
 /// Each point is stored as a [`PlotPoint`] so the slice returned by
 /// [`Self::select_slice`] / [`Self::slice_at`] can be handed directly to
 /// [`egui_plot::PlotPoints::Borrowed`] for zero-copy rendering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MipMap {
     levels: Vec<Vec<PlotPoint>>,
 }
@@ -186,7 +178,7 @@ impl MipMap {
     /// `MIN_LEVEL_POINTS` floor (or stops shrinking), so all but the very
     /// smallest inputs gain coarse levels down to a single segment.
     pub fn build(data: Vec<[f64; 2]>) -> Self {
-        Self::build_levels(data, None)
+        Self::build_levels(data.into_iter().map(PlotPoint::from).collect(), None, None)
     }
 
     /// Build a mipmap cascade from a time-sorted dataset whose values wrap
@@ -205,14 +197,21 @@ impl MipMap {
     /// cancel out, leaving no mean direction, keeps its linear minimum and
     /// maximum too.
     pub fn build_wrapping(data: Vec<[f64; 2]>, period: WrapPeriod) -> Self {
-        Self::build_levels(data, Some(period))
+        Self::build_levels(
+            data.into_iter().map(PlotPoint::from).collect(),
+            Some(period),
+            None,
+        )
     }
 
-    fn build_levels(data: Vec<[f64; 2]>, period: Option<WrapPeriod>) -> Self {
-        if data.is_empty() {
+    fn build_levels(
+        points: Vec<PlotPoint>,
+        period: Option<WrapPeriod>,
+        mut source_levels: Option<&mut Vec<Vec<usize>>>,
+    ) -> Self {
+        if points.is_empty() {
             return Self { levels: Vec::new() };
         }
-        let points: Vec<PlotPoint> = data.into_iter().map(|[x, y]| PlotPoint { x, y }).collect();
         let mut levels = vec![points];
         loop {
             // `levels` is guaranteed non-empty: it was initialised with one element
@@ -220,7 +219,15 @@ impl MipMap {
             // correct: an empty fallback produces an empty downsample, which has
             // fewer than `MIN_LEVEL_POINTS` points and immediately breaks.
             let last_len = levels.last().map_or(0, Vec::len);
-            let next = downsample(levels.last().map_or(&[][..], Vec::as_slice), period);
+            let sources = source_levels
+                .as_deref()
+                .and_then(|levels| levels.last())
+                .map(Vec::as_slice);
+            let (next, next_sources) = downsample(
+                levels.last().map_or(&[][..], Vec::as_slice),
+                period,
+                sources,
+            );
             // Stop at the floor, and also when a level stops shrinking: a
             // 2-point window downsamples back to 2 points, so without this guard
             // the cascade would loop forever once it reaches the bottom.
@@ -228,6 +235,9 @@ impl MipMap {
                 break;
             }
             levels.push(next);
+            if let (Some(levels), Some(next_sources)) = (&mut source_levels, next_sources) {
+                levels.push(next_sources);
+            }
         }
         Self { levels }
     }
@@ -287,24 +297,12 @@ impl MipMap {
     /// to the data outside the visible viewport. It stops at the range's hard
     /// bound, which no selected point lies outside.
     pub fn select_indices(&self, range: SelectionRange, target_count: usize) -> LevelSelection {
-        if self.levels.is_empty() {
-            return LevelSelection::default();
-        }
-        let (level_idx, inner) = self.select_level_bounds(range, target_count);
-        let level = self.levels.get(level_idx).map_or(&[][..], Vec::as_slice);
-        let clipped = range.extended_within_hard_bound(level, inner);
-        LevelSelection {
-            level_idx,
-            clip_start: clipped.start,
-            clip_end: clipped.end,
-        }
+        self.select_with_clip(range, target_count, |_| None)
     }
 
     /// Return the data slice described by a previously computed `LevelSelection`.
     ///
-    /// The selection must have been produced by [`Self::select_indices`] on the
-    /// same `MipMap` without any rebuild in between. The caller is responsible
-    /// for invalidating cached selections whenever the source data changes.
+    /// The selection must match this [MipMap] and its current generation.
     pub fn slice_at(&self, sel: LevelSelection) -> &[PlotPoint] {
         let Some(level) = self.levels.get(sel.level_idx) else {
             return &[];
@@ -321,35 +319,124 @@ impl MipMap {
         &level[start..end]
     }
 
-    /// Find the coarsest level with enough points in the range's counted span,
-    /// and return its index with that level's `partition_point` bounds for the
-    /// span.
-    ///
-    /// The two binary searches on the chosen level run once: the bounds
-    /// returned here are the ones [`Self::select_indices`] uses.
-    ///
-    /// Falls back to the finest level's bounds when no level meets the target -
-    /// the reverse iteration always visits level 0 last, so its bounds are
-    /// already on hand to serve as that fallback.
-    fn select_level_bounds(
+    fn select_with_clip(
         &self,
         range: SelectionRange,
         target_count: usize,
-    ) -> (usize, Range<usize>) {
+        source_clip: impl Fn(usize) -> Option<Range<usize>>,
+    ) -> LevelSelection {
         let (x_min, x_max) = range.counted_span();
-        // Try from coarsest → finest. Use the coarsest level that is dense
-        // enough for the target count in the visible range.
-        let mut bounds = (0, 0..0);
-        for (i, level) in self.levels.iter().enumerate().rev() {
-            let inner =
-                level.partition_point(|p| p.x < x_min)..level.partition_point(|p| p.x <= x_max);
-            let count = inner.len();
-            bounds = (i, inner);
-            if count >= target_count {
-                return bounds;
+        for (level_idx, level) in self.levels.iter().enumerate().rev() {
+            let start = level.partition_point(|point| point.x < x_min);
+            let end = level.partition_point(|point| point.x <= x_max);
+            let clip = source_clip(level_idx);
+            let count = clip.as_ref().map_or(end - start, |clip| {
+                end.min(clip.end).saturating_sub(start.max(clip.start))
+            });
+            if count >= target_count || level_idx == 0 {
+                let clip = clip.unwrap_or_else(|| range.hard_indices(level));
+                return LevelSelection {
+                    level_idx,
+                    clip_start: start.saturating_sub(1).clamp(clip.start, clip.end),
+                    clip_end: end.saturating_add(1).clamp(clip.start, clip.end),
+                };
             }
         }
-        bounds
+        LevelSelection::default()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct IndexedSample {
+    pub point: [f64; 2],
+    pub source_index: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IndexedMipMap {
+    geometry: MipMap,
+    source_levels: Vec<Vec<usize>>,
+}
+
+impl IndexedMipMap {
+    /// Input order is ascending by plot x and by the caller's clipping key.
+    pub fn build(samples: Vec<IndexedSample>, period: Option<WrapPeriod>) -> Self {
+        if samples.is_empty() {
+            return Self::default();
+        }
+        let (points, sources) = samples
+            .into_iter()
+            .map(|sample| (PlotPoint::from(sample.point), sample.source_index))
+            .unzip();
+        let mut source_levels = vec![sources];
+        let geometry = MipMap::build_levels(points, period, Some(&mut source_levels));
+        Self {
+            geometry,
+            source_levels,
+        }
+    }
+
+    pub fn geometry(&self) -> &MipMap {
+        &self.geometry
+    }
+
+    /// The comparator classifies consecutive samples in the run as `Less`,
+    /// then `Equal`, then `Greater` as they reach and pass the hard bound.
+    pub fn select_indices(
+        &self,
+        viewport: RangeInclusive<f64>,
+        target_count: usize,
+        compare_source: impl Fn(usize) -> Ordering,
+    ) -> LevelSelection {
+        self.geometry.select_with_clip(
+            SelectionRange::within_viewport(viewport),
+            target_count,
+            |level| Some(self.clip_sources(level, &compare_source)),
+        )
+    }
+
+    /// Uses the comparator order required by [Self::select_indices].
+    pub fn has_samples(&self, compare_source: impl Fn(usize) -> Ordering) -> bool {
+        let Some(sources) = self.source_levels.first() else {
+            return false;
+        };
+        let first = sources.partition_point(|&index| compare_source(index).is_lt());
+        sources
+            .get(first)
+            .is_some_and(|&index| compare_source(index).is_eq())
+    }
+
+    /// Uses the comparator order required by [Self::select_indices].
+    pub fn clipped_x_range(
+        &self,
+        compare_source: impl Fn(usize) -> Ordering,
+    ) -> Option<(f64, f64)> {
+        let points = self
+            .geometry
+            .finest_level()
+            .get(self.clip_sources(0, &compare_source))?;
+        Some((points.first()?.x, points.last()?.x))
+    }
+
+    pub fn source_at(&self, level: LevelSelection, offset: usize) -> Option<usize> {
+        let index = level.clip_start.checked_add(offset)?;
+        if index >= level.clip_end {
+            return None;
+        }
+        self.source_levels.get(level.level_idx)?.get(index).copied()
+    }
+
+    fn clip_sources(
+        &self,
+        level: usize,
+        compare_source: &impl Fn(usize) -> Ordering,
+    ) -> Range<usize> {
+        let Some(sources) = self.source_levels.get(level) else {
+            return 0..0;
+        };
+        let start = sources.partition_point(|&index| compare_source(index).is_lt());
+        let end = sources.partition_point(|&index| !compare_source(index).is_gt());
+        start..end.max(start)
     }
 }
 
@@ -360,36 +447,54 @@ impl MipMap {
 ///
 /// Single-point windows emit only that one point (no duplication).
 /// Windows where both kept points fall on the same point emit it once.
-fn downsample(data: &[PlotPoint], period: Option<WrapPeriod>) -> Vec<PlotPoint> {
-    let mut out = Vec::with_capacity(data.len() / DOWNSAMPLE_WINDOW * 2 + 2);
-    for chunk in data.chunks(DOWNSAMPLE_WINDOW) {
+fn downsample(
+    data: &[PlotPoint],
+    period: Option<WrapPeriod>,
+    sources: Option<&[usize]>,
+) -> (Vec<PlotPoint>, Option<Vec<usize>>) {
+    let capacity = data.len() / DOWNSAMPLE_WINDOW * 2 + 2;
+    let mut out = Vec::with_capacity(capacity);
+    let mut out_sources = sources.map(|_| Vec::with_capacity(capacity));
+    for (chunk_index, chunk) in data.chunks(DOWNSAMPLE_WINDOW).enumerate() {
         let kept = period
             .and_then(|period| extremes_either_side_of_mean_direction(chunk, period))
             .or_else(|| {
-                let min_pt = chunk.iter().min_by(|a, b| a.y.total_cmp(&b.y))?;
-                let max_pt = chunk.iter().max_by(|a, b| a.y.total_cmp(&b.y))?;
-                Some((min_pt, max_pt))
+                let min_pt = chunk
+                    .iter()
+                    .enumerate()
+                    .min_by(|(_, a), (_, b)| a.y.total_cmp(&b.y))?;
+                let max_pt = chunk
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.y.total_cmp(&b.y))?;
+                Some([min_pt, max_pt])
             });
-        let Some((first, second)) = kept else {
+        let Some([first, second]) = kept else {
             continue;
         };
 
-        // Emit in chronological order so the rendered line follows the correct
-        // time direction and keeps the window's two kept points in the order
-        // they occurred.  Compare by identity: a vertical line (two distinct
-        // points sharing one timestamp) must still emit both ends.
-        if std::ptr::eq(first, second) {
-            // Same point - one representative.
-            out.push(*first);
-        } else if first.x < second.x {
-            out.push(*first);
-            out.push(*second);
+        let first_precedes_second = if sources.is_some() {
+            first.0 <= second.0
         } else {
-            out.push(*second);
-            out.push(*first);
+            first.1.x < second.1.x
+        };
+        let [first, second] = if first_precedes_second {
+            [first, second]
+        } else {
+            [second, first]
+        };
+        let selected = std::iter::once(first).chain((first.0 != second.0).then_some(second));
+        for (offset, point) in selected {
+            out.push(*point);
+            if let Some(out_sources) = &mut out_sources
+                && let Some(source) = sources
+                    .and_then(|sources| sources.get(chunk_index * DOWNSAMPLE_WINDOW + offset))
+            {
+                out_sources.push(*source);
+            }
         }
     }
-    out
+    (out, out_sources)
 }
 
 /// The two points of `chunk` lying furthest to either side of its mean
@@ -399,7 +504,7 @@ fn downsample(data: &[PlotPoint], period: Option<WrapPeriod>) -> Vec<PlotPoint> 
 fn extremes_either_side_of_mean_direction(
     chunk: &[PlotPoint],
     period: WrapPeriod,
-) -> Option<(&PlotPoint, &PlotPoint)> {
+) -> Option<[(usize, &PlotPoint); 2]> {
     if !chunk.iter().all(|p| period.contains(p.y)) {
         return None;
     }
@@ -407,11 +512,13 @@ fn extremes_either_side_of_mean_direction(
     let arc_from_mean = |p: &PlotPoint| period.signed_arc(mean, p.y);
     let counterclockwise = chunk
         .iter()
-        .min_by(|a, b| arc_from_mean(a).total_cmp(&arc_from_mean(b)))?;
+        .enumerate()
+        .min_by(|(_, a), (_, b)| arc_from_mean(a).total_cmp(&arc_from_mean(b)))?;
     let clockwise = chunk
         .iter()
-        .max_by(|a, b| arc_from_mean(a).total_cmp(&arc_from_mean(b)))?;
-    Some((counterclockwise, clockwise))
+        .enumerate()
+        .max_by(|(_, a), (_, b)| arc_from_mean(a).total_cmp(&arc_from_mean(b)))?;
+    Some([counterclockwise, clockwise])
 }
 
 /// Smallest mipmap level the cascade builds down to: two points, i.e. a single
@@ -619,10 +726,6 @@ mod tests {
                 "disjoint range entirely past the data",
             ),
             (
-                // A multi-level cascade, so `select_level_bounds` walks
-                // several levels before settling - the shape produced by
-                // `viewport.max(filter_min)` / `viewport.min(filter_max)`
-                // when a filter window precedes the current viewport.
                 &large,
                 large_n as f64 / 2.0,
                 5.0,
@@ -927,4 +1030,55 @@ mod tests {
     /// selection: the exact integer x values a selection holds are then
     /// deterministic while the ±1 edge extension still runs.
     const FINEST: usize = 100;
+
+    #[test]
+    fn a_raw_coarse_level_emits_the_maximum_first_at_equal_x() {
+        let mipmap = MipMap::build(vec![
+            [0.0, 4.0],
+            [1.0, 1.0],
+            [1.0, 9.0],
+            [2.0, 3.0],
+            [3.0, 4.0],
+            [4.0, 5.0],
+        ]);
+        assert_eq!(
+            mipmap.select_slice(SelectionRange::within_viewport(0.0..=4.0), 4),
+            [
+                PlotPoint::new(1.0, 9.0),
+                PlotPoint::new(1.0, 1.0),
+                PlotPoint::new(3.0, 4.0),
+                PlotPoint::new(4.0, 5.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_indexed_coarse_level_filters_and_identifies_equal_x_samples() {
+        let mipmap = IndexedMipMap::build(
+            (0..16)
+                .map(|source_index| IndexedSample {
+                    point: [10.0, source_index as f64],
+                    source_index,
+                })
+                .collect(),
+            None,
+        );
+        let selection = mipmap.select_indices(9.0..=11.0, 2, |source| {
+            if source < 7 {
+                Ordering::Less
+            } else if source > 8 {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        });
+        assert!(!selection.is_full_detail());
+        assert_eq!(
+            mipmap.geometry().slice_at(selection),
+            [PlotPoint::new(10.0, 7.0), PlotPoint::new(10.0, 8.0)]
+        );
+        assert_eq!(mipmap.source_at(selection, 0), Some(7));
+        assert_eq!(mipmap.source_at(selection, 1), Some(8));
+        assert_eq!(mipmap.source_at(selection, 2), None);
+    }
 }

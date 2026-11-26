@@ -1,4 +1,5 @@
 use chrono::{DateTime, TimeDelta, Utc};
+use gt_egui_mipmap::SelectionRange;
 use gt_types::{
     BootClockBackwardStep, BootTime, GpsTime, Latitude, Longitude, MetricKind, NavPoint, SysTime,
     SystemBootComparison, SystemBootTimePair, TimePositionVelocity,
@@ -104,18 +105,18 @@ fn system_boot_series_preserves_samples_and_source_identity(#[case] fixture: Clo
         panic!("system/boot metric series is present");
     };
     assert_eq!(metric.runs.len(), fixture.expected_runs.len());
-    for (run_index, (run, expected_sources)) in
-        metric.runs.iter().zip(fixture.expected_runs).enumerate()
-    {
-        let samples = run.finest_level();
+    for (run, expected_sources) in metric.runs.iter().zip(fixture.expected_runs) {
+        let geometry = run.mipmap.geometry();
+        let selection = geometry.select_indices(
+            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
+            usize::MAX,
+        );
+        let samples = geometry.slice_at(selection);
         assert_eq!(samples.len(), expected_sources.len());
-        for (sample, &point_index) in samples.iter().zip(*expected_sources) {
+        for (offset, (sample, &point_index)) in samples.iter().zip(*expected_sources).enumerate() {
             assert_eq!(sample.y, point_index as f64 / 1_000.0);
             assert_eq!(
-                metric
-                    .sample_source(run_index, sample.x)
-                    .unwrap()
-                    .point_index,
+                run.sample_source(selection, offset).unwrap().point_index,
                 point_index
             );
         }

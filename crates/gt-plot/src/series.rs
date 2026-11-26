@@ -1,8 +1,10 @@
+use std::ops::Range;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_analysis::{SlipAnalysisConfig, SlipThresholds};
-use gt_egui_mipmap::{MipMap, WrapPeriod};
+use gt_egui_mipmap::{IndexedMipMap, IndexedSample, WrapPeriod};
 use gt_types::satellites::{Constellation, ConstellationSet};
 use gt_types::{
     LoadedFile, MetricKind, NavPoint, NavigationEvidenceSource, PositionProvenance,
@@ -53,9 +55,9 @@ pub(crate) struct TrackSeries {
     /// per-constellation chips and lines to show, so a constellation with no
     /// data never clutters the UI.
     pub present: ConstellationSet,
-    pub velocity_kmh: MipMap,
-    pub eph_m: MipMap,
-    pub heading_deg: MipMap,
+    pub velocity_kmh: Vec<FixMetricRun>,
+    pub eph_m: Vec<FixMetricRun>,
+    pub heading_deg: Vec<FixMetricRun>,
     /// GPS-clock lead over the host system clock, in milliseconds.
     /// Positive = GPS clock ahead, negative = system clock ahead.
     /// Only present when the TPV record carries a system timestamp.
@@ -64,7 +66,7 @@ pub(crate) struct TrackSeries {
     /// offset the shared y-axis cannot show would otherwise set its
     /// auto-bounds, flattening every other metric.  Those samples are drawn by
     /// the off-scale indicator instead, never dropped.
-    pub clock_delta_ms: MipMap,
+    pub clock_delta_ms: Vec<FixMetricRun>,
     /// What is kept off [`Self::clock_delta_ms`] and marked on its own: the
     /// departures from this track's baseline that returned to it, or every
     /// sample of a track whose baseline the shared y-axis cannot show.
@@ -73,6 +75,12 @@ pub(crate) struct TrackSeries {
     /// Observation epochs with known usage below the elevation mask.
     pub util_anomalies: Vec<UtilAnomaly>,
     pub channels: Vec<ChannelSeries>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FixMetricRun {
+    pub fix_range: Range<usize>,
+    pub mipmap: IndexedMipMap,
 }
 
 /// One ad-hoc channel's plot series: a line per component, on the channel's
@@ -120,7 +128,7 @@ pub(crate) struct ChannelComponentSeries {
     /// The runs of [`gt_types::Channel::chronological_runs`], in stored order,
     /// each mipmapped on its own: a mipmap level is searched by a binary search
     /// over x.
-    pub runs: Vec<MipMap>,
+    pub runs: Vec<IndexedMipMap>,
 }
 
 /// Build the per-component plot series of one channel.
@@ -144,17 +152,20 @@ fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
             let runs = runs
                 .iter()
                 .map(|run| {
-                    let pts: Vec<[f64; 2]> = times
+                    let samples = times
                         .get(run.clone())
                         .unwrap_or_default()
                         .iter()
                         .zip(channel.values.chunks(columns).skip(run.start))
-                        .filter_map(|(&t, row)| row.get(col).map(|&v| [t, v]))
+                        .enumerate()
+                        .filter_map(|(offset, (&time, row))| {
+                            Some(IndexedSample {
+                                point: [time, *row.get(col)?],
+                                source_index: run.start + offset,
+                            })
+                        })
                         .collect();
-                    match period {
-                        Some(period) => MipMap::build_wrapping(pts, period),
-                        None => MipMap::build(pts),
-                    }
+                    IndexedMipMap::build(samples, period)
                 })
                 .collect();
             ChannelComponentSeries { label, runs }
@@ -198,7 +209,10 @@ impl TrackSeries {
 
         let (clock_delta_pts, placement) =
             clock_delta_series(track, analysis.clock_excursion_threshold_s);
-        self.clock_delta_ms = MipMap::build(clock_delta_pts);
+        let fix_ranges = gt_types::channel::chronological_runs(
+            track.points.iter().map(|point| Some(point.tpv.time())),
+        );
+        self.clock_delta_ms = build_fix_mipmaps(&fix_ranges, clock_delta_pts, None);
         self.clock_offset_placement = placement;
     }
 }
@@ -211,7 +225,7 @@ impl TrackSeries {
 fn clock_delta_series(
     track: &gt_types::LoadedTrack,
     threshold_s: f32,
-) -> (Vec<[f64; 2]>, ClockOffsetPlacement) {
+) -> (Vec<IndexedSample>, ClockOffsetPlacement) {
     let placement = gt_analysis::clock_offset::detect_placement(&track.points, threshold_s);
     let ClockOffsetPlacement::BaselineOnScale(excursions) = &placement else {
         return (Vec::new(), placement);
@@ -222,9 +236,12 @@ fn clock_delta_series(
         .iter()
         .enumerate()
         .filter(|(i, _)| excluded.binary_search(i).is_err())
-        .filter_map(|(_, point)| {
+        .filter_map(|(source_index, point)| {
             let delta_ms = point.tpv.gps_system_clock_offset()?.num_milliseconds();
-            Some([point.tpv.time().as_secs_f64(), delta_ms as f64])
+            Some(IndexedSample {
+                point: [point.tpv.time().as_secs_f64(), delta_ms as f64],
+                source_index,
+            })
         })
         .collect();
     (points, placement)
@@ -338,23 +355,27 @@ fn build_track_series(
         MetricKind::SystemBootDeltaMs,
         build_system_boot_delta_series(&track.points),
     );
-    let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
-    let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
-    let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
+    let mut velocity_kmh_pts = Vec::with_capacity(track.points.len());
+    let mut eph_m_pts = Vec::new();
+    let mut heading_deg_pts = Vec::new();
 
-    for point in &track.points {
-        let t = point.tpv.time().as_secs_f64_with_subseconds();
+    for (source_index, point) in track.points.iter().enumerate() {
+        let time = point.tpv.time().as_secs_f64_with_subseconds();
+        let sample = |value| IndexedSample {
+            point: [time, value],
+            source_index,
+        };
 
         if let Some(v) = point.tpv.velocity_kmh() {
-            velocity_kmh_pts.push([t, v]);
+            velocity_kmh_pts.push(sample(v));
         }
 
         if let Some(eph) = point.tpv.eph_m() {
-            eph_m_pts.push([t, eph as f64]);
+            eph_m_pts.push(sample(f64::from(eph)));
         }
 
         if let Some(h) = point.tpv.heading() {
-            heading_deg_pts.push([t, h.get::<degree>()]);
+            heading_deg_pts.push(sample(h.get::<degree>()));
         }
     }
 
@@ -388,19 +409,47 @@ fn build_track_series(
             }))
         });
 
+    let fix_ranges = gt_types::channel::chronological_runs(
+        track.points.iter().map(|point| Some(point.tpv.time())),
+    );
     TrackSeries {
         ti,
         metrics,
         x_range,
         present,
-        velocity_kmh: MipMap::build(velocity_kmh_pts),
-        eph_m: MipMap::build(eph_m_pts),
-        heading_deg: MipMap::build_wrapping(heading_deg_pts, WrapPeriod::full_turn_degrees()),
-        clock_delta_ms: MipMap::build(clock_delta_ms_pts),
+        velocity_kmh: build_fix_mipmaps(&fix_ranges, velocity_kmh_pts, None),
+        eph_m: build_fix_mipmaps(&fix_ranges, eph_m_pts, None),
+        heading_deg: build_fix_mipmaps(
+            &fix_ranges,
+            heading_deg_pts,
+            Some(WrapPeriod::full_turn_degrees()),
+        ),
+        clock_delta_ms: build_fix_mipmaps(&fix_ranges, clock_delta_ms_pts, None),
         clock_offset_placement,
         util_anomalies: diagnostics.anomalies,
         channels: track.channels.iter().map(build_channel_series).collect(),
     }
+}
+
+fn build_fix_mipmaps(
+    fix_ranges: &[Range<usize>],
+    samples: Vec<IndexedSample>,
+    period: Option<WrapPeriod>,
+) -> Vec<FixMetricRun> {
+    let mut samples = samples.into_iter().peekable();
+    fix_ranges
+        .iter()
+        .map(|fix_range| {
+            let run_samples = std::iter::from_fn(|| {
+                samples.next_if(|sample| fix_range.contains(&sample.source_index))
+            })
+            .collect();
+            FixMetricRun {
+                fix_range: fix_range.clone(),
+                mipmap: IndexedMipMap::build(run_samples, period),
+            }
+        })
+        .collect()
 }
 
 fn build_system_boot_delta_series(points: &[NavPoint]) -> MetricSeries {
@@ -791,7 +840,8 @@ mod tests {
 
     /// The points one line draws at the level a view wanting `target` samples
     /// selects, in the order they are drawn.
-    fn drawn_points(mipmap: &MipMap, target: usize) -> Vec<(f64, f64)> {
+    fn drawn_points(recorded: &IndexedMipMap, target: usize) -> Vec<(f64, f64)> {
+        let mipmap = recorded.geometry();
         let level = mipmap.select_indices(
             gt_egui_mipmap::SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
             target,
@@ -800,6 +850,12 @@ mod tests {
             .slice_at(level)
             .iter()
             .map(|point| (point.x, point.y))
+            .collect()
+    }
+
+    fn drawn_fixes(runs: &[FixMetricRun], target: usize) -> Vec<(f64, f64)> {
+        runs.iter()
+            .flat_map(|run| drawn_points(&run.mipmap, target))
             .collect()
     }
 
@@ -900,7 +956,7 @@ mod tests {
 
     /// The y-extent of the clock offset line, over every point it carries.
     fn clock_delta_extent(series: &TrackSeries) -> (f64, f64) {
-        drawn_points(&series.clock_delta_ms, usize::MAX)
+        drawn_fixes(&series.clock_delta_ms, usize::MAX)
             .into_iter()
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (_, y)| {
                 (lo.min(y), hi.max(y))
@@ -943,7 +999,7 @@ mod tests {
         let track = track_with_a_clock_spike(8, 4);
         let series = build_track_series(0, &track, AnalysisConfig::default());
 
-        let seconds: Vec<i64> = drawn_points(&series.clock_delta_ms, usize::MAX)
+        let seconds: Vec<i64> = drawn_fixes(&series.clock_delta_ms, usize::MAX)
             .into_iter()
             .map(|(x, _)| x as i64 - at_second(0).timestamp())
             .collect();
@@ -1049,7 +1105,7 @@ mod tests {
                 component
                     .runs
                     .iter()
-                    .map(MipMap::original_len)
+                    .map(|run| run.geometry().original_len())
                     .collect::<Vec<_>>(),
                 [250, 200, 300, 250],
                 "{}",
@@ -1096,7 +1152,7 @@ mod tests {
         let file = recording_whose_clock_restarts_at_every_boot();
         let series = build_file_series(&file, AnalysisConfig::default());
         for track in &series {
-            let drawn = drawn_points(&track.clock_delta_ms, usize::MAX);
+            let drawn = drawn_fixes(&track.clock_delta_ms, usize::MAX);
             assert!(
                 drawn
                     .iter()
@@ -1139,9 +1195,14 @@ mod tests {
         gt_test_utils::loaded_track_with_points(points)
     }
 
-    fn heading_series(headings: &[Option<f64>]) -> MipMap {
+    fn heading_series(headings: &[Option<f64>]) -> IndexedMipMap {
         let track = track_with_headings(headings);
-        build_track_series(0, &track, AnalysisConfig::default()).heading_deg
+        build_track_series(0, &track, AnalysisConfig::default())
+            .heading_deg
+            .into_iter()
+            .next()
+            .expect("one run")
+            .mipmap
     }
 
     /// A scalar channel of `values` in degrees, sampled at 1 Hz, declaring
@@ -1160,7 +1221,7 @@ mod tests {
 
     /// The y values the plot draws for one series at the level a view wanting
     /// `target` samples selects, in the order they are drawn.
-    fn drawn_values(mipmap: &MipMap, target: usize) -> Vec<f64> {
+    fn drawn_values(mipmap: &IndexedMipMap, target: usize) -> Vec<f64> {
         drawn_points(mipmap, target)
             .into_iter()
             .map(|(_, y)| y)
@@ -1266,19 +1327,19 @@ mod tests {
             .time()
             .as_secs_f64();
         assert_eq!(
-            drawn_points(&series.velocity_kmh, usize::MAX),
+            drawn_fixes(&series.velocity_kmh, usize::MAX),
             vec![(time, 15.12)]
         );
         assert_eq!(
-            drawn_points(&series.heading_deg, usize::MAX),
+            drawn_fixes(&series.heading_deg, usize::MAX),
             vec![(time, 75.0), (time + 10.0, 75.0)]
         );
         let hdop = series.metrics.get(&MetricKind::Hdop).expect("HDOP series");
         assert_eq!(
-            drawn_points(hdop.runs.first().unwrap(), usize::MAX),
+            drawn_points(&hdop.runs.first().unwrap().mipmap, usize::MAX),
             vec![(time, 0.9)]
         );
-        assert!(series.eph_m.finest_level().is_empty());
+        assert!(drawn_fixes(&series.eph_m, usize::MAX).is_empty());
         for kind in [MetricKind::SatsSeen, MetricKind::UtilAll] {
             assert!(
                 series
