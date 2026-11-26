@@ -1085,11 +1085,11 @@ impl QueryWindow {
             matches_popped_out,
             ..
         } = self;
-        let files = inputs.loaded_files.files();
         // What the map draws right now: a point row can only pin a point that
         // is on it.
         let scope = map_scope.with_query_matches(query.session().map_matches(inputs.loaded_files));
-        let Some(results) = query.session().results() else {
+        let Some(mut results) = ResultsTables::of_session(inputs.loaded_files, query.session())
+        else {
             ui.label(RichText::new("No runs yet").weak());
             return;
         };
@@ -1105,13 +1105,7 @@ impl QueryWindow {
             requests,
             reveal: reveal_matches_request,
         };
-        ResultsTables::of_run(files, results).ui(
-            ui,
-            results_state,
-            matches_popped_out,
-            scope,
-            &mut outputs,
-        );
+        results.ui(ui, results_state, matches_popped_out, scope, &mut outputs);
     }
 }
 

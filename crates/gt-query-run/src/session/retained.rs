@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Deref, Range};
 
 use chrono::{DateTime, Utc};
 use geotrace_sdk_units::ChannelUnit;
@@ -25,9 +25,31 @@ pub struct RetainedResults<'a> {
     files: LoadedFilesView<'a>,
 }
 
+pub struct CurrentRetainedResults<'a>(RetainedResults<'a>);
+
+impl<'a> Deref for CurrentRetainedResults<'a> {
+    type Target = RetainedResults<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl QuerySession {
     /// Filter, visibility and series freshness reflect the last [Self::refresh_staleness] call.
     pub fn retained_results<'a>(
+        &'a self,
+        files: LoadedFilesView<'a>,
+    ) -> Result<CurrentRetainedResults<'a>, RetainedResultError> {
+        let retained = self.displayed_results(files)?;
+        if retained.results.stale() {
+            return Err(RetainedResultError::Stale);
+        }
+        Ok(CurrentRetainedResults(retained))
+    }
+
+    /// Results remain available after filter or series changes when the recording generation matches.
+    pub fn displayed_results<'a>(
         &'a self,
         files: LoadedFilesView<'a>,
     ) -> Result<RetainedResults<'a>, RetainedResultError> {
@@ -35,7 +57,7 @@ impl QuerySession {
             .completed
             .as_ref()
             .ok_or(RetainedResultError::Unavailable)?;
-        if !completed.fingerprint.matches_loaded_files(files) || completed.results.stale() {
+        if !completed.fingerprint.matches_loaded_files(files) {
             return Err(RetainedResultError::Stale);
         }
         Ok(RetainedResults {
@@ -46,6 +68,14 @@ impl QuerySession {
 }
 
 impl<'a> RetainedResults<'a> {
+    pub fn queries(&self) -> impl Iterator<Item = RetainedQuery<'a>> {
+        let count = match self.results {
+            RunResults::Channel(_) => 1,
+            RunResults::Points(results) => results.queries.len(),
+        };
+        (0..count).filter_map(|ordinal| self.query(ordinal).ok())
+    }
+
     pub fn query(&self, ordinal: usize) -> Result<RetainedQuery<'a>, RetainedResultError> {
         let result = match self.results {
             RunResults::Channel(channel) if ordinal == 0 => QuerySource::Channel(channel),
@@ -110,6 +140,13 @@ impl<'a> RetainedQuery<'a> {
 
     pub fn first_match(&self) -> Option<MatchPosition> {
         (self.track_count() > 0).then(MatchPosition::default)
+    }
+
+    pub fn matches(&self) -> impl Iterator<Item = RetainedMatch<'a>> {
+        let at = |position| self.match_at(position).ok();
+        std::iter::successors(self.first_match().and_then(at), move |matched| {
+            matched.next_position().and_then(at)
+        })
     }
 
     pub fn match_at(
