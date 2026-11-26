@@ -8,7 +8,7 @@ use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime, Velocity};
 use gt_history_types::RecordingMeta;
 use gt_loaded_files::{FileHistory, LoadedFiles, MAX_RECORDINGS_PER_PAGE};
 use gt_loader::LoadedGtd;
-use gt_query::{ConstructKind, MetricSource, Span};
+use gt_query::{ConstructKind, Diagnostic, MetricSource, Span};
 use gt_test_utils::fixtures;
 use gt_types::{FileIdx, PointIdx, TrackIdx, TrackRef};
 use proptest::strategy::Strategy as _;
@@ -21,11 +21,13 @@ use uuid::Uuid;
 
 use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
+use super::traffic_capture::{MAX_CAPTURE_BYTES, MAX_CAPTURE_FRAMES};
 use super::{
     ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, Inspection,
     InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE,
     NumericObservation, Pending, QueryText, QueryValidation, Recording, RecordingReference,
-    Recordings, Reply, Request, Server, TrackReference,
+    Recordings, Reply, Request, Server, TrackReference, TrafficCapture, TrafficDirection,
+    TrafficFrame,
 };
 
 struct TestEndpoint {
@@ -66,6 +68,281 @@ impl TestEndpoint {
             .unwrap();
         stream
     }
+
+    async fn send_payload(&self, payload: &[u8]) -> impl AsyncRead + AsyncWrite + Unpin {
+        let mut stream = self.endpoint.connect().await.unwrap();
+        stream
+            .write_u32(u32::try_from(payload.len()).unwrap())
+            .await
+            .unwrap();
+        stream.write_all(payload).await.unwrap();
+        stream
+    }
+}
+
+#[tokio::test]
+async fn traffic_capture_preserves_the_request_and_the_written_reply() {
+    let fixture = TestEndpoint::new();
+    let (mut server, mut wakes) = fixture.start();
+    let capture = server.traffic_capture();
+    capture.set_enabled(true);
+    let raw_request = b" \r\n { \"text\": \"a\\n\\u00e9\\/\", \"method\": \"check_query\" } \n";
+    let reply = self::query_diagnostic_reply("Line 1\n\"é/\\\"".to_owned());
+    let mut stream = fixture.send_payload(raw_request).await;
+    self::wait_for_request(&mut wakes).await;
+    server.dispatch(|request| {
+        assert_eq!(
+            request.request,
+            Request::CheckQuery(QueryText {
+                text: "a\né/".to_owned()
+            })
+        );
+        reply.clone()
+    });
+    let raw_reply = framing::read_payload(&mut stream, MAX_REPLY_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(framing::decode::<Reply>(&raw_reply).unwrap(), reply);
+    let frames = self::wait_for_captured_reply(&capture, 1).await;
+    let [request, reply] = frames.as_slice() else {
+        panic!("expected two captured frames");
+    };
+    assert_eq!(request.exchange_id, reply.exchange_id);
+    assert_eq!(request.direction, TrafficDirection::Request);
+    assert_eq!(request.payload(), raw_request);
+    assert_eq!(reply.payload(), raw_reply);
+}
+
+#[tokio::test]
+async fn traffic_capture_records_complete_bodies_and_written_errors() {
+    let fixture = TestEndpoint::new();
+    let (mut server, mut wakes) = fixture.start();
+    let capture = server.traffic_capture();
+    capture.set_enabled(true);
+
+    let invalid = &[0xff, b'\n'];
+    let mut invalid_stream = fixture.send_payload(invalid).await;
+    let invalid_reply = framing::read_payload(&mut invalid_stream, MAX_REPLY_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(
+        framing::decode::<Reply>(&invalid_reply).unwrap(),
+        ErrorCode::InvalidRequest.into()
+    );
+    drop(invalid_stream);
+
+    let mut oversized = fixture.endpoint.connect().await.unwrap();
+    oversized
+        .write_u32(u32::try_from(MAX_REQUEST_BYTES + 1).unwrap())
+        .await
+        .unwrap();
+    let oversized_reply = framing::read_payload(&mut oversized, MAX_REPLY_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(
+        framing::decode::<Reply>(&oversized_reply).unwrap(),
+        ErrorCode::RequestTooLarge.into()
+    );
+    drop(oversized);
+
+    let mut incomplete = fixture.endpoint.connect().await.unwrap();
+    incomplete.write_u32(2).await.unwrap();
+    incomplete.write_u8(b'{').await.unwrap();
+    drop(incomplete);
+    assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+
+    let mut stream = fixture.send_recording_list().await;
+    self::wait_for_request(&mut wakes).await;
+    let request_id = capture.snapshot().last().unwrap().exchange_id;
+    server.dispatch(|_| self::query_diagnostic_reply("x".repeat(MAX_REPLY_BYTES)));
+    let fallback_reply = framing::read_payload(&mut stream, MAX_REPLY_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(
+        framing::decode::<Reply>(&fallback_reply).unwrap(),
+        ErrorCode::ReplyTooLarge.into()
+    );
+    let frames = self::wait_for_captured_reply(&capture, request_id).await;
+    let [
+        invalid_request,
+        invalid_response,
+        oversized_response,
+        request,
+        fallback,
+    ] = frames.as_slice()
+    else {
+        panic!("unexpected captured frame count: {}", frames.len());
+    };
+    assert_eq!(invalid_request.payload(), invalid);
+    assert_eq!(invalid_response.payload(), invalid_reply);
+    assert_eq!(oversized_response.payload(), oversized_reply);
+    assert_eq!(request.direction, TrafficDirection::Request);
+    assert_eq!(request.exchange_id, fallback.exchange_id);
+    assert_eq!(fallback.payload(), fallback_reply);
+}
+
+#[tokio::test]
+async fn traffic_capture_excludes_pending_replies_after_clear_or_disable() {
+    let fixture = TestEndpoint::new();
+    let (mut server, mut wakes) = fixture.start();
+    let capture = server.traffic_capture();
+    assert!(!capture.is_enabled());
+
+    let mut before_enable = fixture.send_recording_list().await;
+    self::wait_for_request(&mut wakes).await;
+    capture.set_enabled(true);
+    self::reply_with_empty_recording_list(&mut server);
+    assert_eq!(
+        framing::read::<Reply>(&mut before_enable, MAX_REPLY_BYTES)
+            .await
+            .unwrap(),
+        EMPTY_RECORDINGS
+    );
+    drop(before_enable);
+
+    let mut before_clear = fixture.send_recording_list().await;
+    self::wait_for_request(&mut wakes).await;
+    assert_eq!(capture.snapshot().len(), 1);
+    capture.clear();
+    assert!(capture.is_enabled());
+    self::reply_with_empty_recording_list(&mut server);
+    assert_eq!(
+        framing::read::<Reply>(&mut before_clear, MAX_REPLY_BYTES)
+            .await
+            .unwrap(),
+        EMPTY_RECORDINGS
+    );
+    drop(before_clear);
+
+    let mut before_disable = fixture.send_recording_list().await;
+    self::wait_for_request(&mut wakes).await;
+    assert_eq!(capture.snapshot().len(), 1);
+    let before_disable_id = capture.snapshot().last().unwrap().exchange_id;
+    capture.set_enabled(false);
+    assert_eq!(capture.snapshot().len(), 1);
+    capture.set_enabled(true);
+    self::reply_with_empty_recording_list(&mut server);
+    assert_eq!(
+        framing::read::<Reply>(&mut before_disable, MAX_REPLY_BYTES)
+            .await
+            .unwrap(),
+        EMPTY_RECORDINGS
+    );
+    drop(before_disable);
+
+    let mut after_enable = fixture.send_recording_list().await;
+    self::dispatch_recording_list(&mut server, &mut wakes).await;
+    assert_eq!(
+        framing::read::<Reply>(&mut after_enable, MAX_REPLY_BYTES)
+            .await
+            .unwrap(),
+        EMPTY_RECORDINGS
+    );
+    let frames = self::wait_for_captured_reply(&capture, before_disable_id + 1).await;
+    assert_eq!(frames.len(), 3);
+    assert_eq!(frames.first().unwrap().exchange_id, before_disable_id);
+}
+
+#[tokio::test]
+async fn traffic_capture_evicts_oldest_frames_at_the_retention_limits() {
+    let fixture = TestEndpoint::new();
+    let (mut server, mut wakes) = fixture.start();
+    let capture = server.traffic_capture();
+    capture.set_enabled(true);
+
+    let short_exchanges = MAX_CAPTURE_FRAMES / 2 + 1;
+    for _ in 0..short_exchanges {
+        let mut stream = fixture.send_recording_list().await;
+        self::dispatch_recording_list(&mut server, &mut wakes).await;
+        assert_eq!(
+            framing::read::<Reply>(&mut stream, MAX_REPLY_BYTES)
+                .await
+                .unwrap(),
+            EMPTY_RECORDINGS
+        );
+    }
+    let short_exchanges = u64::try_from(short_exchanges).unwrap();
+    let retained = self::wait_for_captured_reply(&capture, short_exchanges).await;
+    assert_eq!(retained.len(), MAX_CAPTURE_FRAMES);
+    assert_eq!(retained.first().unwrap().exchange_id, 2);
+
+    capture.clear();
+    let reply = self::query_diagnostic_reply("x".repeat(MAX_REPLY_BYTES / 2));
+    let large_exchanges = MAX_CAPTURE_BYTES / (MAX_REPLY_BYTES / 2) + 1;
+    for _ in 0..large_exchanges {
+        let mut stream = fixture.send_recording_list().await;
+        self::wait_for_request(&mut wakes).await;
+        server.dispatch(|_| reply.clone());
+        assert_eq!(
+            framing::read::<Reply>(&mut stream, MAX_REPLY_BYTES)
+                .await
+                .unwrap(),
+            reply
+        );
+    }
+    let final_exchange = short_exchanges + u64::try_from(large_exchanges).unwrap();
+    let retained = self::wait_for_captured_reply(&capture, final_exchange).await;
+    assert!(retained.len() < large_exchanges * 2);
+    assert!(
+        retained
+            .iter()
+            .map(|frame| frame.payload().len())
+            .sum::<usize>()
+            <= MAX_CAPTURE_BYTES
+    );
+    assert!(retained.first().unwrap().exchange_id > short_exchanges + 1);
+}
+
+#[test]
+fn traffic_capture_counts_capacity_for_short_payloads() {
+    let capture = TrafficCapture::new();
+    capture.set_enabled(true);
+    let exchange = capture.start_exchange().unwrap();
+    let mut request = Vec::with_capacity(MAX_CAPTURE_BYTES / 2 + 1);
+    request.push(b'a');
+    exchange.record(TrafficDirection::Request, request);
+    let earlier = capture.snapshot();
+
+    let mut reply = Vec::with_capacity(MAX_CAPTURE_BYTES / 2 + 1);
+    reply.push(b'b');
+    exchange.record(TrafficDirection::Reply, reply);
+    let retained = capture.snapshot();
+    let [frame] = retained.as_slice() else {
+        panic!("expected only the last payload to fit");
+    };
+    assert_eq!(frame.payload(), b"b");
+    capture.clear();
+    assert!(capture.snapshot().is_empty());
+    assert_eq!(earlier.first().unwrap().payload(), b"a");
+    assert_eq!(frame.payload(), b"b");
+}
+
+fn query_diagnostic_reply(message: String) -> Reply {
+    Reply::QueryCheck {
+        validation: QueryValidation::Invalid {
+            diagnostics: vec![Diagnostic {
+                span: Span::new(0, 1),
+                message,
+                help: None,
+            }],
+        },
+    }
+}
+
+async fn wait_for_captured_reply(capture: &TrafficCapture, exchange_id: u64) -> Vec<TrafficFrame> {
+    tokio::time::timeout(BRIDGE_TEST_TIMEOUT, async {
+        loop {
+            let frames = capture.snapshot();
+            if frames.last().is_some_and(|frame| {
+                frame.exchange_id == exchange_id && frame.direction == TrafficDirection::Reply
+            }) {
+                return frames;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("The server did not capture its written reply")
 }
 
 #[tokio::test]
@@ -246,6 +523,7 @@ fn a_command_finishes_when_the_reply_receiver_closes_during_execution() {
         pending,
         stop: None,
         worker: None,
+        traffic_capture: TrafficCapture::new(),
     };
     let mut executed = None;
     server.dispatch(|request| {
@@ -266,16 +544,26 @@ async fn dropping_the_client_exchange_skips_the_queued_command() {
         pending,
         stop: None,
         worker: None,
+        traffic_capture: TrafficCapture::new(),
     };
+    let capture = server.traffic_capture();
+    capture.set_enabled(true);
     let (wake, mut wakes) = mpsc::channel(1);
     let accept = async {
         let mut connection = listener.accept().await.unwrap().unwrap();
-        super::exchange(&mut connection.0, &sender, &|| wake.try_send(()).unwrap()).await
+        let observed = capture.start_exchange();
+        super::exchange(
+            &mut connection.0,
+            &sender,
+            &|| wake.try_send(()).unwrap(),
+            observed.as_ref(),
+        )
+        .await
     };
+    let request = Request::OpenQuery(QueryText {
+        text: "points | draw".to_owned(),
+    });
     let abandon = async {
-        let request = Request::OpenQuery(QueryText {
-            text: "points | draw".to_owned(),
-        });
         tokio::select! {
             reply = super::request_at(&fixture.endpoint, &request) => {
                 panic!("The exchange completed before dispatch ({reply:?})");
@@ -290,6 +578,15 @@ async fn dropping_the_client_exchange_skips_the_queued_command() {
     .unwrap();
     assert!(disconnected.is_err());
     server.dispatch(|_| panic!("The bridge dispatched a disconnected request"));
+    let frames = capture.snapshot();
+    let [frame] = frames.as_slice() else {
+        panic!("expected only the completed request");
+    };
+    assert_eq!(frame.direction, TrafficDirection::Request);
+    assert_eq!(
+        framing::decode::<Request>(frame.payload()).unwrap(),
+        request
+    );
 }
 
 #[test]

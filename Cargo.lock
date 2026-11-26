@@ -3114,6 +3114,7 @@ dependencies = [
  "gt-types",
  "interprocess",
  "log",
+ "parking_lot",
  "proptest",
  "rustix 1.1.6",
  "schemars",
