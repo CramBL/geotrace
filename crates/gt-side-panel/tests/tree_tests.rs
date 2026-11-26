@@ -626,6 +626,55 @@ fn resegmenting_a_recording_stores_it_without_a_hidden_track() {
 }
 
 #[test]
+fn resegmenting_an_expired_layout_preserves_visibility_for_the_current_layout() {
+    let recording = db_ref();
+    let fixture = StoredTrackTableFixture::new(
+        &recording,
+        &[TrackRange {
+            start: 0,
+            end: 1,
+            state: TrackState::Live,
+        }],
+    );
+    let database = ReadOnlyDatabase::open_existing_read_only(&fixture.path()).unwrap();
+    let (expired, current) = {
+        let history_access = HistoryAccess::lock();
+        let expired = history_access
+            .read_track_snapshot(&database, &recording)
+            .unwrap();
+        history_access
+            .invalidate_track_snapshots(&database, &recording)
+            .unwrap();
+        let current = history_access
+            .read_track_snapshot(&database, &recording)
+            .unwrap();
+        (expired, current)
+    };
+    assert!(!expired.is_current());
+    assert!(current.is_current());
+
+    let mut loaded = LoadedFiles::new();
+    let history = FileHistory::recording(
+        recording.identity.clone(),
+        RecordingMeta::default(),
+        Some(recording),
+    )
+    .with_track_snapshot(Some(expired));
+    loaded.push(make_loaded_file("ride.gtd".to_owned(), &[1]), history);
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(loaded.view());
+    tree.apply_stored_hidden_tracks(current.layout().clone(), BTreeSet::from([1]));
+
+    tree.reset_for_resegmented_files(loaded.view());
+
+    assert_eq!(
+        tree.hidden_track_numbers_for_layout(current.layout()),
+        Some(&BTreeSet::from([1]))
+    );
+    assert!(tree.take_observed_hidden_tracks_to_store().is_empty());
+}
+
+#[test]
 fn two_verified_copies_of_a_recording_store_edits_to_both_tracks() {
     let mut loaded = stored_recording(&[1, 2]);
     let history = loaded

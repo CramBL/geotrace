@@ -204,6 +204,7 @@ fn shelving_the_destination_before_delivery_preserves_the_rename() {
 }
 
 fn load_disk_copy_before_history_replies(app: &mut App, expected: &StoredTrackSnapshot) {
+    let position = app.shared.borrow().loaded_files.len();
     app.loader.spawn_gtd_bytes(
         recording_fixtures::two_track_gtd_bytes().into(),
         "copy.gtd".to_owned(),
@@ -222,7 +223,7 @@ fn load_disk_copy_before_history_replies(app: &mut App, expected: &StoredTrackSn
     };
     app.handle_completed_load(completed, 0.0);
     let shared = app.shared.borrow();
-    let entry = shared.loaded_files.view().get(1).unwrap();
+    let entry = shared.loaded_files.view().get(position).unwrap();
     assert_eq!(
         entry.history().load_origin(),
         Some(RecordingLoadOrigin::Import)
@@ -335,6 +336,130 @@ fn checkbox_edits_across_a_rename_follow_the_latest_action(
     assert_eq!(self::saved_visibility(&store, &destination), expected);
     drop(harness);
     self::reopen_recordings_with_checks(&store, &[(destination, checks)]);
+}
+
+#[test]
+fn processing_after_history_moves_a_recording_clears_its_stored_visibility() {
+    let (mut harness, dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    let store = Store::open_in(dir.path());
+    store
+        .open_recordings()
+        .unwrap()
+        .set_recording_ui_state(
+            &recording,
+            &RecordingUiState::with_hidden_track_numbers([1]),
+            &UiStateVersionReporter::default(),
+        )
+        .unwrap();
+    self::open_recording(&mut harness, &recording);
+    let app = harness.state_mut();
+    let first = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let first_check = |app: &App| app.shared.borrow().tree.track_node(first).unwrap().check;
+    let loaded_id = app.shared.borrow().loaded_files.view().get(0).unwrap().id();
+    let predecessor = recordings::worker_track_snapshot(&app.history, &recording);
+    assert!(predecessor.layout().is_current());
+    assert_eq!(first_check(app), CheckState::Off);
+    app.history
+        .rename_identity(recording.identity, "renamed".to_owned());
+    let replies = self::replies_through_listing(&app.history);
+    assert!(!predecessor.layout().is_current());
+    let successor = self::single_rename_successor(&replies).clone();
+
+    app.apply_resegmentation();
+    assert_eq!(first_check(app), CheckState::On);
+    for reply in replies {
+        app.handle_history_response(reply);
+    }
+    {
+        let shared = app.shared.borrow();
+        assert_eq!(shared.loaded_files.len(), 1);
+        let entry = shared.loaded_files.view().get(0).unwrap();
+        assert_eq!(entry.id(), loaded_id);
+        let adopted = entry.history().track_snapshot().unwrap();
+        assert!(adopted.is_current());
+        assert!(adopted.same_layout_and_payload(&successor));
+    }
+    let displayed = first_check(app);
+    let writes = self::replies_through_listing(&app.history);
+    assert_eq!(
+        (
+            displayed,
+            self::saved_visibility(&store, successor.recording())
+        ),
+        (CheckState::On, RecordingUiState::default())
+    );
+    assert!(
+        writes
+            .iter()
+            .any(|reply| matches!(reply, Response::RecordingUiStateStored(Ok(()))))
+    );
+    drop(harness);
+    self::reopen_recordings_with_checks(
+        &store,
+        &[(
+            successor.recording().clone(),
+            &[CheckState::On, CheckState::On],
+        )],
+    );
+}
+
+#[test]
+fn processing_during_a_rename_supersedes_a_pending_visibility_read() {
+    let (mut harness, dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    let store = Store::open_in(dir.path());
+    let saved = RecordingUiState::with_hidden_track_numbers([1, 7]);
+    store
+        .open_recordings()
+        .unwrap()
+        .set_recording_ui_state(&recording, &saved, &UiStateVersionReporter::default())
+        .unwrap();
+    let app = harness.state_mut();
+    let predecessor = recordings::worker_track_snapshot(&app.history, &recording);
+    self::load_disk_copy_before_history_replies(app, &predecessor);
+    let old_reads = self::replies_through_listing(&app.history);
+    assert!(old_reads.iter().any(|reply| matches!(reply,
+        Response::RecordingUiStateLoaded(Ok((layout, state)))
+            if layout.same_observation(predecessor.layout()) && *state == saved
+    )));
+    assert!(
+        app.shared
+            .borrow()
+            .tree
+            .hidden_track_numbers_for_layout(predecessor.layout())
+            .is_none()
+    );
+    app.history
+        .rename_identity(recording.identity, "renamed".to_owned());
+    let replies = self::replies_through_listing(&app.history);
+    assert!(!predecessor.layout().is_current());
+    let destination = self::single_rename_successor(&replies).recording().clone();
+
+    let first = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let second = TrackRef::new(first.fi, TrackIdx::new(1));
+    app.shared.borrow_mut().tree.hide_track(first);
+    app.apply_resegmentation();
+    app.shared.borrow_mut().tree.hide_track(second);
+    assert_eq!(self::saved_visibility(&store, &destination), saved);
+    for reply in replies.into_iter().chain(old_reads) {
+        app.handle_history_response(reply);
+    }
+
+    let checks = {
+        let shared = app.shared.borrow();
+        [first, second].map(|track| shared.tree.track_node(track).unwrap().check)
+    };
+    self::replies_through_listing(&app.history);
+    assert_eq!(
+        (checks, self::saved_visibility(&store, &destination)),
+        (
+            [CheckState::On, CheckState::Off],
+            RecordingUiState::with_hidden_track_numbers([2]),
+        )
+    );
+    drop(harness);
+    self::reopen_recordings_with_checks(&store, &[(destination, &checks)]);
 }
 
 #[test]
