@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike as _, Utc};
 use gt_loaded_files::{
     LoadedFileEntry, LoadedFilesView, MAX_RECORDINGS_PER_PAGE, RecordingPage, RecordingSummary,
     SessionTrackRef,
@@ -20,6 +20,7 @@ use crate::metrics::Metrics;
 use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
+use crate::session_state::SessionState;
 use crate::settings::{SetSetting, SettingInfo, SettingSelection};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -34,6 +35,7 @@ pub enum Request {
     GetQueryStatus(QueryJobRequest),
     GetRangeDetails(GetRangeDetails),
     GetRecording(GetRecording),
+    GetSessionState,
     GetSettings,
     GetTrack(GetTrack),
     ListHistoryRecordings(ListHistoryRecordings),
@@ -239,7 +241,7 @@ pub struct TrackReference {
 }
 
 impl TrackReference {
-    pub(crate) fn new(session: Uuid, track: SessionTrackRef) -> Self {
+    pub fn new(session: Uuid, track: SessionTrackRef) -> Self {
         Self {
             recording: RecordingReference {
                 session,
@@ -290,6 +292,7 @@ pub enum Reply {
     Range { details: RangeDetails },
     Recording { details: RecordingDetails },
     Recordings { page: Recordings },
+    SessionState { state: SessionState },
     Setting { setting: SettingInfo },
     SettingOpenQueued,
     Settings { settings: Vec<SettingInfo> },
@@ -400,6 +403,8 @@ pub struct Recording {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub metadata_truncated: bool,
     pub time_range: Option<TimeRange>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub time_range_unrepresentable: bool,
     pub track_count: usize,
 }
 
@@ -413,6 +418,20 @@ impl From<LoadedTimeRange> for TimeRange {
     fn from(LoadedTimeRange { start, end }: LoadedTimeRange) -> Self {
         Self { start, end }
     }
+}
+
+impl TimeRange {
+    pub(crate) fn rfc3339(self) -> Option<Self> {
+        Some(Self {
+            start: self::rfc3339_bound(self.start)?,
+            end: self::rfc3339_bound(self.end)?,
+        })
+    }
+}
+
+pub(crate) fn rfc3339_bound(time: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    const RFC3339_YEARS: RangeInclusive<i32> = 0..=9_999;
+    RFC3339_YEARS.contains(&time.year()).then_some(time)
 }
 
 impl Recording {
@@ -432,6 +451,10 @@ impl Recording {
         let filename = metadata.prefix(fields.filename).to_owned();
         let title = fields.title.map(|value| metadata.prefix(value).to_owned());
         let device = fields.device.map(|value| metadata.prefix(value).to_owned());
+        let time_range = recording
+            .time_range
+            .map(TimeRange::from)
+            .and_then(TimeRange::rfc3339);
         Self {
             id: RecordingReference {
                 session,
@@ -442,7 +465,8 @@ impl Recording {
             title,
             device,
             metadata_truncated: metadata.truncated,
-            time_range: recording.time_range.map(Into::into),
+            time_range,
+            time_range_unrepresentable: recording.time_range.is_some() && time_range.is_none(),
             track_count: recording.track_count,
         }
     }

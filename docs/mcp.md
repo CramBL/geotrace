@@ -6,6 +6,7 @@ Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-clie
 
 | Tool | Use |
 |---|---|
+| `get_session_state` | Read a summary of the current desktop session. |
 | `list_recordings` | List loaded recordings and get their references. |
 | `get_recording` | Read a recording summary, loaded track references, and stored track rows. |
 | `get_track` | Read a track's time range, counts, geometry, and visibility. |
@@ -30,6 +31,28 @@ Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-clie
 | `open_history_recording` | Start opening a recording from History. |
 | `get_history_open_status` | Check a History open and get the loaded recording reference when ready. |
 
+## Desktop session
+
+Call `get_session_state` without arguments to inspect the running desktop in one request.
+The result includes `recording_count` and the first five `recordings` in load order, with names, session references, and the same metadata limits as `list_recordings`.
+Pass `next_after` as `after` to `list_recordings` for more loaded recordings if `next_after` is present.
+
+`open_panels` lists which of `history`, `log_viewer`, `plot`, `query`, `settings`, and `sky_trails` are open.
+`time_filter` has kind `all`, `empty`, or `bounds`.
+The `bounds` kind includes inclusive `start` and `end` UTC timestamps, with null for an unset endpoint.
+An endpoint outside RFC 3339 years 0000 through 9999 also appears as null, with `start_unrepresentable` or `end_unrepresentable` set to true.
+
+The `map` section includes the selected base layer and the display categories enabled in the map visibility controls.
+`map.bounds` reports the most recently laid out map viewport in degrees, or null when the map is hidden or has no usable viewport.
+Its `west_deg` and `east_deg` values use the viewport's longitude interval and can extend beyond ±180°.
+`map.pinned_point` uses the `open_point` input shape for a navigation point with a current track reference, or null if there is no such pin.
+A filter can hide a point while the pin remains.
+
+`query` reports the latest desktop or MCP query phase, or null if there is no operation.
+`query.job` appears as a session-bound job handle when one exists for the caller, or null otherwise.
+The `completed` phase records that the run finished.
+Use `get_query_status` with the job handle to check result freshness.
+
 ## Recordings
 
 The `list_recordings` tool lists the recordings that are currently loaded.
@@ -40,6 +63,7 @@ Use the returned `next_after` as `after` to continue, and stop when `next_after`
 Pass a recording's returned `id` as `recording` to `get_recording`.
 It returns the recording summary and up to 100 loaded track references in loaded order.
 Recording summaries set `metadata_truncated` to true when the bridge shortens text metadata for the reply.
+If either recording time bound falls outside RFC 3339 years 0000 through 9999, `time_range` is null and `time_range_unrepresentable` is true.
 Pass its `next_after` as `after` to continue.
 Match each `track_states` entry to its track reference by `index`.
 Pass a track reference as `track` to `get_track` for its recorded time range and counts, or to `get_range_details` for points in recorded order.

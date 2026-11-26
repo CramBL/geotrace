@@ -6,7 +6,7 @@ use gt_query_run::{
     CheckedQueryText, JammingValues, QuerySession, RunCompletion, RunDependencies, RunInputs,
     RunOutcome, SnapErrorValues,
 };
-use gt_session_bridge::{ErrorCode, QueryJobId};
+use gt_session_bridge::{ErrorCode, QueryJobId, SessionQueryPhase, SessionQueryState};
 use gt_side_panel::TreeState;
 use gt_types::Generation;
 use gt_ui_types::{GeomagneticSeries, JammingSeries, TecSeries, TrackDataVisibility};
@@ -88,6 +88,24 @@ impl BackgroundQuery {
     pub(super) fn is_active(&self) -> bool {
         self.operation
             .is_some_and(|operation| operation.phase.is_active())
+    }
+
+    pub(super) fn session_state(&self, session: Uuid) -> Option<SessionQueryState> {
+        let operation = self.operation?;
+        let phase = match operation.phase {
+            QueryPhase::Cancelled => SessionQueryPhase::Cancelled,
+            QueryPhase::Cancelling => SessionQueryPhase::Cancelling,
+            QueryPhase::Completed => SessionQueryPhase::Completed,
+            QueryPhase::Failed => SessionQueryPhase::Failed,
+            QueryPhase::Preparing(_) => SessionQueryPhase::Preparing,
+            QueryPhase::Running => SessionQueryPhase::Running,
+            QueryPhase::Stale => SessionQueryPhase::Stale,
+        };
+        let job = (operation.scope == Some(session)).then_some(QueryJobId {
+            session,
+            id: operation.id,
+        });
+        Some(SessionQueryState { phase, job })
     }
 
     pub(super) fn queue(

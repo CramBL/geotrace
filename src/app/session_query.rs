@@ -163,6 +163,9 @@ impl App {
             Request::GetRecording(args) => {
                 self.inspect_session_request(session, InspectionRequest::GetRecording(args))
             }
+            Request::GetSessionState => Ok(Reply::SessionState {
+                state: self.session_state(session),
+            }),
             Request::GetSettings => Ok(Reply::Settings {
                 settings: self.get_settings(),
             }),

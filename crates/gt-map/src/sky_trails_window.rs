@@ -202,6 +202,10 @@ impl SkyTrailsWindow {
             .show(ctx, |ui| body.ui(ui));
         self.open = open;
     }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
 }
 
 /// The window's per-frame render inputs: the extracted trails, the mutable
