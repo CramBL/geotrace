@@ -5,6 +5,7 @@ use gt_session_bridge::{
 use uuid::Uuid;
 
 use super::App;
+use super::mcp_action_notice::McpActionNotice;
 use super::query_run::QueryPhase;
 
 impl App {
@@ -46,11 +47,12 @@ impl App {
         };
         let job = self.editor_query.queue(scope, checked, generation);
         self.pending_session_query_draft = None;
-        self.query_window.open = true;
+        self.query_window.reveal_editor(&self.ctx);
         self.query_window.invalidate_editor_assistance();
         self.query_window
             .record_run(self.editor_query.session().text());
         self.sync_settings_autosave();
+        McpActionNotice::QueueQuery.enqueue(&mut self.toasts);
         Ok(Reply::QueryJob {
             job: QueryJobStatus {
                 job,
@@ -117,11 +119,21 @@ impl App {
                     return Err(ErrorCode::NoLoadedNavPoints);
                 }
                 self.apply_resegmentation();
+                McpActionNotice::ReprocessRecordings.enqueue(&mut self.toasts);
                 Ok(Reply::ProcessingApplied)
             }
             Request::CancelQuery(args) => {
-                self.editor_query.phase_for_job(session, args.job)?;
+                let phase = self.editor_query.phase_for_job(session, args.job)?;
                 self.editor_query.cancel();
+                match phase {
+                    QueryPhase::Preparing(_) => {
+                        McpActionNotice::CancelQueuedQuery.enqueue(&mut self.toasts)
+                    }
+                    QueryPhase::Running => {
+                        McpActionNotice::RequestQueryCancellation.enqueue(&mut self.toasts)
+                    }
+                    _ => {}
+                }
                 self.session_query_status(session, args.job)
             }
             Request::CheckQuery(args) => {

@@ -1,17 +1,19 @@
 use chrono::Duration;
 use egui::accesskit::Role;
 use egui::emath::GuiRounding as _;
+use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_session_bridge::{
     AnalysisSettingKey, ProcessingSettingKey, Reply, Request, SettingApply, SettingKey,
     SettingSelection, SettingUnit, SettingValue,
 };
 use gt_test_utils::HarnessInteraction as _;
+use rstest::rstest;
 use strum::IntoEnumIterator as _;
 
 use crate::app::settings_ui::{self, SettingsPage};
 use crate::app::test_util::session;
-use crate::app::ui_tests;
+use crate::app::{App, ui_tests};
 
 mod edit;
 
@@ -176,6 +178,318 @@ fn opening_a_setting_raises_the_window_above_overlapping_windows() {
     let target = harness.get_by_label_contains(label).rect().center();
     assert_eq!(harness.ctx.layer_id_at(target), Some(settings));
     assert!(harness.state().query_window.open);
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP revealed Elevation mask"]
+    );
+
+    harness.ctx.move_to_top(query);
+    harness.step();
+    harness.state_mut().query_window.open = false;
+    harness.run_steps(2);
+    assert_eq!(harness.ctx.layer_id_at(target), Some(settings));
+    assert_eq!(
+        session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
+        Reply::SettingOpenQueued
+    );
+    harness.run_steps(3);
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP revealed Elevation mask"]
+    );
+}
+
+#[test]
+fn a_setting_reveal_reports_an_overlap_over_the_input() {
+    let mut harness = ui_tests::app_with_a_recording();
+    harness.set_size(egui::vec2(1200.0, 700.0));
+    let app = harness.state_mut();
+    app.settings_open = true;
+    app.settings_page = SettingsPage::Analysis;
+    harness.run_steps(3);
+    let label = harness.get_by_label_contains("Elevation mask").rect();
+    let input = harness
+        .query_all_by_role(Role::SpinButton)
+        .find(|input| label.y_range().contains(input.rect().center().y))
+        .unwrap()
+        .rect();
+    let row_center = label.union(input).center();
+
+    let overlap_left = f32::midpoint(row_center.x, input.min.x);
+    self::move_query_window(&mut harness, egui::pos2(overlap_left, row_center.y));
+    let settings_layer = egui::LayerId::new(
+        egui::Order::Middle,
+        egui::Id::unique(settings_ui::WINDOW_ID),
+    );
+    let query_layer = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(Some("Query")));
+    assert_eq!(harness.ctx.layer_id_at(row_center), Some(settings_layer));
+    assert_eq!(harness.ctx.layer_id_at(input.center()), Some(query_layer));
+
+    let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
+    assert_eq!(
+        session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
+        Reply::SettingOpenQueued
+    );
+    harness.run_steps(3);
+    assert_eq!(
+        harness.ctx.layer_id_at(input.center()),
+        Some(settings_layer)
+    );
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP revealed Elevation mask"]
+    );
+}
+
+#[rstest]
+#[case::toggle(ProcessingSettingKey::DetectClockDiscontinuities, &[])]
+#[case::sensitivity(ProcessingSettingKey::ClockDiscontinuitySigmas, &["MCP revealed Jump sensitivity"])]
+fn an_overlap_over_sensitivity_applies_only_to_its_own_reveal(
+    #[case] key: ProcessingSettingKey,
+    #[case] notices: &[&str],
+) {
+    let mut harness = ui_tests::app_with_a_recording();
+    harness.set_size(egui::vec2(1200.0, 800.0));
+    let request = |key| {
+        Request::OpenSetting(SettingSelection {
+            key: SettingKey::Processing(key),
+        })
+    };
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            request(ProcessingSettingKey::ClockDiscontinuitySigmas)
+        ),
+        Reply::SettingOpenQueued
+    );
+    harness.run_steps(5);
+    assert!(harness.step_until(|harness| session::visible_action_notices(harness).is_empty()));
+    let sensitivity = harness.get_by_label("Jump sensitivity").rect();
+    let toggle = harness
+        .query_all_by_role(Role::CheckBox)
+        .find(|node| sensitivity.y_range().contains(node.rect().center().y))
+        .unwrap()
+        .rect();
+    let overlap_left = f32::midpoint(toggle.max.x, sensitivity.min.x);
+    self::move_query_window(
+        &mut harness,
+        egui::pos2(overlap_left, sensitivity.center().y),
+    );
+    let settings_layer = egui::LayerId::new(
+        egui::Order::Middle,
+        egui::Id::unique(settings_ui::WINDOW_ID),
+    );
+    let query_layer = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(Some("Query")));
+    assert_eq!(
+        harness.ctx.layer_id_at(toggle.center()),
+        Some(settings_layer)
+    );
+    assert_eq!(
+        harness.ctx.layer_id_at(sensitivity.center()),
+        Some(query_layer)
+    );
+
+    assert_eq!(
+        session::execute(&mut harness, request(key)),
+        Reply::SettingOpenQueued
+    );
+    harness.run_steps(3);
+    assert_eq!(session::visible_action_notices(&harness), notices);
+}
+
+fn move_query_window(harness: &mut Harness<'_, App>, target: egui::Pos2) {
+    harness.state_mut().query_window.open = true;
+    harness.run_steps(3);
+    let query = harness.get_by_role_and_label(Role::Window, "Query");
+    let query_rect = query.rect();
+    let title = egui::pos2(
+        query_rect.center().x,
+        query
+            .get_by_role_and_label(Role::Button, "Hide")
+            .rect()
+            .center()
+            .y,
+    );
+    let delta = egui::vec2(target.x - query_rect.min.x, target.y - title.y);
+    harness.press_drag_release(title, delta, 3);
+}
+
+#[rstest]
+#[case::idle(false)]
+#[case::wheel(true)]
+fn a_setting_notice_reports_only_the_requested_scroll(#[case] wheel: bool) {
+    let mut harness = self::narrow_scrolled_analysis_page();
+    let label = "Elevation mask";
+    let before = harness.get_by_label_contains(label).rect();
+    let request = Request::OpenSetting(SettingSelection {
+        key: SettingKey::Analysis(AnalysisSettingKey::ElevationMask),
+    });
+    assert_eq!(
+        session::execute(&mut harness, request.clone()),
+        Reply::SettingOpenQueued
+    );
+    harness.run_steps(4);
+    let after = harness.get_by_label_contains(label).rect();
+    assert!(after.min.x > before.min.x, "{before:?} -> {after:?}");
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP revealed Elevation mask"]
+    );
+
+    harness
+        .input_mut()
+        .events
+        .push(self::horizontal_scroll(60.0));
+    harness.run_steps(10);
+    assert!(harness.step_until(|harness| session::visible_action_notices(harness).is_empty()));
+    let settled = harness.get_by_label_contains(label).rect();
+    assert!(settled.min.x > after.min.x);
+    assert_eq!(
+        session::execute(&mut harness, request),
+        Reply::SettingOpenQueued
+    );
+    harness.step();
+    if wheel {
+        harness
+            .input_mut()
+            .events
+            .push(self::horizontal_scroll(16.0));
+    }
+    assert!(harness.step_until(|harness| harness.state().setting_to_reveal.is_none()));
+    harness.run_steps(3);
+    assert_eq!(
+        harness.get_by_label_contains(label).rect().min.x > settled.min.x,
+        wheel
+    );
+    assert!(session::visible_action_notices(&harness).is_empty());
+}
+
+#[rstest]
+#[case::visible(
+    AnalysisSettingKey::ElevationMask,
+    Some("MCP revealed Elevation mask"),
+    false
+)]
+#[case::native_only(AnalysisSettingKey::SnrDropThreshold, None, true)]
+#[case::reveal(
+    AnalysisSettingKey::MarkBackwardTimeSteps,
+    Some("MCP revealed Mark backward time steps"),
+    true
+)]
+fn a_setting_reveal_waits_for_a_keyboard_edit(
+    #[case] key: AnalysisSettingKey,
+    #[case] notice: Option<&str>,
+    #[case] clipped_caret: bool,
+) {
+    let mut harness = self::narrow_scrolled_analysis_page();
+    let label = "Elevation mask";
+    let snr_label = harness.get_by_label_contains("SNR drop threshold").rect();
+    let snr_input = harness
+        .query_all_by_role(Role::SpinButton)
+        .find(|node| snr_label.y_range().contains(node.rect().center().y))
+        .unwrap()
+        .rect();
+    harness.click_at(snr_input.center());
+    harness.run_steps(2);
+    assert!(harness.ctx.egui_wants_keyboard_input());
+    if clipped_caret {
+        self::clip_the_focused_caret(&mut harness, snr_label);
+    }
+    let before = harness.get_by_label_contains(label).rect();
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::OpenSetting(SettingSelection {
+                key: SettingKey::Analysis(key),
+            })
+        ),
+        Reply::SettingOpenQueued
+    );
+    harness.step();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("12".to_owned()));
+    harness.step();
+    assert_eq!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .plot_state
+            .analysis
+            .snr_drop_db,
+        12.0
+    );
+    assert!(harness.state().setting_to_reveal.is_some());
+    assert!(session::visible_action_notices(&harness).is_empty());
+
+    harness.step();
+    let native = harness.get_by_label_contains(label).rect();
+    if clipped_caret {
+        assert_ne!(native, before);
+    }
+    harness.run_steps(3);
+    let revealed = harness.get_by_label_contains(label).rect();
+    assert_eq!(revealed != native, notice.is_some());
+    let now = harness.ctx.input(|input| input.time);
+    harness.input_mut().time = Some(now + 0.4);
+    harness.step();
+    assert_eq!(harness.get_by_label_contains(label).rect(), revealed);
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        notice.into_iter().collect::<Vec<_>>()
+    );
+}
+
+fn clip_the_focused_caret(harness: &mut Harness<'_, App>, label: egui::Rect) {
+    let viewport_right = harness.ctx.content_rect().right();
+    let visible_caret = harness.output().platform_output.ime.unwrap().cursor_rect;
+    harness.hover_at(egui::pos2(viewport_right - 40.0, label.center().y));
+    harness.step();
+    harness.input_mut().events.push(self::horizontal_scroll(
+        viewport_right - visible_caret.left() - 26.0,
+    ));
+    harness.run_steps(10);
+    let focused = harness.ctx.memory(|memory| memory.focused()).unwrap();
+    let ime = harness
+        .output()
+        .platform_output
+        .ime
+        .expect("partially visible editor");
+    let response = harness.ctx.read_response(focused).unwrap();
+    assert!(response.interact_rect.is_positive());
+    assert!(ime.cursor_rect.left() > response.interact_rect.right());
+}
+
+fn narrow_scrolled_analysis_page() -> Harness<'static, App> {
+    let mut harness = ui_tests::app_with_a_recording();
+    harness.set_size(egui::vec2(304.0, 500.0));
+    let app = harness.state_mut();
+    app.settings_open = true;
+    app.settings_page = SettingsPage::Analysis;
+    harness.run_steps(3);
+    let label = "Elevation mask";
+    let start = harness.get_by_label_contains(label).rect();
+    harness.hover_at(start.center());
+    harness.step();
+    harness
+        .input_mut()
+        .events
+        .push(self::horizontal_scroll(-1000.0));
+    harness.run_steps(10);
+    assert!(harness.get_by_label_contains(label).rect().min.x < start.min.x);
+    harness
+}
+
+fn horizontal_scroll(delta: f32) -> egui::Event {
+    egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        source: egui::MouseWheelSource::Wheel,
+        delta: egui::vec2(delta, 0.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    }
 }
 
 #[test]

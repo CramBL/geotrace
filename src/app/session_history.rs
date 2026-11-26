@@ -52,6 +52,10 @@ pub(super) enum HistoryLoadAdoption {
     Skip,
 }
 
+pub(super) struct LoadedSessionRecording {
+    pub(super) restore: Option<StoredTrackSnapshot>,
+}
+
 struct Loading {
     read: SelectedRead,
     tracks: LoadTracks,
@@ -271,7 +275,7 @@ impl SessionHistory {
         id: HistoryOpenId,
         files: LoadedFilesView<'_>,
         file: LoadedFileId,
-    ) -> Option<StoredTrackSnapshot> {
+    ) -> Option<LoadedSessionRecording> {
         let operation = self.operation_mut(id)?;
         let Phase::Loading(loading) = &operation.phase else {
             return None;
@@ -298,7 +302,9 @@ impl SessionHistory {
             },
             reused: false,
         });
-        can_restore.then_some(observation)
+        Some(LoadedSessionRecording {
+            restore: can_restore.then_some(observation),
+        })
     }
 
     fn accept_recording(

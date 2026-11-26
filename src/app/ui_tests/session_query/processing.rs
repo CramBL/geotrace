@@ -159,6 +159,10 @@ fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
     );
     harness.step();
     assert!(
+        session::visible_action_notices(&harness)
+            .contains(&"MCP reprocessed the loaded recordings")
+    );
+    assert!(
         harness
             .state()
             .editor_query

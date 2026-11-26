@@ -30,6 +30,7 @@ use loader::{
 };
 use log_viewer::LogViewerRequests;
 use log_viewer::association_dialog::LogAssociationDialog;
+use mcp_action_notice::McpActionNotice;
 use panes::MainPane;
 use query_run::BackgroundQuery;
 use recording_name_template::TemplatePreviewRecording;
@@ -38,8 +39,8 @@ use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use session_plot::PlotPresentation;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
-use settings_ui::SettingsPage;
 use settings_ui::search::SettingsSearch;
+use settings_ui::{SettingReveal, SettingsPage};
 use snap_state::{PendingSnapRequest, SnapErrorCache, SnapReplacePrompt, SnapScopePrompt};
 use strum::IntoEnumIterator;
 
@@ -86,6 +87,7 @@ mod log_viewer;
 mod map_synced_plot_range;
 mod mapbox_token;
 mod mapbox_token_test;
+mod mcp_action_notice;
 mod modals;
 mod pane_presentation;
 mod panes;
@@ -354,7 +356,7 @@ pub struct App {
     /// Category the settings window shows. Session state: the window opens on
     /// [`SettingsPage::Processing`] every run.
     settings_page: SettingsPage,
-    setting_to_reveal: Option<SettingKey>,
+    setting_to_reveal: Option<SettingReveal>,
     settings_search: SettingsSearch,
     about_open: bool,
     /// The running crate version. Fixed to a placeholder in tests so
@@ -1198,13 +1200,16 @@ impl App {
                 self.association_batches.register_recording(arrival, id);
             }
             RecordingOperationOrigin::SessionHistory(operation) => {
-                let observation = self.session_history.loaded(
+                let loaded = self.session_history.loaded(
                     *operation,
                     self.shared.borrow().loaded_files.view(),
                     id,
                 );
-                if let Some(observation) = observation {
-                    self.history.restore_session_recording(id, observation);
+                if let Some(loaded) = loaded {
+                    if let Some(observation) = loaded.restore {
+                        self.history.restore_session_recording(id, observation);
+                    }
+                    McpActionNotice::OpenHistoryRecording.enqueue(&mut self.toasts);
                 }
             }
             _ => {}

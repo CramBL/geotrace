@@ -1,12 +1,14 @@
 use egui::{Align, Align2, Area, Frame, Layout, Role, WidgetInfo, WidgetText};
+use egui_notify::Toasts;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
-use gt_map::{MapAction, MapDrawContext, MapFiles, NavMap};
+use gt_map::{MapAction, MapDrawContext, MapFiles, NavMap, PresentationCamera};
 use gt_types::{Generation, LoadedFile};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
 use super::SharedAppState;
+use super::mcp_action_notice::McpActionNotice;
 use super::pane_presentation::PresentationControls;
 
 /// Pane variants for the central area tiles tree.
@@ -20,6 +22,7 @@ pub(super) struct MainBehavior<'a> {
     pub(super) map: &'a mut NavMap,
     pub(super) checked_plot_visibility: Generation<TrackDataVisibility>,
     pub(super) state: &'a mut SharedAppState,
+    pub(super) toasts: &'a mut Toasts,
     /// The display names of the loaded recordings, resolved once for the frame.
     pub(super) recording_names: &'a RecordingNames,
     pub(super) plot_hover_scope: Option<HighlightScope>,
@@ -131,6 +134,13 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         }
                     }
                 }
+                if let Some(camera) = presentation_camera {
+                    match camera {
+                        PresentationCamera::Center { .. } => McpActionNotice::CenterMapOnPoint,
+                        PresentationCamera::TrackRange(_) => McpActionNotice::FrameMapRange,
+                    }
+                    .enqueue(self.toasts);
+                }
                 if map_viewport.is_positive()
                     && let Some(presentation) = s.presented_session_map
                     && let Some(caption) = presentation
@@ -200,6 +210,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 );
                 if framed {
                     s.presented_session_plot = s.pending_session_plot.take();
+                    McpActionNotice::FramePlot.enqueue(self.toasts);
                 } else if s
                     .presented_session_plot
                     .as_ref()

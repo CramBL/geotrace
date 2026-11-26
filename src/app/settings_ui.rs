@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use egui::style::ScrollAnimation;
+use egui::scroll_area::State as ScrollAreaState;
 use egui::text::CCursorRange;
 use egui::{DragValue, ScrollArea, TextEdit, Widget, Window};
 use egui_phosphor::regular::AIRPLANE_TILT as ICON_AIRPLANE_TILT;
@@ -21,6 +21,7 @@ use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 use self::processing::ProcessingControl;
 use super::App;
 use super::backfill_ui::BackfillReadiness;
+use super::mcp_action_notice::McpActionNotice;
 use crate::settings::AnalysisSettings;
 
 mod analysis;
@@ -36,6 +37,74 @@ mod snap;
 mod solar_flares;
 mod source_page;
 mod tec;
+
+#[derive(Clone, Copy)]
+pub(super) struct SettingReveal {
+    key: SettingKey,
+    opened_view: bool,
+}
+
+enum SettingRevealProgress {
+    Idle,
+    Pending(SettingReveal),
+    Matched {
+        key: SettingKey,
+        opened_or_raised: bool,
+        scroll_target: egui::Rect,
+        clipped: bool,
+    },
+}
+
+impl SettingRevealProgress {
+    fn match_row(
+        &mut self,
+        ui: &egui::Ui,
+        key: SettingKey,
+        control: &egui::Response,
+        scroll_target: egui::Rect,
+    ) {
+        let Self::Pending(reveal) = self else {
+            return;
+        };
+        let clip = ui.clip_rect();
+        if reveal.key != key || ui.is_sizing_pass() || !clip.is_positive() {
+            return;
+        }
+        let covered = Self::is_covered(ui, control.rect.intersect(clip));
+        *self = Self::Matched {
+            key,
+            opened_or_raised: reveal.opened_view || covered,
+            scroll_target,
+            clipped: !clip.contains_rect(scroll_target),
+        };
+    }
+
+    fn is_covered(ui: &egui::Ui, control: egui::Rect) -> bool {
+        let layer_id = ui.layer_id();
+        control.is_positive()
+            && ui.ctx().memory(|memory| {
+                let control = memory
+                    .to_global
+                    .get(&layer_id)
+                    .map_or(control, |transform| *transform * control);
+                memory
+                    .layer_ids()
+                    .skip_while(|layer| *layer != layer_id)
+                    .skip(1)
+                    .any(|layer| {
+                        layer.order == layer_id.order
+                            && memory.areas().is_visible(&layer)
+                            && memory.area_rect(layer.id).is_some_and(|rect| {
+                                let area = memory
+                                    .to_global
+                                    .get(&layer)
+                                    .map_or(rect, |transform| *transform * rect);
+                                area.intersect(control).is_positive()
+                            })
+                    })
+            })
+    }
+}
 
 /// One category of the settings window, in the order the rail lists them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, EnumIter)]
@@ -135,9 +204,15 @@ impl SettingsPage {
 
 impl App {
     pub(super) fn open_setting(&mut self, key: SettingKey) {
+        let page = SettingsPage::for_setting(key);
+        let opened_view = !self.settings_open
+            || self.settings_page != page
+            || self
+                .setting_to_reveal
+                .is_some_and(|reveal| reveal.opened_view);
         self.settings_open = true;
-        self.settings_page = SettingsPage::for_setting(key);
-        self.setting_to_reveal = Some(key);
+        self.settings_page = page;
+        self.setting_to_reveal = Some(SettingReveal { key, opened_view });
     }
 
     /// What a download control may do right now. An archive still opening or
@@ -180,6 +255,10 @@ impl App {
         self.history_listing.request_if_missing(&self.history);
         let mut open = self.settings_open;
         let mut apply = false;
+        let mut reveal = self
+            .setting_to_reveal
+            .take()
+            .map_or(SettingRevealProgress::Idle, SettingRevealProgress::Pending);
         Window::new("Settings")
             .id(egui::Id::unique(WINDOW_ID))
             .open(&mut open)
@@ -195,12 +274,7 @@ impl App {
                         self.show_category_rail(ui);
                     });
                 egui::CentralPanel::default().show(ui, |ui| {
-                    // Sideways too: a page can be wider than the rail leaves.
-                    ScrollArea::both()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            apply = self.show_selected_page(ui);
-                        });
+                    apply = self.show_settings_page_area(ui, &mut reveal);
                 });
             });
 
@@ -213,14 +287,76 @@ impl App {
         }
 
         self.settings_open = open;
-        if !open
-            || self
-                .setting_to_reveal
-                .is_some_and(|key| self.settings_page != SettingsPage::for_setting(key))
+        if let SettingRevealProgress::Pending(reveal) = reveal
+            && open
+            && self.settings_page == SettingsPage::for_setting(reveal.key)
         {
-            self.setting_to_reveal = None;
+            self.setting_to_reveal = Some(reveal);
         }
         apply
+    }
+
+    fn show_settings_page_area(
+        &mut self,
+        ui: &mut egui::Ui,
+        reveal: &mut SettingRevealProgress,
+    ) -> bool {
+        let pending = matches!(reveal, SettingRevealProgress::Pending(_));
+        let apply_reveal = pending && Self::settings_reveal_can_apply(ui);
+        if pending && !apply_reveal {
+            ui.ctx().request_repaint();
+        }
+        let mut idle = SettingRevealProgress::Idle;
+        let reveal = if apply_reveal { reveal } else { &mut idle };
+        let output = ScrollArea::both()
+            .id_salt(SETTINGS_SCROLL_AREA_SALT)
+            .auto_shrink([false, false])
+            .animated(false)
+            .show_viewport(ui, |ui, viewport| {
+                let apply_processing = self.show_selected_page(ui, reveal);
+                if let SettingRevealProgress::Matched { scroll_target, .. } = *reveal {
+                    ui.ctx().move_to_top(ui.layer_id());
+                    ui.scroll_to_rect(scroll_target, None);
+                    ui.ctx().request_repaint();
+                }
+                (apply_processing, viewport.min.to_vec2())
+            });
+        let (apply_processing, previous_offset) = output.inner;
+        if let SettingRevealProgress::Matched {
+            key,
+            opened_or_raised,
+            clipped,
+            ..
+        } = *reveal
+            && (opened_or_raised || (clipped && previous_offset != output.state.unclamped_offset()))
+        {
+            McpActionNotice::RevealSetting(self::setting_label(key)).enqueue(&mut self.toasts);
+        }
+        apply_processing
+    }
+
+    fn settings_reveal_can_apply(ui: &egui::Ui) -> bool {
+        let direct_input = ui.input(|input| {
+            input.smooth_scroll_delta() != egui::Vec2::ZERO
+                || input.pointer.any_down()
+                || input.pointer.any_released()
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key { pressed: true, .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Ime(_)
+                            | egui::Event::Cut
+                            | egui::Event::AccessKitActionRequest(_)
+                    )
+                })
+        });
+        let scroll_id = ui.make_persistent_id(egui::IdSalt::new(SETTINGS_SCROLL_AREA_SALT));
+        !direct_input
+            && ScrollAreaState::load(ui.ctx(), scroll_id).is_none_or(|state| {
+                state.velocity() == egui::Vec2::ZERO && state.overscroll() == egui::Vec2::ZERO
+            })
     }
 
     pub(super) fn describe_setting(&self, key: SettingKey) -> SettingInfo {
@@ -253,6 +389,7 @@ impl App {
         };
         if changed {
             self.sync_settings_autosave();
+            McpActionNotice::ChangeSetting(self::setting_label(key)).enqueue(&mut self.toasts);
             self.ctx.request_repaint();
         }
         Ok(self.describe_setting(key))
@@ -268,18 +405,6 @@ impl App {
                     .map(|control| control.describe(self.processing_config)),
             )
             .collect()
-    }
-
-    fn reveal_setting_row(&mut self, ui: &egui::Ui, key: SettingKey, rect: egui::Rect) {
-        if self.setting_to_reveal == Some(key)
-            && !ui.is_sizing_pass()
-            && ui.clip_rect().is_positive()
-        {
-            ui.ctx().move_to_top(ui.layer_id());
-            ui.scroll_to_rect_animation(rect, None, ScrollAnimation::none());
-            self.setting_to_reveal = None;
-            ui.ctx().request_repaint();
-        }
     }
 
     fn show_category_rail(&mut self, ui: &mut egui::Ui) {
@@ -333,11 +458,15 @@ impl App {
 
     /// Returns `true` in the frame when the user clicks the Processing page's
     /// "Apply to loaded data".
-    fn show_selected_page(&mut self, ui: &mut egui::Ui) -> bool {
+    fn show_selected_page(
+        &mut self,
+        ui: &mut egui::Ui,
+        reveal: &mut SettingRevealProgress,
+    ) -> bool {
         match self.settings_page {
-            SettingsPage::Processing => self.show_processing_page(ui),
+            SettingsPage::Processing => self.show_processing_page(ui, reveal),
             SettingsPage::Analysis => {
-                self.show_analysis_page(ui);
+                self.show_analysis_page(ui, reveal);
                 false
             }
             SettingsPage::AircraftInterference => {
@@ -376,6 +505,13 @@ impl App {
     #[cfg(feature = "self-update")]
     pub(super) fn should_check_for_updates(&self) -> bool {
         self.update_check_on_startup && !cfg!(debug_assertions) && !self.offline
+    }
+}
+
+fn setting_label(key: SettingKey) -> &'static str {
+    match key {
+        SettingKey::Analysis(key) => analysis::AnalysisControl::for_key(key).label,
+        SettingKey::Processing(key) => ProcessingControl::for_key(key).label,
     }
 }
 
@@ -442,6 +578,9 @@ fn round_trip_drag_value(drag: DragValue<'_>) -> impl Widget + '_ {
 /// Id the settings window registers its area under, and the key egui remembers
 /// its position and size by.
 pub(super) const WINDOW_ID: &str = "settings_window";
+
+// egui's default salt preserves the saved Settings scroll offset.
+const SETTINGS_SCROLL_AREA_SALT: &str = "scroll_area";
 
 /// Width of the category rail, wide enough for the longest label with its icon.
 const RAIL_WIDTH: f32 = 176.0;
