@@ -79,13 +79,13 @@ pub fn wait_for_query_to_stop(harness: &mut Harness<'_, App>, job: QueryJobId) -
 }
 
 pub fn execute(harness: &mut Harness<'_, App>, request: Request) -> Reply {
-    harness.state_mut().execute_session_request_in_test(
-        SessionRequest {
+    harness
+        .state_mut()
+        .execute_session_request(SessionRequest {
             request,
             session: SESSION_ID,
-        },
-        true,
-    )
+        })
+        .unwrap_or_else(Reply::from)
 }
 
 pub fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {

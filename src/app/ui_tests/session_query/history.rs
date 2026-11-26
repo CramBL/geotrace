@@ -14,7 +14,6 @@ use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, HistoryDates, HistoryOpenId,
     HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings, ListRecordings,
     OpenHistoryRecording, QueryCounts, QueryJobState, RecordingReference, Reply, Request,
-    SessionRequest,
 };
 use gt_side_panel::{CheckState, NodeKey};
 use gt_store::{
@@ -50,7 +49,46 @@ const UNFILTERED: ListHistoryRecordings = ListHistoryRecordings {
 };
 
 #[test]
-fn a_history_open_starts_after_handoff_and_reports_the_loaded_recording() {
+fn a_history_open_reports_a_worker_admission_failure_in_its_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    {
+        let mut db = store.open_recordings().unwrap();
+        recordings::insert_recording_as_one_whole_file_track(
+            &mut db,
+            "recording",
+            &recordings::sample_bytes(),
+        );
+    }
+    let mut harness = self::owner_app(&store);
+    let page = self::await_page(&mut harness, UNFILTERED);
+    let recording = page.recordings.first().unwrap().id;
+    harness.state_mut().history.disconnect_requests_for_test();
+
+    let status = self::open_status(&session::execute(
+        &mut harness,
+        Request::OpenHistoryRecording(OpenHistoryRecording { recording }),
+    ));
+    assert_eq!(
+        status.state,
+        HistoryOpenState::Failed {
+            code: ErrorCode::HistoryUnavailable,
+        }
+    );
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
+                operation: status.operation,
+            }),
+        ),
+        Reply::HistoryOpen { operation: status },
+    );
+    assert!(harness.state().shared.borrow().loaded_files.is_empty());
+}
+
+#[test]
+fn a_history_open_reports_the_loaded_recording() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
     let mut db = store.open_recordings().unwrap();
@@ -67,23 +105,6 @@ fn a_history_open_starts_after_handoff_and_reports_the_loaded_recording() {
     let request = Request::OpenHistoryRecording(OpenHistoryRecording {
         recording: page.recordings[0].id,
     });
-    let disconnected = self::open_status(&harness.state_mut().execute_session_request_in_test(
-        SessionRequest {
-            request: request.clone(),
-            session: session::SESSION_ID,
-        },
-        false,
-    ));
-    assert_eq!(
-        session::execute(
-            &mut harness,
-            Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
-                operation: disconnected.operation
-            })
-        ),
-        Reply::from(ErrorCode::HistoryOpenNotFound),
-    );
-    assert!(harness.state().shared.borrow().loaded_files.is_empty());
     let accepted = {
         let _access = HistoryAccess::lock();
         let accepted = self::open_status(&session::execute(&mut harness, request.clone()));
@@ -976,7 +997,7 @@ fn history_open_status_checks_the_layout_after_apply_processing(
         .track_split_gap = split_gap;
     assert_eq!(
         session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
-        Reply::ProcessingQueued,
+        Reply::ProcessingApplied,
     );
     harness.run_steps(3);
     assert_eq!(

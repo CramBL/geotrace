@@ -598,7 +598,7 @@ async fn assert_processing_requires_empty_arguments(client: &mut Client) {
             .await;
         assert_eq!(
             reply.pointer("/result/structuredContent"),
-            Some(&json!({"status": "processing_queued"}))
+            Some(&json!({"status": "processing_applied"}))
         );
     }
     assert_eq!(PROCESSING_DISPATCHES.load(Ordering::Relaxed), 2);
@@ -611,7 +611,7 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
         }
         Request::ApplyProcessing(ApplyProcessing {}) => {
             PROCESSING_DISPATCHES.fetch_add(1, Ordering::Relaxed);
-            Ok(Reply::ProcessingQueued)
+            Ok(Reply::ProcessingApplied)
         }
         Request::GetSettings => Ok(Reply::Settings {
             settings: vec![self::setting_fixture(10.0)],

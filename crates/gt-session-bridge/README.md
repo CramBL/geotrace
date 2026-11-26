@@ -1,13 +1,23 @@
 # GeoTrace session bridge
 
-Start the desktop app with `--session-bridge` to accept local requests from the same operating system account.
+Start GeoTrace with `--session-bridge` to let `geotrace-mcp` inspect and control the running desktop app.
+Run both processes as the same user.
+
+Configure your MCP client to launch `geotrace-mcp` as a stdio server. [Binary entry point](../../src/bin/geotrace-mcp.rs)
+
 The bridge exchanges length-prefixed JSON requests and replies over a Unix-domain socket or a Windows named pipe.
 See the [request and reply types](src/protocol.rs) and [frame encoding](src/framing.rs).
-
-The desktop app dispatches semantic requests on the app thread. [App session dispatcher](../../src/app/session_query.rs)
-The dispatcher applies prepared effects after handing their replies to the bridge worker.
-
-The MCP client connects over standard input and output to the `geotrace-mcp` executable. [Binary entry point](../../src/bin/geotrace-mcp.rs)
 The `gt-mcp` library implements the MCP server and sends session requests to the bridge. [Server source](../gt-mcp/src/lib.rs)
+The desktop app runs those commands on its app thread. [App session dispatcher](../../src/app/session_query.rs)
+
+GeoTrace applies a setting in memory before returning its effective value.
+A `processing_applied` reply confirms that GeoTrace finished rebuilding the loaded tracks and generated markers.
+Storage writes may finish in the background.
+A queued reply confirms that GeoTrace recorded a request such as opening a query draft or framing the map.
+For a query or History open, use the returned ID to check its status.
+
+GeoTrace skips a command if the bridge detects a disconnect before execution starts.
+Commands that have started continue even if the client disconnects.
+Use `cancel_query` to cancel an accepted query job.
 
 Follow the [MCP interface design rules](../../DESIGN.md#mcp-interface) when adding tools or changing the protocol.

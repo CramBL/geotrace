@@ -515,6 +515,13 @@ impl HistoryWorker {
             .expect("a spawned worker holds a request sender")
     }
 
+    #[cfg(test)]
+    pub(super) fn disconnect_requests_for_test(&mut self) {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        self.req_tx = Some(sender);
+    }
+
     /// Whether a backing database is available (the worker is running).
     pub fn available(&self) -> bool {
         self.req_tx.is_some()

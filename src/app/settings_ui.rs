@@ -14,7 +14,6 @@ use egui_phosphor::regular::WAVES as ICON_WAVES;
 use gt_map::MapLayer;
 use gt_session_bridge::{ErrorCode, SetSetting, SettingInfo, SettingKey};
 use gt_store::EnvironmentArchive;
-use gt_track_builder::SegmentationConfig;
 use strum::{EnumIter, IntoEnumIterator};
 
 use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
@@ -37,12 +36,6 @@ mod snap;
 mod solar_flares;
 mod source_page;
 mod tec;
-
-#[derive(Clone, Copy)]
-pub(super) enum SettingChange {
-    Analysis(AnalysisSettings),
-    Processing(SegmentationConfig),
-}
 
 /// One category of the settings window, in the order the rail lists them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, EnumIter)]
@@ -147,15 +140,6 @@ impl App {
         self.setting_to_reveal = Some(key);
     }
 
-    pub(super) fn apply_setting_change(&mut self, change: SettingChange) {
-        match change {
-            SettingChange::Analysis(values) => self.apply_analysis_controls(values),
-            SettingChange::Processing(config) => self.processing_config = config,
-        }
-        self.sync_settings_autosave();
-        self.ctx.request_repaint();
-    }
-
     /// What a download control may do right now. An archive still opening or
     /// one that could not be opened outranks offline mode: there is nowhere
     /// to download to either way.
@@ -249,30 +233,29 @@ impl App {
         }
     }
 
-    pub(super) fn prepare_setting_change(
-        &self,
+    pub(super) fn set_session_setting(
+        &mut self,
         SetSetting { key, value }: SetSetting,
-    ) -> Result<(SettingInfo, Option<SettingChange>), ErrorCode> {
-        match key {
+    ) -> Result<SettingInfo, ErrorCode> {
+        let changed = match key {
             SettingKey::Analysis(key) => {
                 let control = analysis::AnalysisControl::for_key(key);
                 let mut values = AnalysisSettings::from(&self.shared.borrow().plot_state);
                 let changed = control.set(&mut values, value)?;
-                Ok((
-                    control.describe(values),
-                    changed.then_some(SettingChange::Analysis(values)),
-                ))
+                if changed {
+                    self.apply_analysis_controls(values);
+                }
+                changed
             }
             SettingKey::Processing(key) => {
-                let control = ProcessingControl::for_key(key);
-                let mut config = self.processing_config;
-                let changed = control.set(&mut config, value)?;
-                Ok((
-                    control.describe(config),
-                    changed.then_some(SettingChange::Processing(config)),
-                ))
+                ProcessingControl::for_key(key).set(&mut self.processing_config, value)?
             }
+        };
+        if changed {
+            self.sync_settings_autosave();
+            self.ctx.request_repaint();
         }
+        Ok(self.describe_setting(key))
     }
 
     pub(super) fn get_settings(&self) -> Vec<SettingInfo> {
