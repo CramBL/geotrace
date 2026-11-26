@@ -81,3 +81,47 @@ Shift with an arrow key extends or shrinks the selection from its active end.
 Shift+Up and Shift+Down retain the horizontal position across displayed rows.
 Cut copies the selected log text to the clipboard while leaving the log intact.
 Offer a copy button (as the query results do) where such a value is worth copying.
+
+## MCP interface
+
+Apply these rules in reviews of new MCP tools and protocol changes.
+
+### Tool scope
+
+Define tools for complete user operations, such as framing a query match on the map.
+Use registry keys as parameters for operations over settings and metrics.
+Include the total tool count in each tool addition review.
+Require a written justification for additions once the total approaches 25–30 tools.
+
+### Desktop state
+
+Use the same application state and actions as the desktop controls.
+Present map highlights, plot ranges, query drafts and setting controls in the desktop interface.
+Notify the desktop user when an MCP action changes the view.
+Record raw bridge traffic only in opt-in debug or audit logs.
+
+### Queued actions
+
+Check references and desktop preconditions before acknowledging a queued action.
+Return an error when a precondition prevents the action.
+For a map highlight, check that the display category is enabled.
+
+### Payload limits and ordering
+
+Enforce hard item limits per page and byte limits for encoded requests and replies.
+Return a continuation cursor when more items are available.
+Flag truncated values explicitly.
+Use RFC 3339 UTC timestamps ending in `Z` for instants in requests and replies.
+Document each result order and test it across page boundaries.
+
+### Asynchronous operations
+
+Wait briefly on the server for asynchronous operations that usually finish quickly.
+Keep the wait within the request deadline.
+Include completed results in the initial reply when work finishes during the wait.
+Return a polling handle if the operation is still running when the wait ends.
+
+### Tool descriptions and reference material
+
+Keep tool descriptions concise and state the operation, inputs and result.
+Offer detailed reference material and examples through on-demand help tools or MCP resources.
