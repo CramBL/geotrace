@@ -27,12 +27,12 @@ use gt_log_view::{
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, HistoryEntries,
-    HistoryOpenSelection, LogAttachmentEntry, LogAttachmentError, LogAttachmentId,
-    LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
-    ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingUiState,
-    Recordings, RecordingsHandle, StoredLayoutRevision, StoredLogSettings, StoredRecording,
-    StoredTrackSnapshot, StoredTrackSnapshotUpdate, StoredTrackTable, TrackRange, TrackState,
-    UiStateVersionReporter,
+    HistoryOpenSelection, HistoryRenameOutcome, IdentityRename, LogAttachmentEntry,
+    LogAttachmentError, LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _,
+    LogContentHash, LogToAttach, PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _,
+    ReadOnlyRecordings, RecordingUiState, Recordings, RecordingsHandle, StoredLayoutRevision,
+    StoredLogSettings, StoredRecording, StoredTrackSnapshot, StoredTrackSnapshotUpdate,
+    StoredTrackTable, TrackRange, TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -149,11 +149,10 @@ pub enum StoredTrackAction {
 
 /// A completed mutation, carried back so the UI can show the right toast.
 pub enum DbOp {
-    /// An identity was renamed. Carries both names so loaded recordings filed
-    /// under `old` can be re-pointed to `new`.
     IdentityRenamed {
         old: String,
         new: String,
+        outcome: Option<HistoryRenameOutcome>,
     },
     RecordingsDeleted {
         count: usize,
@@ -1163,9 +1162,17 @@ fn handle_write_request(
             }
         }
         WriteRequest::RenameIdentity { old, new } => {
-            let result = db.rename_identity(&old, &new);
+            let access = HistoryAccess::lock();
+            let rename = IdentityRename {
+                source: &old,
+                destination: &new,
+            };
+            let (outcome, result) = match access.rename_identity(db, rename) {
+                Ok(outcome) => (Some(outcome), Ok(())),
+                Err(error) => (None, Err(error)),
+            };
             Response::Mutated {
-                op: DbOp::IdentityRenamed { old, new },
+                op: DbOp::IdentityRenamed { old, new, outcome },
                 result,
             }
         }
@@ -1570,6 +1577,42 @@ mod tests {
 
         let entries = recordings::listed_recordings(&worker);
         assert!(entries.is_empty(), "recording should be gone after delete");
+    }
+
+    #[test]
+    fn worker_reports_the_completed_recording_move_and_track_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.h5");
+        recordings::seed_two_track_recording(&path);
+        let worker = recordings::worker_on(&path);
+        let db_ref = recordings::only_recording(&worker).db_ref;
+        let predecessor = recordings::worker_track_snapshot(&worker, &db_ref);
+        worker.rename_identity(db_ref.identity.clone(), "renamed".to_owned());
+        let Response::Mutated {
+            op:
+                DbOp::IdentityRenamed {
+                    outcome: Some(outcome),
+                    ..
+                },
+            result: Ok(()),
+        } = recordings::next_response(&worker)
+        else {
+            panic!("expected a completed rename");
+        };
+        let [moved] = outcome.moves().unwrap() else {
+            panic!("expected one moved recording");
+        };
+        assert_eq!(moved.before(), &db_ref);
+        assert_eq!(moved.after().identity, "renamed");
+        assert_eq!(moved.after().group_name, db_ref.group_name);
+        let [update] = outcome.snapshot_updates() else {
+            panic!("expected one verified track layout update");
+        };
+        assert!(update.before().same_observation(&predecessor));
+        assert!(update.after().is_current_with_membership());
+        assert_eq!(update.after().recording(), moved.after());
+        assert_eq!(update.after().rows(), predecessor.rows());
+        assert_eq!(recordings::only_recording(&worker).db_ref, *moved.after());
     }
 
     #[test]

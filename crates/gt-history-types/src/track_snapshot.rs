@@ -8,8 +8,9 @@ use parking_lot::{Mutex, ReentrantMutex, ReentrantMutexGuard};
 use same_file::Handle;
 
 use crate::{
-    DatabaseRef, DbError, HistoryDatabase, ReadOnlyHistoryDatabase, RecordingMeta, StoredRecording,
-    StoredSegmentation, TrackRange, TrackState,
+    DatabaseRef, DbError, HistoryDatabase, IdentityRename, ReadOnlyHistoryDatabase,
+    RecordingIdentityMove, RecordingMeta, StoredRecording, StoredSegmentation, TrackRange,
+    TrackState,
 };
 
 pub struct HistoryAccess {
@@ -79,6 +80,51 @@ impl HistoryAccess {
         let stored = database.load(recording)?;
         let snapshot = self.snapshot(identity, recording.clone(), stored.track_rows().to_vec());
         Ok((stored, snapshot))
+    }
+
+    pub fn rename_identity(
+        &self,
+        database: &mut impl HistoryDatabase,
+        rename: IdentityRename<'_>,
+    ) -> Result<HistoryRenameOutcome, DbError> {
+        let mut before = HashMap::new();
+        if rename.source != rename.destination && !rename.destination.trim().is_empty() {
+            for recording in self.observed_recording_addresses(database)? {
+                if recording.identity != rename.source {
+                    continue;
+                }
+                match self.read_track_snapshot(database, &recording) {
+                    Ok(snapshot) if !snapshot.rows().is_empty() => {
+                        before.insert(recording, snapshot);
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        log::warn!("Could not read the track layout of {recording}: {error}")
+                    }
+                }
+            }
+        }
+        let moves = database.rename_identity_with_moves(rename)?;
+        let mut snapshot_updates = Vec::new();
+        for moved in moves.iter().flatten() {
+            let Some(before) = before.remove(moved.before()) else {
+                continue;
+            };
+            let recording = moved.after();
+            match self.read_track_snapshot(database, recording) {
+                Ok(after) if after.rows() == before.rows() => {
+                    snapshot_updates.push(StoredTrackSnapshotUpdate { before, after });
+                }
+                result => {
+                    let error = result.err().unwrap_or(DbError::StoredTrackLayoutChanged);
+                    log::warn!("Could not verify the track layout of {recording}: {error}");
+                }
+            }
+        }
+        Ok(HistoryRenameOutcome {
+            moves,
+            snapshot_updates,
+        })
     }
 
     pub fn replace_track_layout(
@@ -414,6 +460,23 @@ impl StoredTrackSnapshot {
 pub struct StoredTrackSnapshotUpdate {
     before: StoredTrackSnapshot,
     after: StoredTrackSnapshot,
+}
+
+pub struct HistoryRenameOutcome {
+    moves: Option<Vec<RecordingIdentityMove>>,
+    snapshot_updates: Vec<StoredTrackSnapshotUpdate>,
+}
+
+impl HistoryRenameOutcome {
+    /// `Some(&[])` is a confirmed no-op.
+    pub fn moves(&self) -> Option<&[RecordingIdentityMove]> {
+        self.moves.as_deref()
+    }
+
+    /// Each update starts at an observation held when the rename began.
+    pub fn snapshot_updates(&self) -> &[StoredTrackSnapshotUpdate] {
+        &self.snapshot_updates
+    }
 }
 
 impl StoredTrackSnapshotUpdate {

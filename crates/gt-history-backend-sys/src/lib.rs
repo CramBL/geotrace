@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 
 use gt_history_types::{
     CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HISTORY_LOCK as DB_LOCK, HistoryAccess,
-    HistoryDatabase, LogAttachment, LogAttachmentId, LogAttachmentListingEntry, NavPointTimeRange,
-    ReadOnlyHistoryDatabase, RecordingEntry, RecordingInsert, RecordingMeta, RecordingReplacement,
-    RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
-    TrackLayoutVisibility, TrackRange, UiStateVersionReporter, log_attachment,
+    HistoryDatabase, IdentityRename, LogAttachment, LogAttachmentId, LogAttachmentListingEntry,
+    NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry, RecordingIdentityMove,
+    RecordingInsert, RecordingMeta, RecordingReplacement, RecordingUiState, SCHEMA_VERSION_ATTR,
+    StoredRecording, StoredSegmentation, TrackLayoutVisibility, TrackRange, UiStateVersionReporter,
+    log_attachment,
 };
 
 pub mod copy;
@@ -465,8 +466,19 @@ impl HistoryDatabase for SysDb {
     }
 
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
+        self.rename_identity_with_moves(IdentityRename {
+            source: old,
+            destination: new,
+        })
+        .map(|_| ())
+    }
+
+    fn rename_identity_with_moves(
+        &mut self,
+        rename: IdentityRename<'_>,
+    ) -> Result<Option<Vec<RecordingIdentityMove>>, DbError> {
         let access = HistoryAccess::lock();
-        crate::copy::rename_identity(&self.path, old, new, |by_id, recordings| {
+        crate::copy::rename_identity(&self.path, rename, |by_id, recordings| {
             let mut expired = recordings.to_vec();
             expired.extend(
                 access
@@ -489,6 +501,7 @@ impl HistoryDatabase for SysDb {
             );
             access.invalidate_recording_snapshots(self, &expired)
         })
+        .map(Some)
         .map_err(Into::into)
     }
 }

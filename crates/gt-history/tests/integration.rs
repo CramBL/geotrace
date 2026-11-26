@@ -8,10 +8,10 @@ use geotrace_sdk::{
     SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionState,
 };
 use gt_history::{
-    Database, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, LogAttachment, LogAttachmentId,
-    LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingMeta,
-    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
-    StoredTrackTable, TrackLayoutVisibility, TrackRange, TrackState,
+    Database, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, IdentityRename, LogAttachment,
+    LogAttachmentId, LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingDebugTag,
+    RecordingMeta, StoredFixPlacementRule, StoredRecording, StoredSegmentation,
+    StoredTrackSplitRule, StoredTrackTable, TrackLayoutVisibility, TrackRange, TrackState,
 };
 #[cfg(feature = "backend-sys")]
 use gt_history_backend_pure::PureDb;
@@ -878,12 +878,13 @@ fn rename_identity_moves_recordings_to_a_fresh_name() {
 
     let bytes_a = make_gtd_bytes(1_000, 3);
     let bytes_b = make_gtd_bytes(2_000, 5);
-    db.insert_simple(
-        "auto:old",
-        &gt_history::extract_meta(&bytes_a).expect("meta a"),
-        &bytes_a,
-    )
-    .expect("insert a");
+    let original = db
+        .insert_simple(
+            "auto:old",
+            &gt_history::extract_meta(&bytes_a).expect("meta a"),
+            &bytes_a,
+        )
+        .expect("insert a");
     db.insert_simple(
         "auto:old",
         &gt_history::extract_meta(&bytes_b).expect("meta b"),
@@ -891,7 +892,28 @@ fn rename_identity_moves_recordings_to_a_fresh_name() {
     )
     .expect("insert b");
 
-    db.rename_identity("auto:old", "Trip 2025").expect("rename");
+    let access = HistoryAccess::lock();
+    let before = access.read_track_snapshot(&db, &original).unwrap();
+    let outcome = access
+        .rename_identity(
+            &mut db,
+            IdentityRename {
+                source: "auto:old",
+                destination: "Trip 2025",
+            },
+        )
+        .unwrap();
+    assert!(!before.is_current());
+    #[cfg(feature = "backend-pure")]
+    {
+        assert!(outcome.moves().is_none());
+        assert!(outcome.snapshot_updates().is_empty());
+    }
+    #[cfg(feature = "backend-sys")]
+    {
+        assert_eq!(outcome.moves().unwrap().len(), 2);
+        assert_eq!(outcome.snapshot_updates().len(), 1);
+    }
 
     let entries = db.list_recordings().expect("list");
     assert_eq!(entries.len(), 2, "both recordings survive the rename");
@@ -998,14 +1020,33 @@ fn native_history_merge_preserves_objects_and_incumbent_track_proof(#[case] sche
     let access = HistoryAccess::lock();
     let before = access.read_track_snapshot(&db, &source).unwrap();
     let unchanged = access.read_track_snapshot(&db, &incumbent).unwrap();
-    db.rename_identity(&source.identity, &incumbent.identity)
+    let outcome = access
+        .rename_identity(
+            &mut db,
+            IdentityRename {
+                source: &source.identity,
+                destination: &incumbent.identity,
+            },
+        )
         .unwrap();
     assert!(!before.is_current());
     let observed = access.read_track_snapshot(&db, &incumbent).unwrap();
     let moved = DatabaseRef {
         identity: incumbent.identity.clone(),
-        group_name: source.group_name,
+        group_name: source.group_name.clone(),
     };
+    let [published] = outcome.moves().unwrap() else {
+        panic!("expected one completed recording move");
+    };
+    assert_eq!(published.before(), &source);
+    assert_eq!(published.after(), &moved);
+    let [update] = outcome.snapshot_updates() else {
+        panic!("expected one verified track layout update");
+    };
+    assert!(update.before().same_observation(&before));
+    assert!(update.after().is_current_with_membership());
+    assert_eq!(update.after().recording(), &moved);
+    assert_eq!(update.after().rows(), before.rows());
     assert_eq!(
         db.recording_ui_state(&moved, &reporter).unwrap(),
         source_state
@@ -1068,6 +1109,45 @@ fn native_history_merge_preserves_objects_and_incumbent_track_proof(#[case] sche
     );
     assert!(unchanged.is_current_with_membership());
     assert!(observed.same_observation(&unchanged));
+}
+
+#[cfg(feature = "backend-sys")]
+#[test]
+fn native_history_rename_reports_only_the_address_change_for_a_damaged_track_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let access = HistoryAccess::lock();
+    let before = access.read_track_snapshot(&db, &source).unwrap();
+    assert_eq!(before.rows().len(), 2);
+    {
+        let file = NativeFile::open_rw(&path).unwrap();
+        let identity = gt_history::identity_group_name(&source.identity);
+        file.group(&format!(
+            "/by_identity/{identity}/{}/{TRACKS_GROUP}",
+            source.group_name
+        ))
+        .unwrap()
+        .unlink(TRACK_END_DATASET)
+        .unwrap();
+    }
+    let outcome = access
+        .rename_identity(
+            &mut db,
+            IdentityRename {
+                source: &source.identity,
+                destination: "renamed",
+            },
+        )
+        .unwrap();
+    let [moved] = outcome.moves().unwrap() else {
+        panic!("expected one completed recording move");
+    };
+    assert_eq!(moved.before(), &source);
+    assert!(db.contains(moved.after()).unwrap());
+    assert!(!before.is_current());
+    assert!(outcome.snapshot_updates().is_empty());
 }
 
 #[cfg(feature = "backend-sys")]

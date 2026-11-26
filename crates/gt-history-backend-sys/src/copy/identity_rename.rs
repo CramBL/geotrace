@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use gt_history_types::{
-    ATTR_IDENTITY, CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, SCHEMA_VERSION_ATTR,
+    ATTR_IDENTITY, CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, IdentityRename,
+    RecordingIdentityMove, SCHEMA_VERSION_ATTR,
 };
 use hdf5::types::TypeDescriptor;
 use hdf5::{Attribute, File, Group, IndexType, IterationOrder, LinkType, LocationInfo};
@@ -29,16 +30,18 @@ fn overwrite_identity_attr(group: &Group, identity: &str) -> Result<(), Internal
 /// The source group remains addressable for HDF5 object references.
 pub(crate) fn rename_identity(
     db_path: &Path,
-    old: &str,
-    new: &str,
+    IdentityRename {
+        source: old,
+        destination: new,
+    }: IdentityRename<'_>,
     before_publish: impl FnOnce(&Group, &[DatabaseRef]) -> Result<(), DbError>,
-) -> Result<(), InternalError> {
+) -> Result<Vec<RecordingIdentityMove>, InternalError> {
     if old == new {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if new.trim().is_empty() {
         log::warn!("rename_identity: not renaming {old:?} to an empty identity");
-        return Ok(());
+        return Ok(Vec::new());
     }
     if new.contains('\0') {
         return Err(InternalError::Conflict(
@@ -48,7 +51,7 @@ pub(crate) fn rename_identity(
 
     let file = File::open_rw(db_path)?;
     let Some(by_id) = self::direct_root_group(&file, "by_identity")? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let metadata = self::direct_root_group(&file, "meta")?;
     if let Some(meta) = &metadata
@@ -78,7 +81,7 @@ pub(crate) fn rename_identity(
     }
     if sources.is_empty() {
         log::warn!("rename_identity: identity {old:?} not found");
-        return Ok(());
+        return Ok(Vec::new());
     }
     let destination = super::find_identity_group(&by_id, new, None)?;
     let destination_name = match &destination {
@@ -147,6 +150,7 @@ pub(crate) fn rename_identity(
         .collect();
     before_publish(&by_id, &affected)?;
     let destination_path = dst.name();
+    let mut moves = Vec::new();
     for source in sources {
         let source_path = source.group.name();
         for name in source.recordings {
@@ -172,11 +176,18 @@ pub(crate) fn rename_identity(
             self::settle_stage(&file, &meta, &stage_name, RenameResolution::Commit, || {
                 Ok(())
             })?;
+            moves.push(RecordingIdentityMove::to_identity(
+                DatabaseRef {
+                    identity: old.to_owned(),
+                    group_name: name,
+                },
+                new,
+            ));
         }
     }
 
     log::info!("Renamed history identity {old:?} to {new:?}");
-    Ok(())
+    Ok(moves)
 }
 
 pub(super) fn require_unstaged_recording(

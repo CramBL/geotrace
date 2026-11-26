@@ -485,7 +485,11 @@ impl App {
                 match op {
                     // Keep loaded recordings pointing at the renamed identity
                     // so later history operations on them still resolve.
-                    history_db::DbOp::IdentityRenamed { old, new } => {
+                    history_db::DbOp::IdentityRenamed {
+                        old,
+                        new,
+                        outcome: Some(_),
+                    } => {
                         self.shared
                             .borrow_mut()
                             .loaded_files
@@ -497,7 +501,8 @@ impl App {
                     }
                     history_db::DbOp::TracksShelved { .. }
                     | history_db::DbOp::TracksDeleted { .. }
-                    | history_db::DbOp::RecordingsDeleted { .. } => {}
+                    | history_db::DbOp::RecordingsDeleted { .. }
+                    | history_db::DbOp::IdentityRenamed { outcome: None, .. } => {}
                 }
                 self.toasts
                     .info(mutation_toast(op, loading_the_recording_again));
