@@ -180,7 +180,7 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
             .state()
             .history
             .load_recording_ui_state(db_ref.clone());
-        Some(self::next_visibility_response(&mut harness))
+        Some(recordings::next_visibility_response(&mut harness))
     } else {
         None
     };
@@ -303,7 +303,7 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
             .history
             .load_recording_ui_state(db_ref.clone());
         let Response::RecordingUiStateLoaded(Ok((_, reopened_visibility))) =
-            self::next_visibility_response(&mut harness)
+            recordings::next_visibility_response(&mut harness)
         else {
             panic!("expected the visibility saved after unloading");
         };
@@ -384,28 +384,6 @@ enum HistoryDecision {
     ReplaceWorker,
     ShelveBeforeRecalculation,
     UseStored,
-}
-
-fn next_visibility_response(harness: &mut Harness<'_, App>) -> Response {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let mut visibility = None;
-        for response in harness.state().history.poll() {
-            if matches!(response, Response::RecordingUiStateLoaded(_)) {
-                visibility = Some(response);
-            } else {
-                harness.state_mut().handle_history_response(response);
-            }
-        }
-        if let Some(response) = visibility {
-            return response;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out reading track visibility"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
 }
 
 #[test]
@@ -492,7 +470,7 @@ fn a_disk_copy_with_different_track_ranges_keeps_its_visibility_local() {
     harness.run_steps(3);
     harness.state().history.load_recording_ui_state(recording);
     let Response::RecordingUiStateLoaded(Ok((_, state))) =
-        self::next_visibility_response(&mut harness)
+        recordings::next_visibility_response(&mut harness)
     else {
         panic!("expected the stored layout's visibility");
     };

@@ -177,7 +177,10 @@ pub enum DbOp {
 /// A unit of work for the worker thread.
 enum Request {
     Read(ReadRequest),
-    Write(WriteRequest),
+    Write {
+        request: WriteRequest,
+        admission: Option<PendingWriteGuard>,
+    },
 }
 
 /// A request served from the read methods, which [`RecordingsHandle::read`]
@@ -575,7 +578,10 @@ impl HistoryWorker {
     }
 
     fn send_write(&self, req: WriteRequest) {
-        self.send(Request::Write(req));
+        self.send(Request::Write {
+            request: req,
+            admission: None,
+        });
     }
 
     pub fn list(&self) -> Option<ListRequestId> {
@@ -748,10 +754,26 @@ impl HistoryWorker {
         observation: StoredLayoutRevision,
         ui_state: RecordingUiState,
     ) {
-        self.send_write(WriteRequest::StoreRecordingUiState {
+        if !self.available() {
+            return;
+        }
+        let request = WriteRequest::StoreRecordingUiState {
             target: RecordingUiStateTarget::Observed(observation),
             ui_state,
-        });
+        };
+        let label = request.database_write_label();
+        let admission = self
+            .writable_registry
+            .as_ref()
+            .ok_or(WriteRejection::ReadOnlySession)
+            .and_then(|registry| registry.try_begin(label, WriteKind::RecordingDatabase));
+        match admission {
+            Ok(write) => self.send(Request::Write {
+                request,
+                admission: Some(write),
+            }),
+            Err(rejection) => log::debug!("Did not run {label:?}: {rejection}"),
+        }
     }
 
     pub fn migrate_recording_ui_state(&self, recording: DatabaseRef, ui_state: RecordingUiState) {
@@ -896,7 +918,10 @@ impl HistoryWorker {
             return Err(rejection.to_string());
         }
         sender
-            .send(Request::Write(request))
+            .send(Request::Write {
+                request,
+                admission: None,
+            })
             .map_err(|_send_error| "The recording history worker stopped".to_owned())
     }
 }
@@ -915,24 +940,33 @@ fn worker_loop(
     pending_writes: &PendingWrites,
     ui_state_versions: &UiStateVersionReporter,
 ) {
+    let mut ui_connected = true;
     while let Ok(req) = req_rx.recv() {
         let resp = match req {
-            Request::Read(req) => handle_read_request(&db, req, ui_state_versions),
-            Request::Write(req) => {
-                run_write_request(&mut db, req, pending_writes, ui_state_versions)
+            Request::Read(req) if ui_connected => handle_read_request(&db, req, ui_state_versions),
+            Request::Write { request, admission } if ui_connected || admission.is_some() => {
+                run_write_request(
+                    &mut db,
+                    request,
+                    admission,
+                    pending_writes,
+                    ui_state_versions,
+                )
             }
+            Request::Read(_) | Request::Write { .. } => continue,
         };
-        // If the UI is gone the send fails, there is nothing left to repaint.
-        if resp_tx.send(resp).is_err() {
-            break;
+        if resp_tx.send(resp).is_ok() {
+            ctx.request_repaint();
+        } else {
+            ui_connected = false;
         }
-        ctx.request_repaint();
     }
 }
 
 fn run_write_request(
     db: &mut RecordingsHandle,
     req: WriteRequest,
+    admission: Option<PendingWriteGuard>,
     pending_writes: &PendingWrites,
     ui_state_versions: &UiStateVersionReporter,
 ) -> Response {
@@ -940,7 +974,11 @@ fn run_write_request(
     let Some(db) = db.writer() else {
         return req.reject(WriteRejection::ReadOnlySession);
     };
-    match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
+    let admission = admission.map_or_else(
+        || pending_writes.try_begin(label, WriteKind::RecordingDatabase),
+        Ok,
+    );
+    match admission {
         Ok(_write) => handle_write_request(db, req, ui_state_versions),
         Err(rejection) => req.reject(rejection),
     }
@@ -1201,6 +1239,9 @@ fn handle_write_request(
                     db.set_recording_ui_state(recording, &ui_state, ui_state_versions)
                 }
             };
+            if let Err(error) = &result {
+                log::warn!("Storing the display settings of a recording failed: {error}");
+            }
             Response::RecordingUiStateStored(result)
         }
         WriteRequest::SaveLog(save) => {
@@ -2370,6 +2411,7 @@ mod tests {
         let Response::AttachedLogSettingsStored(completion) = run_write_request(
             &mut db,
             WriteRequest::StoreAttachedLogSettings(write),
+            None,
             &registry,
             &UiStateVersionReporter::default(),
         ) else {

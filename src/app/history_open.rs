@@ -643,12 +643,8 @@ impl App {
                     log::warn!("Storing snap runs failed: {e}");
                 }
             }
-            // A failed write costs only the stored copy: the session shows the
-            // tracks the user hid whatever the database took.
             Response::RecordingUiStateStored(result) => {
-                if let Err(e) = result {
-                    log::warn!("Storing the display settings of a recording failed: {e}");
-                }
+                result.ok();
             }
             Response::RecordingUiStateLoaded(Ok((observation, ui_state))) => {
                 self.apply_the_ui_state_stored_with_a_recording(observation, Ok(ui_state));
