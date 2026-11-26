@@ -140,7 +140,7 @@ fn capture(harness: &Harness<'_, App>) -> TrafficCapture {
     harness
         .state()
         .session_bridge
-        .as_ref()
+        .server()
         .unwrap()
         .traffic_capture()
 }

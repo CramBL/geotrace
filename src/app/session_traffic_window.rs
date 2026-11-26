@@ -20,7 +20,7 @@ impl SessionTrafficWindow {
         let item = ui
             .add_enabled(bridge_available, Button::new(MENU_LABEL))
             .on_hover_text("Inspect local session bridge requests and replies")
-            .on_disabled_hover_text("Start GeoTrace with --session-bridge to inspect traffic");
+            .on_disabled_hover_text("Start MCP in Settings to inspect traffic");
         if item.clicked() {
             self.open = true;
             ui.close();
@@ -120,7 +120,7 @@ impl App {
         if !self.session_traffic_window.open {
             return;
         }
-        if let Some(bridge) = &self.session_bridge {
+        if let Some(bridge) = self.session_bridge.server() {
             self.session_traffic_window
                 .show(ui, &bridge.traffic_capture());
         } else {

@@ -716,7 +716,7 @@ const QUERY_LANGUAGE_URI: &str = "geotrace://query-language";
 const ASYNC_RESULT_WAIT: Duration = Duration::from_secs(1);
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const QUERY_LANGUAGE_MIME_TYPE: &str = "text/markdown";
-const START_DESKTOP: &str = "Start GeoTrace with --session-bridge and try again.";
+const START_DESKTOP: &str = "Start MCP in GeoTrace Settings and try again.";
 
 #[cfg(test)]
 mod tests;

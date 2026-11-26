@@ -8,6 +8,7 @@ use egui_phosphor::regular::GAUGE as ICON_GAUGE;
 use egui_phosphor::regular::MAGNET as ICON_MAGNET;
 use egui_phosphor::regular::MONITOR as ICON_MONITOR;
 use egui_phosphor::regular::PATH as ICON_PATH;
+use egui_phosphor::regular::PLUG as ICON_PLUG;
 use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
 use egui_phosphor::regular::SUN as ICON_SUN;
 use egui_phosphor::regular::WAVES as ICON_WAVES;
@@ -30,6 +31,7 @@ mod geomagnetic_indices;
 mod interface;
 mod interference;
 mod label;
+mod mcp;
 mod persist;
 pub(super) mod processing;
 pub(super) mod search;
@@ -118,6 +120,7 @@ pub(super) enum SettingsPage {
     SolarFlares,
     SnapToRoad,
     Interface,
+    Mcp,
     Application,
 }
 
@@ -139,6 +142,7 @@ impl SettingsPage {
             Self::SolarFlares => gt_flare::text::LAYER_LABEL,
             Self::SnapToRoad => "Snap to road",
             Self::Interface => "Interface",
+            Self::Mcp => "MCP",
             Self::Application => "Application",
         }
     }
@@ -153,6 +157,7 @@ impl SettingsPage {
             Self::SolarFlares => ICON_SUN,
             Self::SnapToRoad => ICON_PATH,
             Self::Interface => ICON_MONITOR,
+            Self::Mcp => ICON_PLUG,
             Self::Application => ICON_APP_WINDOW,
         }
     }
@@ -163,7 +168,7 @@ impl SettingsPage {
     pub(super) fn searchable_labels(self) -> impl Iterator<Item = &'static str> {
         let labels: &[&str] = match self {
             Self::Processing => processing::SEARCHABLE_LABELS,
-            Self::Analysis => &[],
+            Self::Analysis | Self::Mcp => &[],
             Self::AircraftInterference => interference::SEARCHABLE_LABELS,
             Self::GeomagneticIndices => geomagnetic_indices::SEARCHABLE_LABELS,
             Self::IonosphericTec => tec::SEARCHABLE_LABELS,
@@ -491,6 +496,10 @@ impl App {
             }
             SettingsPage::Interface => {
                 self.show_interface_page(ui);
+                false
+            }
+            SettingsPage::Mcp => {
+                self.show_mcp_page(ui);
                 false
             }
             SettingsPage::Application => {

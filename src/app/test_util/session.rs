@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::thread;
 
 use egui_kittest::Harness;
@@ -16,7 +17,7 @@ use crate::app::App;
 
 use super::harness;
 
-pub fn app_with_bridge() -> (Harness<'static, App>, TestEndpoint) {
+pub fn app_with_bridge() -> (Harness<'static, App>, Arc<TestEndpoint>) {
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
@@ -25,14 +26,12 @@ pub fn app_with_bridge() -> (Harness<'static, App>, TestEndpoint) {
     (harness, endpoint)
 }
 
-pub fn install_bridge(harness: &mut Harness<'_, App>) -> TestEndpoint {
-    let endpoint = TestEndpoint::new().unwrap();
-    let ctx = harness.ctx.clone();
-    harness.state_mut().session_bridge = Some(
-        endpoint
-            .start_server(move || ctx.request_repaint())
-            .unwrap(),
-    );
+pub fn install_bridge(harness: &mut Harness<'_, App>) -> Arc<TestEndpoint> {
+    let endpoint = Arc::new(TestEndpoint::new().unwrap());
+    let app = harness.state_mut();
+    app.session_bridge_endpoint = Some(Arc::clone(&endpoint));
+    app.start_session_bridge();
+    assert!(app.session_bridge.server().is_some());
     endpoint
 }
 
@@ -46,6 +45,15 @@ pub fn exchange_payload(
         assert!(harness.step_until(|_| client.is_finished()));
         client.join().unwrap()
     })
+}
+
+pub fn exchange_request(
+    harness: &mut Harness<'_, App>,
+    endpoint: &TestEndpoint,
+    request: &Request,
+) -> Reply {
+    let payload = serde_json::to_vec(request).unwrap();
+    serde_json::from_slice(&self::exchange_payload(harness, endpoint, &payload)).unwrap()
 }
 
 pub fn match_page(page: QueryResultPage) -> (Vec<QueryMatch>, Option<QueryMatchPosition>) {

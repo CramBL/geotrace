@@ -412,7 +412,7 @@ impl App {
         if self.shutdown.has_begun() {
             return;
         }
-        self.session_bridge = None;
+        self.stop_session_bridge();
         self.editor_query.cancel();
         let history_write = self
             .pending_writes

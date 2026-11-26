@@ -3,6 +3,8 @@ use std::collections::VecDeque;
 use std::env;
 use std::path::PathBuf;
 use std::rc::Rc;
+#[cfg(test)]
+use std::sync::Arc;
 
 use association_batches::{AssociationBatches, LogArrival, RecordingOperationOrigin};
 use chrono::Duration;
@@ -17,7 +19,9 @@ use gt_map::NavMap;
 use gt_map::mapbox_tiles;
 use gt_pending_writes::PendingWrites;
 use gt_plot::PlotState;
-use gt_session_bridge::{Server as SessionBridge, SettingKey};
+use gt_session_bridge::SettingKey;
+#[cfg(test)]
+use gt_session_bridge::test_util::TestEndpoint;
 use gt_side_panel::{FilterPanelState, TreeState};
 use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
@@ -35,6 +39,7 @@ use panes::MainPane;
 use query_run::BackgroundQuery;
 use recording_name_template::TemplatePreviewRecording;
 use rustc_hash::{FxHashMap, FxHashSet};
+use session_bridge::SessionBridge;
 use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use session_panels::PendingPanelReveals;
@@ -101,6 +106,7 @@ mod recording_name_template;
 mod recording_names_cache;
 mod recording_ui_state;
 mod reference_window;
+mod session_bridge;
 mod session_history;
 mod session_map;
 mod session_panels;
@@ -410,7 +416,9 @@ pub struct App {
     solar_flare_settings: crate::settings::SolarFlareSettings,
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
-    session_bridge: Option<SessionBridge>,
+    session_bridge: SessionBridge,
+    #[cfg(test)]
+    session_bridge_endpoint: Option<Arc<TestEndpoint>>,
     session_traffic_window: SessionTrafficWindow,
     session_history: SessionHistory,
     pending_session_query_draft: Option<String>,
@@ -515,11 +523,6 @@ pub struct App {
 }
 
 impl App {
-    pub(crate) fn start_session_bridge(&mut self, ctx: egui::Context) -> std::io::Result<()> {
-        self.session_bridge = Some(SessionBridge::start(move || ctx.request_repaint())?);
-        Ok(())
-    }
-
     pub fn new_with_files(
         cc: &eframe::CreationContext<'_>,
         paths: &[PathBuf],
@@ -665,7 +668,9 @@ impl App {
             solar_flare_settings,
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
-            session_bridge: None,
+            session_bridge: SessionBridge::default(),
+            #[cfg(test)]
+            session_bridge_endpoint: None,
             session_traffic_window: SessionTrafficWindow::default(),
             session_history: SessionHistory::default(),
             pending_session_query_draft: None,
