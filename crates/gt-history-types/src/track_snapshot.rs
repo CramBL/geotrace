@@ -176,6 +176,23 @@ impl HistoryAccess {
         Ok(())
     }
 
+    /// Current observations with layout handles held by a caller.
+    pub fn observed_recording_addresses(
+        &self,
+        database: &impl ReadOnlyHistoryDatabase,
+    ) -> Result<Vec<DatabaseRef>, DbError> {
+        let identity = Handle::from_path(database.path())?;
+        let mut recordings = Vec::new();
+        if let Some(revisions) = REVISIONS.lock().get(&identity) {
+            recordings.extend(revisions.iter().filter_map(|(recording, revision)| {
+                let layout = revision.layout.upgrade()?;
+                layout.load(Ordering::Acquire).then(|| recording.clone())
+            }));
+        }
+        recordings.sort_unstable();
+        Ok(recordings)
+    }
+
     pub fn invalidate_track_membership(
         &self,
         database: &impl ReadOnlyHistoryDatabase,

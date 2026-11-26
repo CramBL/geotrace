@@ -21,6 +21,13 @@ use gt_history_types::{
 use hdf5::Group;
 use thiserror::Error;
 
+pub(crate) use identity_rename::{
+    RENAME_SCHEMA_VERSION, recording_has_independent_links, rename_identity,
+    validate_pending_renames,
+};
+
+mod identity_rename;
+
 /// The fixed-capacity ladder the string-attribute readers share: pick the
 /// smallest compile-time capacity that holds the on-disk size `$len`, then hand
 /// the concrete `$fixed<CAP>` type to the `$read` macro.
@@ -62,6 +69,8 @@ pub(crate) enum InternalError {
     Hdf5(#[from] hdf5::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Snapshot(#[from] DbError),
 }
 
 impl From<InternalError> for DbError {
@@ -70,6 +79,7 @@ impl From<InternalError> for DbError {
             InternalError::Hdf5(e) => DbError::Backend(e.to_string()),
             InternalError::Io(e) => DbError::Io(e),
             InternalError::Conflict(msg) => DbError::Backend(msg),
+            InternalError::Snapshot(error) => error,
         }
     }
 }
@@ -166,12 +176,12 @@ fn ensure_identity_group(by_id: &Group, identity: &str) -> Result<Group, Interna
     Ok(id_grp)
 }
 
-pub(crate) fn find_identity_group(
-    by_id: &Group,
-    identity: &str,
-    recording_group: Option<&str>,
-) -> Result<Option<(String, Group)>, InternalError> {
-    let mut matching = gt_history_types::identity_group_candidates(identity).filter_map(|name| {
+fn matching_identity_groups<'a>(
+    by_id: &'a Group,
+    identity: &'a str,
+    recording_group: Option<&'a str>,
+) -> impl Iterator<Item = (String, Group)> + 'a {
+    gt_history_types::identity_group_candidates(identity).filter_map(move |name| {
         if !by_id.link_exists(&name) {
             return None;
         }
@@ -183,14 +193,25 @@ pub(crate) fn find_identity_group(
                     && group.group(recording).is_ok()
             }))
         .then(|| (name.into_owned(), group))
-    });
+    })
+}
+
+pub(crate) fn find_identity_group(
+    by_id: &Group,
+    identity: &str,
+    recording_group: Option<&str>,
+) -> Result<Option<(String, Group)>, InternalError> {
+    let mut matching = self::matching_identity_groups(by_id, identity, recording_group);
     let selected = matching.next();
-    if let Some(recording) = recording_group
-        && matching.next().is_some()
-    {
-        return Err(InternalError::Conflict(format!(
-            "ambiguous stored recording {identity:?}/{recording:?}"
-        )));
+    if let Some(recording) = recording_group {
+        if matching.next().is_some() {
+            return Err(InternalError::Conflict(format!(
+                "ambiguous stored recording {identity:?}/{recording:?}"
+            )));
+        }
+        if let Some((_, identity)) = &selected {
+            identity_rename::require_unstaged_recording(identity, recording)?;
+        }
     }
     Ok(selected)
 }
@@ -211,80 +232,6 @@ fn open_identity_group(
             };
             hdf5::Error::from(message).into()
         })
-}
-
-/// Overwrite (or add) the `identity` string attribute on a group. The plain
-/// [`write_meta_attrs`] path skips existing attributes, and a string attribute cannot be
-/// rewritten in place, so this deletes any existing attribute first.
-fn overwrite_identity_attr(group: &Group, identity: &str) -> Result<(), InternalError> {
-    if group.attr(ATTR_IDENTITY).is_ok() {
-        group.delete_attr(ATTR_IDENTITY)?;
-    }
-    write_string_attr(group, ATTR_IDENTITY, identity)
-}
-
-/// Rename an identity, moving all its recordings under the `new` identity group.
-///
-/// Recordings are object-copied into the destination and the old identity group
-/// is unlinked (there is no HDF5 move primitive), mirroring
-/// [`repair_unindexed_recordings`]. If `new` already exists the recordings merge
-/// into it. A no-op when `old` is absent or equal to `new`.
-///
-/// This copies the recordings, so the file grows by their size. The
-/// system-HDF5 backend does not reclaim the vacated space (the
-/// whole-file-rewrite pure backend does).
-pub(crate) fn rename_identity(
-    db_path: &std::path::Path,
-    old: &str,
-    new: &str,
-) -> Result<(), InternalError> {
-    if old == new {
-        return Ok(());
-    }
-    if new.trim().is_empty() {
-        log::warn!("rename_identity: not renaming {old:?} to an empty identity");
-        return Ok(());
-    }
-
-    let file = hdf5::File::open_rw(db_path)?;
-    let Ok(by_id) = file.group("by_identity") else {
-        return Ok(());
-    };
-    let Some((source_name, src)) = find_identity_group(&by_id, old, None)? else {
-        log::warn!("rename_identity: identity {old:?} not found");
-        return Ok(());
-    };
-    let destination = find_identity_group(&by_id, new, None)?;
-    let rec_names = src.member_names()?;
-    for name in &rec_names {
-        if destination
-            .as_ref()
-            .is_some_and(|(_, group)| group.link_exists(name))
-            || find_identity_group(&by_id, new, Some(name))?.is_some()
-        {
-            return Err(InternalError::Conflict(format!(
-                "cannot merge identity {old:?} into {new:?}: recording {name:?} exists in both"
-            )));
-        }
-    }
-    let dst = match destination {
-        Some((_, group)) => group,
-        None => ensure_identity_group(&by_id, new)?,
-    };
-
-    for rec_name in &rec_names {
-        let rec = src.group(rec_name)?;
-        rec.copy_to(&dst, rec_name)?;
-        // The copy still has the old identity attribute. Rewrite it.
-        overwrite_identity_attr(&dst.group(rec_name)?, new)?;
-    }
-
-    // Drop the now-vacated old identity group (under whichever name it existed).
-    by_id.unlink(&source_name)?;
-
-    file.flush()?;
-    log::info!("Renamed history identity {old:?} to {new:?}");
-    Ok(())
 }
 
 fn is_indexed_recording_path(path: &str, identity: &str) -> bool {
@@ -351,7 +298,10 @@ fn find_indexed_recording(
     Ok(None)
 }
 
-pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), InternalError> {
+pub(crate) fn repair_unindexed_recordings(
+    db_path: &Path,
+    schema_version: i64,
+) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let mut invalidated = false;
     let mut before_link_change = || {
@@ -366,8 +316,24 @@ pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), Internal
     // for a recording stored outside `by_identity` and file it under the
     // stage's own name.
     let mut resolved_stages = 0_usize;
-    if let Ok(meta_grp) = file.group("meta") {
-        for name in meta_grp.member_names()? {
+    let rename_guarded = schema_version == RENAME_SCHEMA_VERSION;
+    let meta = file.group("meta");
+    if rename_guarded && meta.is_err() {
+        return Err(identity_rename::guarded_schema_error().into());
+    }
+    if let Ok(meta_grp) = meta {
+        let stages = meta_grp.member_names()?;
+        let renames = stages
+            .iter()
+            .filter(|name| name.starts_with(identity_rename::STAGE_PREFIX));
+        if rename_guarded && renames.clone().count() != 1 {
+            return Err(identity_rename::guarded_schema_error().into());
+        }
+        for name in renames {
+            identity_rename::recover_stage(&file, &meta_grp, name, &mut before_link_change)?;
+            resolved_stages += 1;
+        }
+        for name in stages {
             if name.starts_with(REPLACEMENT_STAGE_PREFIX) {
                 resolve_replacement_stage(&file, &name, &mut before_link_change)?;
                 resolved_stages += 1;
@@ -788,6 +754,16 @@ pub(crate) fn insert_recording(
     }))
 }
 
+fn read_complete_replacement(stage: &Group, stage_name: &str) -> Option<DatabaseRef> {
+    let group_name = stage_name.strip_prefix(REPLACEMENT_STAGE_PREFIX)?;
+    let identity = recording_identity(stage)?;
+    read_recording_meta(stage)?;
+    Some(DatabaseRef {
+        identity,
+        group_name: group_name.to_owned(),
+    })
+}
+
 /// Resolve one replacement stage, in each of the three states an interrupted
 /// [`replace_recording`] leaves one in.
 ///
@@ -804,19 +780,22 @@ fn resolve_replacement_stage(
     stage_name: &str,
     before_link_change: impl FnOnce() -> io::Result<()>,
 ) -> Result<(), InternalError> {
-    let Some(group_name) = stage_name.strip_prefix(REPLACEMENT_STAGE_PREFIX) else {
+    if !stage_name.starts_with(REPLACEMENT_STAGE_PREFIX) {
         return Ok(());
-    };
+    }
     let meta_grp = file.group("meta")?;
     let stage = meta_grp.group(stage_name)?;
     let by_id = file.group("by_identity")?;
 
-    let (Some(identity), Some(_)) = (recording_identity(&stage), read_recording_meta(&stage))
+    let Some(DatabaseRef {
+        identity,
+        group_name,
+    }) = self::read_complete_replacement(&stage, stage_name)
     else {
         return meta_grp.unlink(stage_name).map_err(Into::into);
     };
 
-    if find_identity_group(&by_id, &identity, Some(group_name))?.is_some() {
+    if find_identity_group(&by_id, &identity, Some(&group_name))?.is_some() {
         return meta_grp.unlink(stage_name).map_err(Into::into);
     }
     let identity_name = if let Some((name, _)) = find_identity_group(&by_id, &identity, None)? {

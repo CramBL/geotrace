@@ -13,6 +13,8 @@ use gt_history::{
     StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
     StoredTrackTable, TrackLayoutVisibility, TrackRange, TrackState,
 };
+#[cfg(feature = "backend-sys")]
+use gt_history_backend_pure::PureDb;
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
@@ -25,6 +27,8 @@ use gt_history_types::{
 use gt_test_utils::navigation_evidence_fixtures::{self, NavigationDetail};
 use gt_track_builder::{FixPlacementRule, SegmentationConfig};
 use gt_types::{LoadedFile, LoadedTrack, SatelliteQueryScope};
+#[cfg(feature = "backend-sys")]
+use hdf5::types::{FixedUnicode, VarLenUnicode};
 use hdf5::{File as NativeFile, ObjectReference1, ReferencedObject};
 use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceSettings, FileSpaceStrategy};
 use rstest::rstest;
@@ -933,6 +937,812 @@ fn rename_identity_merges_into_an_existing_name() {
     );
 }
 
+#[cfg(feature = "backend-sys")]
+#[rstest]
+#[case::current_schema(Some(CURRENT_SCHEMA_VERSION))]
+#[case::legacy_schema(None)]
+fn native_history_merge_preserves_objects_and_incumbent_track_proof(#[case] schema: Option<i64>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let incumbent = insert_two_track(&mut db, &"mål".repeat(24), 2_000_000_000, 20);
+    let reporter = UiStateVersionReporter::default();
+    let source_state = RecordingUiState::with_hidden_track_numbers([2]);
+    let incumbent_state = RecordingUiState::with_hidden_track_numbers([1]);
+    db.set_recording_ui_state(&source, &source_state, &reporter)
+        .unwrap();
+    db.set_recording_ui_state(&incumbent, &incumbent_state, &reporter)
+        .unwrap();
+    let source_path = format!("/by_identity/{source}");
+    let (source_identity_token, record_token) = {
+        let file = NativeFile::open_rw(&path).unwrap();
+        if schema.is_none() {
+            file.delete_attr(SCHEMA_VERSION_ATTR).unwrap();
+        }
+        let identities = file.group("by_identity").unwrap();
+        for identity in [&source.identity, &incumbent.identity] {
+            identities
+                .relink(&gt_history::identity_group_name(identity), identity)
+                .unwrap();
+        }
+        let group = file.group(&source_path).unwrap();
+        let state = group.group(UI_STATE_GROUP).unwrap();
+        let viewport = state.create_group("viewport").unwrap();
+        viewport
+            .new_dataset_builder()
+            .with_data(&[-8_i32, 20])
+            .create("offset")
+            .unwrap();
+        state.link_hard("viewport", "viewport_alias").unwrap();
+        let observer = file.create_group("observer").unwrap();
+        let reference = observer
+            .reference::<ObjectReference1>(&format!("{source_path}/{UI_STATE_GROUP}/viewport"))
+            .unwrap();
+        observer
+            .new_attr::<ObjectReference1>()
+            .create("viewport")
+            .unwrap()
+            .write_scalar(&reference)
+            .unwrap();
+        (
+            identities
+                .group(&source.identity)
+                .unwrap()
+                .loc_info()
+                .unwrap()
+                .token,
+            group.loc_info().unwrap().token,
+        )
+    };
+    let access = HistoryAccess::lock();
+    let before = access.read_track_snapshot(&db, &source).unwrap();
+    let unchanged = access.read_track_snapshot(&db, &incumbent).unwrap();
+    db.rename_identity(&source.identity, &incumbent.identity)
+        .unwrap();
+    assert!(!before.is_current());
+    let observed = access.read_track_snapshot(&db, &incumbent).unwrap();
+    let moved = DatabaseRef {
+        identity: incumbent.identity.clone(),
+        group_name: source.group_name,
+    };
+    assert_eq!(
+        db.recording_ui_state(&moved, &reporter).unwrap(),
+        source_state
+    );
+    assert_eq!(
+        db.recording_ui_state(&incumbent, &reporter).unwrap(),
+        incumbent_state
+    );
+    let file = NativeFile::open(path).unwrap();
+    assert_eq!(
+        file.attr(SCHEMA_VERSION_ATTR)
+            .ok()
+            .map(|attr| attr.read_scalar::<i64>().unwrap()),
+        schema
+    );
+    assert!(!file.link_exists(&source_path));
+    let old_identity = file.group("/by_identity/source").unwrap();
+    assert!(old_identity.is_empty());
+    assert_eq!(
+        old_identity.loc_info().unwrap().token,
+        source_identity_token
+    );
+    let group = file.group(&format!("/by_identity/{moved}")).unwrap();
+    assert_eq!(group.loc_info().unwrap().token, record_token);
+    let identity = group
+        .attr(ATTR_IDENTITY)
+        .unwrap()
+        .read_scalar::<FixedUnicode<256>>()
+        .unwrap();
+    assert_eq!(identity.as_str(), incumbent.identity);
+    let state = group.group(UI_STATE_GROUP).unwrap();
+    let viewport = state.group("viewport").unwrap();
+    let token = viewport.loc_info().unwrap().token;
+    assert_eq!(
+        state
+            .group("viewport_alias")
+            .unwrap()
+            .loc_info()
+            .unwrap()
+            .token,
+        token,
+    );
+    let observer = file.group("observer").unwrap();
+    let reference = observer
+        .attr("viewport")
+        .unwrap()
+        .read_scalar::<ObjectReference1>()
+        .unwrap();
+    let ReferencedObject::Group(referenced) = observer.dereference(&reference).unwrap() else {
+        panic!("expected the viewport group");
+    };
+    assert_eq!(referenced.loc_info().unwrap().token, token);
+    assert_eq!(
+        viewport
+            .dataset("offset")
+            .unwrap()
+            .read_raw::<i32>()
+            .unwrap(),
+        [-8, 20],
+    );
+    assert!(unchanged.is_current_with_membership());
+    assert!(observed.same_observation(&unchanged));
+}
+
+#[cfg(feature = "backend-sys")]
+#[test]
+fn native_history_rename_rejects_an_ambiguous_source_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let other = insert_two_track(&mut db, "other", 2_000_000_000, 20);
+    let encoded = format!(
+        "{}/{}",
+        gt_history::identity_group_name(&source.identity),
+        source.group_name
+    );
+    let legacy = source.to_string();
+    {
+        let file = NativeFile::open_rw(&path).unwrap();
+        let identities = file.group("by_identity").unwrap();
+        identities.create_group(&source.identity).unwrap();
+        identities
+            .relink(
+                &format!(
+                    "{}/{}",
+                    gt_history::identity_group_name(&other.identity),
+                    other.group_name
+                ),
+                &legacy,
+            )
+            .unwrap();
+    }
+    let result = db.rename_identity(&source.identity, "new");
+    assert!(matches!(result, Err(DbError::Backend(message)) if message.contains("ambiguous")));
+    let file = NativeFile::open(path).unwrap();
+    let identities = file.group("by_identity").unwrap();
+    assert!(identities.link_exists(&encoded));
+    assert!(identities.link_exists(&legacy));
+    assert!(!identities.link_exists(&gt_history::identity_group_name("new")));
+}
+
+#[cfg(feature = "backend-sys")]
+#[test]
+fn a_symbolic_history_recording_loses_its_proof_when_its_target_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let replacement = insert_two_track(&mut db, "replacement", 2_000_000_000, 20);
+    let target = insert_two_track(&mut db, "target", 3_000_000_000, 20);
+    let legacy_group = "shared-legacy-group";
+    let identity_path =
+        |identity: &str| format!("/by_identity/{}", gt_history::identity_group_name(identity));
+    {
+        let file = NativeFile::open_rw(&path).unwrap();
+        for recording in [&source, &replacement] {
+            file.group(&identity_path(&recording.identity))
+                .unwrap()
+                .relink(&recording.group_name, legacy_group)
+                .unwrap();
+        }
+        file.group(&identity_path(&target.identity))
+            .unwrap()
+            .link_soft(
+                &format!("{}/{}", identity_path(&source.identity), legacy_group),
+                "alias",
+            )
+            .unwrap();
+    }
+    let alias = DatabaseRef {
+        identity: target.identity.clone(),
+        group_name: "alias".to_owned(),
+    };
+    let access = HistoryAccess::lock();
+    let before = access.read_track_snapshot(&db, &alias).unwrap();
+    db.rename_identity(&source.identity, &target.identity)
+        .unwrap();
+    assert!(!db.contains(&alias).unwrap());
+    db.rename_identity(&replacement.identity, &source.identity)
+        .unwrap();
+    let after = access.read_track_snapshot(&db, &alias).unwrap();
+    assert_eq!(before.rows(), after.rows());
+    assert!(!before.is_current_with_membership());
+    assert!(!before.same_observation(&after));
+    assert!(after.is_current_with_membership());
+}
+
+#[cfg(feature = "backend-sys")]
+#[rstest]
+#[case::identities("by_identity")]
+#[case::metadata("meta")]
+fn native_history_rename_rejects_external_root_groups(#[case] root_name: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let local_path = dir.path().join("local.h5");
+    let external_path = dir.path().join("external.h5");
+    let mut local = Database::open_or_create(&local_path).unwrap();
+    let mut external = Database::open_or_create(&external_path).unwrap();
+    let source = insert_two_track(&mut local, "source", 1_000_000_000, 20);
+    let other = insert_two_track(&mut external, &source.identity, 2_000_000_000, 20);
+    let identity_group = gt_history::identity_group_name(&source.identity);
+    let recording_path = format!("{identity_group}/{}", source.group_name);
+    let external_recording = format!("/by_identity/{recording_path}");
+    {
+        let file = NativeFile::open_rw(&external_path).unwrap();
+        file.relink(
+            &format!("/by_identity/{identity_group}/{}", other.group_name),
+            &external_recording,
+        )
+        .unwrap();
+    }
+    let local_root = format!("local_{root_name}");
+    {
+        let file = NativeFile::open_rw(&local_path).unwrap();
+        file.relink(root_name, &local_root).unwrap();
+        file.link_external("external.h5", &format!("/{root_name}"), root_name)
+            .unwrap();
+    }
+    let external_contents = fs::read(&external_path).unwrap();
+    let result = local.rename_identity(&source.identity, "destination");
+    assert!(
+        matches!(result, Err(DbError::Backend(message)) if message.contains("requires a single hard link"))
+    );
+    assert!(fs::read(&external_path).unwrap() == external_contents);
+    let file = NativeFile::open(local_path).unwrap();
+    let local_recording = if root_name == "by_identity" {
+        format!("/{local_root}/{recording_path}")
+    } else {
+        external_recording
+    };
+    assert_eq!(
+        file.group(&local_recording)
+            .unwrap()
+            .attr(ATTR_START_US)
+            .unwrap()
+            .read_scalar::<i64>()
+            .unwrap(),
+        1_000_000_000
+    );
+    assert_eq!(
+        file.attr(SCHEMA_VERSION_ATTR)
+            .unwrap()
+            .read_scalar::<i64>()
+            .unwrap(),
+        CURRENT_SCHEMA_VERSION
+    );
+}
+
+#[cfg(feature = "backend-sys")]
+#[derive(Clone, Copy)]
+enum AlternateRenameAlias {
+    DestinationGroup,
+    DestinationRecording,
+    UnrelatedRecording,
+}
+
+#[cfg(feature = "backend-sys")]
+#[rstest]
+#[case::identity_group(AlternateRenameAlias::DestinationGroup)]
+#[case::recording_link(AlternateRenameAlias::DestinationRecording)]
+#[case::another_recording_link(AlternateRenameAlias::UnrelatedRecording)]
+fn native_history_rename_checks_alternate_links_at_the_destination(
+    #[case] alias: AlternateRenameAlias,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let destination_identity = "destination";
+    let destination_group = gt_history::identity_group_name(destination_identity);
+    let destination_path = format!("/by_identity/{destination_group}/{}", source.group_name);
+    if !matches!(alias, AlternateRenameAlias::DestinationGroup) {
+        insert_two_track(&mut db, destination_identity, 2_000_000_000, 20);
+    }
+    {
+        let file = NativeFile::open_rw(&path).unwrap();
+        let identities = file.group("by_identity").unwrap();
+        if matches!(alias, AlternateRenameAlias::DestinationGroup) {
+            identities
+                .link_soft(
+                    &format!("/by_identity/{destination_group}"),
+                    destination_identity,
+                )
+                .unwrap();
+        } else {
+            let (alternate_name, target) = match alias {
+                AlternateRenameAlias::UnrelatedRecording => (
+                    "another_recording",
+                    format!("/by_identity/{destination_group}/another_recording"),
+                ),
+                _ => (source.group_name.as_str(), destination_path.clone()),
+            };
+            identities
+                .create_group(destination_identity)
+                .unwrap()
+                .link_soft(&target, alternate_name)
+                .unwrap();
+        }
+    }
+    let access = HistoryAccess::lock();
+    let original = access.read_track_snapshot(&db, &source).unwrap();
+    let result = db.rename_identity(&source.identity, destination_identity);
+    let moved = DatabaseRef {
+        identity: destination_identity.to_owned(),
+        group_name: source.group_name.clone(),
+    };
+    let expected = match alias {
+        AlternateRenameAlias::DestinationGroup => Some("requires a hard link"),
+        AlternateRenameAlias::DestinationRecording => Some("exists in both"),
+        AlternateRenameAlias::UnrelatedRecording => None,
+    };
+    if let Some(expected) = expected {
+        assert!(matches!(result, Err(DbError::Backend(message)) if message.contains(expected)));
+        let retained = access.read_track_snapshot(&db, &source).unwrap();
+        assert!(original.is_current_with_membership());
+        assert!(retained.same_observation(&original));
+        assert!(!db.contains(&moved).unwrap());
+    } else {
+        result.unwrap();
+        assert!(!original.is_current());
+        let published = access.read_track_snapshot(&db, &moved).unwrap();
+        assert!(published.is_current_with_membership());
+        assert_eq!(published.rows(), original.rows());
+    }
+}
+
+#[cfg(feature = "backend-sys")]
+#[test]
+fn native_history_rename_rejects_a_destination_link_to_uncreated_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let destination = "destination";
+    {
+        let file = NativeFile::open_rw(&path).unwrap();
+        file.unlink("meta").unwrap();
+        file.group("by_identity")
+            .unwrap()
+            .link_soft("/meta", &gt_history::identity_group_name(destination))
+            .unwrap();
+    }
+    let access = HistoryAccess::lock();
+    let original = access.read_track_snapshot(&db, &source).unwrap();
+    assert!(matches!(
+        db.rename_identity(&source.identity, destination),
+        Err(DbError::Backend(message)) if message.contains("requires a vacant identity path")
+    ));
+    let retained = access.read_track_snapshot(&db, &source).unwrap();
+    assert!(original.is_current_with_membership());
+    assert!(retained.same_observation(&original));
+    let file = NativeFile::open(path).unwrap();
+    assert!(!file.link_exists("meta"));
+    assert_eq!(
+        file.attr(SCHEMA_VERSION_ATTR)
+            .unwrap()
+            .read_scalar::<i64>()
+            .unwrap(),
+        CURRENT_SCHEMA_VERSION
+    );
+}
+
+#[cfg(feature = "backend-sys")]
+#[rstest]
+#[case::disjoint_sources(false)]
+#[case::collision_in_legacy_source(true)]
+fn native_history_rename_checks_every_source_group_before_moving_recordings(
+    #[case] collision: bool,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let legacy = insert_two_track(&mut db, &source.identity, 2_000_000_000, 20);
+    let incumbent = insert_two_track(&mut db, "destination", 3_000_000_000, 20);
+    let source_group = gt_history::identity_group_name(&source.identity);
+    let destination_group = gt_history::identity_group_name(&incumbent.identity);
+    let original_paths = [
+        format!("{source_group}/{}", source.group_name),
+        legacy.to_string(),
+    ];
+    let tokens = {
+        let file = NativeFile::open_rw(&path).unwrap();
+        let identities = file.group("by_identity").unwrap();
+        identities.create_group(&source.identity).unwrap();
+        identities
+            .relink(
+                &format!("{source_group}/{}", legacy.group_name),
+                &original_paths[1],
+            )
+            .unwrap();
+        if collision {
+            identities
+                .relink(
+                    &format!("{destination_group}/{}", incumbent.group_name),
+                    &format!("{destination_group}/{}", legacy.group_name),
+                )
+                .unwrap();
+        }
+        original_paths
+            .each_ref()
+            .map(|address| identities.group(address).unwrap().loc_info().unwrap().token)
+    };
+    let access = HistoryAccess::lock();
+    let original =
+        [&source, &legacy].map(|reference| access.read_track_snapshot(&db, reference).unwrap());
+    let result = db.rename_identity(&source.identity, &incumbent.identity);
+    if collision {
+        assert!(
+            matches!(result, Err(DbError::Backend(message)) if message.contains("exists in both"))
+        );
+    } else {
+        result.unwrap();
+    }
+    let file = NativeFile::open(path).unwrap();
+    let identities = file.group("by_identity").unwrap();
+    for ((reference, before), (original_path, token)) in [&source, &legacy]
+        .into_iter()
+        .zip(original)
+        .zip(original_paths.into_iter().zip(tokens))
+    {
+        assert_eq!(db.contains(reference).unwrap(), collision);
+        assert_eq!(before.is_current_with_membership(), collision);
+        let moved = DatabaseRef {
+            identity: incumbent.identity.clone(),
+            group_name: reference.group_name.clone(),
+        };
+        let (effective, effective_path) = if collision {
+            (reference, original_path)
+        } else {
+            (&moved, format!("{destination_group}/{}", moved.group_name))
+        };
+        let after = access.read_track_snapshot(&db, effective).unwrap();
+        assert!(after.is_current_with_membership());
+        assert_eq!(after.rows(), before.rows());
+        assert_eq!(
+            identities
+                .group(&effective_path)
+                .unwrap()
+                .loc_info()
+                .unwrap()
+                .token,
+            token
+        );
+    }
+}
+
+#[cfg(feature = "backend-sys")]
+#[derive(Clone, Copy)]
+enum InterruptedRename {
+    AdditionalRecordingLink,
+    DanglingAlternateRecording,
+    DestinationIdentity,
+    DestinationLink,
+    EmptyStage,
+    GuardedSource,
+    MismatchedIdentityGroup,
+    MissingIdentity,
+    RestoredSchema,
+    SourceIdentity,
+    StagedObject,
+    UnwrittenIdentity,
+}
+
+#[cfg(feature = "backend-sys")]
+const RENAME_SCHEMA_GUARD: i64 = 127;
+
+#[cfg(feature = "backend-sys")]
+#[rstest]
+#[case::during_stage_creation(InterruptedRename::EmptyStage)]
+#[case::staged_object(InterruptedRename::StagedObject)]
+#[case::guarded_source(InterruptedRename::GuardedSource)]
+#[case::source_identity(InterruptedRename::SourceIdentity)]
+#[case::missing_identity(InterruptedRename::MissingIdentity)]
+#[case::unwritten_identity(InterruptedRename::UnwrittenIdentity)]
+#[case::destination_identity(InterruptedRename::DestinationIdentity)]
+#[case::destination_link(InterruptedRename::DestinationLink)]
+#[case::restored_schema(InterruptedRename::RestoredSchema)]
+#[case::mismatched_identity_group(InterruptedRename::MismatchedIdentityGroup)]
+#[case::additional_recording_link(InterruptedRename::AdditionalRecordingLink)]
+#[case::dangling_alternate_recording(InterruptedRename::DanglingAlternateRecording)]
+fn native_history_reopen_retains_the_recording_at_each_durable_rename_stage(
+    #[case] phase: InterruptedRename,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let target = insert_two_track(&mut db, &"mål".repeat(24), 2_000_000_000, 20);
+    let identity_path =
+        |identity: &str| format!("/by_identity/{}", gt_history::identity_group_name(identity));
+    let group_path = |identity: &str| format!("{}/{}", identity_path(identity), source.group_name);
+    let source_path = group_path(&source.identity);
+    let destination_path = group_path(&target.identity);
+    let stage_name = format!("__geotrace_rename__{}", source.group_name);
+    let write_probe_name = "__geotrace_write_probe__";
+    let guarded = !matches!(
+        phase,
+        InterruptedRename::EmptyStage
+            | InterruptedRename::StagedObject
+            | InterruptedRename::RestoredSchema
+    );
+    let token = {
+        let file = NativeFile::open_rw(&path).unwrap();
+        let group = file.group(&source_path).unwrap();
+        let observer = file.create_group("observer").unwrap();
+        let reference = observer
+            .reference::<ObjectReference1>(&source_path)
+            .unwrap();
+        observer
+            .new_attr::<ObjectReference1>()
+            .create("recording")
+            .unwrap()
+            .write_scalar(&reference)
+            .unwrap();
+        let stage = file
+            .group("meta")
+            .unwrap()
+            .create_group(&stage_name)
+            .unwrap();
+        if !matches!(phase, InterruptedRename::EmptyStage) {
+            for (attr, identity) in [
+                ("source", &source.identity),
+                ("destination", &target.identity),
+            ] {
+                stage
+                    .new_attr::<VarLenUnicode>()
+                    .create(attr)
+                    .unwrap()
+                    .write_scalar(&identity_path(identity).parse::<VarLenUnicode>().unwrap())
+                    .unwrap();
+            }
+            stage
+                .new_attr::<i64>()
+                .create("previous_schema_version")
+                .unwrap()
+                .write_scalar(&CURRENT_SCHEMA_VERSION)
+                .unwrap();
+            stage.link_hard(&source_path, "recording").unwrap();
+            if guarded {
+                file.attr(SCHEMA_VERSION_ATTR)
+                    .unwrap()
+                    .write_scalar(&RENAME_SCHEMA_GUARD)
+                    .unwrap();
+            }
+            if !matches!(
+                phase,
+                InterruptedRename::StagedObject | InterruptedRename::GuardedSource
+            ) {
+                file.unlink(&source_path).unwrap();
+            }
+            match phase {
+                InterruptedRename::DestinationIdentity
+                | InterruptedRename::DestinationLink
+                | InterruptedRename::DanglingAlternateRecording
+                | InterruptedRename::RestoredSchema
+                | InterruptedRename::UnwrittenIdentity => {
+                    group.delete_attr(ATTR_IDENTITY).unwrap();
+                    let attr = group
+                        .new_attr::<FixedUnicode<256>>()
+                        .create(ATTR_IDENTITY)
+                        .unwrap();
+                    if !matches!(phase, InterruptedRename::UnwrittenIdentity) {
+                        attr.write_scalar(&target.identity.parse::<FixedUnicode<256>>().unwrap())
+                            .unwrap();
+                    }
+                }
+                InterruptedRename::MissingIdentity => group.delete_attr(ATTR_IDENTITY).unwrap(),
+                _ => {}
+            }
+        }
+        if matches!(
+            phase,
+            InterruptedRename::DestinationLink | InterruptedRename::RestoredSchema
+        ) {
+            file.link_hard(&format!("{}/recording", stage.name()), &destination_path)
+                .unwrap();
+        }
+        if matches!(phase, InterruptedRename::RestoredSchema) {
+            file.create_group(write_probe_name).unwrap();
+        }
+        if matches!(phase, InterruptedRename::MismatchedIdentityGroup) {
+            file.group(&identity_path(&source.identity))
+                .unwrap()
+                .attr(ATTR_IDENTITY)
+                .unwrap()
+                .write_scalar(&"other".parse::<FixedUnicode<64>>().unwrap())
+                .unwrap();
+        }
+        if matches!(phase, InterruptedRename::AdditionalRecordingLink) {
+            file.link_hard(&format!("{}/recording", stage.name()), "/observer/alias")
+                .unwrap();
+        }
+        if matches!(phase, InterruptedRename::DanglingAlternateRecording) {
+            file.group("by_identity")
+                .unwrap()
+                .create_group(&target.identity)
+                .unwrap()
+                .link_soft(&destination_path, &source.group_name)
+                .unwrap();
+        }
+        group.loc_info().unwrap().token
+    };
+    let moved = DatabaseRef {
+        identity: target.identity.clone(),
+        group_name: source.group_name.clone(),
+    };
+    let public_address = match phase {
+        InterruptedRename::EmptyStage
+        | InterruptedRename::StagedObject
+        | InterruptedRename::GuardedSource => Some(&source),
+        InterruptedRename::DestinationLink | InterruptedRename::RestoredSchema => Some(&moved),
+        _ => None,
+    };
+    let listed: Vec<_> = db
+        .list_recordings()
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.db_ref)
+        .filter(|entry| entry.group_name == source.group_name)
+        .collect();
+    assert_eq!(listed.first(), public_address);
+    assert_eq!(listed.len(), usize::from(public_address.is_some()));
+    if let Some(reference) = public_address
+        && !matches!(phase, InterruptedRename::EmptyStage)
+    {
+        assert!(matches!(
+            HistoryAccess::lock().read_track_snapshot(&db, reference),
+            Err(DbError::StoredTrackLayoutChanged)
+        ));
+    }
+    if guarded {
+        assert!(matches!(
+            PureDb::open_or_create(&path),
+            Err(DbError::SchemaTooNew {
+                found: RENAME_SCHEMA_GUARD,
+                supported: CURRENT_SCHEMA_VERSION
+            }),
+        ));
+        assert!(matches!(
+            ReadOnlyDatabase::open_existing_read_only(&path),
+            Err(DbError::SchemaTooNew {
+                found: RENAME_SCHEMA_GUARD,
+                supported: CURRENT_SCHEMA_VERSION
+            }),
+        ));
+    }
+    let another_rename = match phase {
+        InterruptedRename::StagedObject => Some(&target.identity),
+        InterruptedRename::SourceIdentity => Some(&source.identity),
+        _ => None,
+    };
+    if let Some(identity) = another_rename {
+        assert!(matches!(
+            db.rename_identity(identity, "another"),
+            Err(DbError::StoredTrackLayoutChanged)
+        ));
+    }
+    let rejection = match phase {
+        InterruptedRename::MismatchedIdentityGroup => Some("differs from its stored identity"),
+        InterruptedRename::AdditionalRecordingLink => Some("has additional recording links"),
+        InterruptedRename::DanglingAlternateRecording => Some("exists in both identity groups"),
+        _ => None,
+    };
+    if let Some(reason) = rejection {
+        let contents = fs::read(&path).unwrap();
+        assert!(
+            matches!(Database::open_or_create(&path), Err(DbError::Backend(message)) if message.contains(reason))
+        );
+        assert!(fs::read(&path).unwrap() == contents);
+        return;
+    }
+    let mut db = Database::open_or_create(&path).unwrap();
+    let published = matches!(
+        phase,
+        InterruptedRename::DestinationIdentity
+            | InterruptedRename::DestinationLink
+            | InterruptedRename::RestoredSchema
+    );
+    assert_eq!(db.contains(&source).unwrap(), !published);
+    assert_eq!(db.contains(&moved).unwrap(), published);
+    let recording = if published { &moved } else { &source };
+    let stored: Vec<_> = db
+        .list_recordings()
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.db_ref)
+        .filter(|entry| entry.group_name == recording.group_name)
+        .collect();
+    assert_eq!(stored, std::slice::from_ref(recording));
+    let before = HistoryAccess::lock()
+        .read_track_snapshot(&db, recording)
+        .unwrap();
+    db.set_tracks_shelved(recording, &[0], true).unwrap();
+
+    if matches!(phase, InterruptedRename::RestoredSchema) {
+        let file = NativeFile::open_rw(&path).unwrap();
+        assert_eq!(
+            file.group(&destination_path)
+                .unwrap()
+                .loc_info()
+                .unwrap()
+                .token,
+            token
+        );
+        file.unlink(write_probe_name).unwrap();
+    }
+    let db = Database::open_or_create(&path).unwrap();
+    let after = HistoryAccess::lock()
+        .read_track_snapshot(&db, recording)
+        .unwrap();
+    assert!(after.same_observation(&before));
+    assert_eq!(after.rows()[0].state, TrackState::Shelved);
+    let file = NativeFile::open(path).unwrap();
+    assert_eq!(
+        file.attr(SCHEMA_VERSION_ATTR)
+            .unwrap()
+            .read_scalar::<i64>()
+            .unwrap(),
+        CURRENT_SCHEMA_VERSION
+    );
+    assert!(!file.group("meta").unwrap().link_exists(&stage_name));
+    assert_eq!(
+        file.group(&group_path(&recording.identity))
+            .unwrap()
+            .loc_info()
+            .unwrap()
+            .token,
+        token,
+    );
+    let observer = file.group("observer").unwrap();
+    let reference = observer
+        .attr("recording")
+        .unwrap()
+        .read_scalar::<ObjectReference1>()
+        .unwrap();
+    let ReferencedObject::Group(group) = observer.dereference(&reference).unwrap() else {
+        panic!("expected a recording group");
+    };
+    assert_eq!(group.loc_info().unwrap().token, token);
+}
+
+#[cfg(feature = "backend-sys")]
+#[rstest]
+#[case::missing_stage(false)]
+#[case::missing_recording_link(true)]
+fn native_history_requires_an_intact_recording_stage_for_the_rename_schema(
+    #[case] incomplete_stage: bool,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    {
+        let file = NativeFile::open_rw(&path).unwrap();
+        if incomplete_stage {
+            file.group("meta")
+                .unwrap()
+                .create_group(&format!("__geotrace_rename__{}", source.group_name))
+                .unwrap();
+        }
+        file.attr(SCHEMA_VERSION_ATTR)
+            .unwrap()
+            .write_scalar(&RENAME_SCHEMA_GUARD)
+            .unwrap();
+    }
+    let contents = fs::read(&path).unwrap();
+    assert!(matches!(
+        Database::open_or_create(&path),
+        Err(DbError::SchemaTooNew {
+            found: RENAME_SCHEMA_GUARD,
+            supported: CURRENT_SCHEMA_VERSION
+        })
+    ));
+    assert!(fs::read(&path).unwrap() == contents);
+}
+
 #[test]
 fn rename_identity_no_op_when_absent_or_unchanged() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -940,12 +1750,19 @@ fn rename_identity_no_op_when_absent_or_unchanged() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000, 3);
-    db.insert_simple(
-        "auto:only",
-        &gt_history::extract_meta(&bytes).expect("meta"),
-        &bytes,
-    )
-    .expect("insert");
+    let recording = db
+        .insert_simple(
+            "auto:only",
+            &gt_history::extract_meta(&bytes).expect("meta"),
+            &bytes,
+        )
+        .expect("insert");
+    #[cfg(feature = "backend-sys")]
+    let before = HistoryAccess::lock()
+        .read_track_snapshot(&db, &recording)
+        .unwrap();
+    #[cfg(feature = "backend-pure")]
+    let _ = recording;
 
     db.rename_identity("does-not-exist", "whatever")
         .expect("absent old is a no-op");
@@ -957,6 +1774,8 @@ fn rename_identity_no_op_when_absent_or_unchanged() {
     let entries = db.list_recordings().expect("list");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].db_ref.identity, "auto:only");
+    #[cfg(feature = "backend-sys")]
+    assert!(before.is_current_with_membership());
 }
 
 #[test]
@@ -3108,10 +3927,22 @@ fn renaming_an_identity_checks_recording_addresses_in_both_destination_groups() 
             .time_range
     };
     let before = references.map(|recording| stored_time_range(&db, recording));
+    #[cfg(feature = "backend-sys")]
+    let snapshots = references.map(|recording| {
+        HistoryAccess::lock()
+            .read_track_snapshot(&db, recording)
+            .unwrap()
+    });
     let result = db.rename_identity(&source.identity, &target.identity);
     assert!(matches!(result, Err(DbError::Backend(message)) if message.contains("exists in both")));
     let after = references.map(|recording| stored_time_range(&db, recording));
     assert_eq!(before, after);
+    #[cfg(feature = "backend-sys")]
+    assert!(
+        snapshots
+            .iter()
+            .all(|snapshot| snapshot.is_current_with_membership())
+    );
 }
 
 #[cfg(feature = "backend-sys")]
@@ -3572,6 +4403,79 @@ fn stage_the_recording(db_path: &std::path::Path, db_ref: &DatabaseRef) {
     let stage_path = format!("meta/__geotrace_replacement__{}", db_ref.group_name);
     file.relink(&recording_path, &stage_path)
         .expect("stage the recording");
+}
+
+#[cfg(feature = "backend-sys")]
+#[derive(Clone, Copy)]
+enum ReplacementReservation {
+    Destination,
+    DisjointDestination,
+    Source,
+}
+
+#[cfg(feature = "backend-sys")]
+#[rstest]
+#[case::source(ReplacementReservation::Source)]
+#[case::destination(ReplacementReservation::Destination)]
+#[case::disjoint(ReplacementReservation::DisjointDestination)]
+fn native_history_rename_preserves_recordings_reserved_by_replacements(
+    #[case] reservation: ReplacementReservation,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&path).unwrap();
+    let source = insert_two_track(&mut db, "source", 1_000_000_000, 20);
+    let mut incumbent = insert_two_track(&mut db, "destination", 2_000_000_000, 40);
+    let moved = DatabaseRef {
+        identity: incumbent.identity.clone(),
+        group_name: source.group_name.clone(),
+    };
+    if matches!(reservation, ReplacementReservation::Destination) {
+        let file = NativeFile::open_rw(&path).unwrap();
+        let identity_path = format!(
+            "/by_identity/{}",
+            gt_history::identity_group_name(&incumbent.identity)
+        );
+        file.relink(
+            &format!("{identity_path}/{}", incumbent.group_name),
+            &format!("{identity_path}/{}", moved.group_name),
+        )
+        .unwrap();
+        incumbent = moved.clone();
+    }
+    let pending = match reservation {
+        ReplacementReservation::Source => &source,
+        _ => &incumbent,
+    };
+    stage_the_recording(&path, pending);
+    assert!(!db.contains(pending).unwrap());
+    let result = db.rename_identity(&source.identity, &incumbent.identity);
+    let presented = match reservation {
+        ReplacementReservation::DisjointDestination => {
+            result.unwrap();
+            &moved
+        }
+        ReplacementReservation::Source | ReplacementReservation::Destination => {
+            assert!(matches!(result, Err(DbError::StoredTrackLayoutChanged)));
+            &source
+        }
+    };
+    assert!(!db.contains(pending).unwrap());
+    let db = Database::open_or_create(&path).unwrap();
+    let entries = db.list_recordings().unwrap();
+    assert_eq!(entries.len(), 2);
+    for (reference, expected) in [(presented, 20), (&incumbent, 40)] {
+        let entry = entries
+            .iter()
+            .find(|entry| entry.db_ref == *reference)
+            .unwrap();
+        assert_eq!(entry.meta.nav_point_count, expected);
+        let bytes = db.load_bytes(reference).unwrap();
+        assert_eq!(
+            gt_history::extract_meta(&bytes).unwrap().nav_point_count,
+            expected
+        );
+    }
 }
 
 /// The system-HDF5 backend stages a replacement under `/meta` and links it in
