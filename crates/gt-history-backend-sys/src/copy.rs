@@ -596,10 +596,14 @@ pub(crate) fn is_native_writable(db_path: &Path) -> bool {
     let Ok(file) = hdf5::File::open_rw(db_path) else {
         return false;
     };
-    match file.create_group(WRITE_PROBE_GROUP) {
+    let mut probe_name = WRITE_PROBE_GROUP.to_owned();
+    while file.link_exists(&probe_name) {
+        probe_name = format!("{WRITE_PROBE_GROUP}{}", uuid::Uuid::new_v4());
+    }
+    match file.create_group(&probe_name) {
         Ok(probe_group) => {
             drop(probe_group);
-            file.unlink(WRITE_PROBE_GROUP).ok();
+            file.unlink(&probe_name).ok();
             true
         }
         Err(create_err) => {
