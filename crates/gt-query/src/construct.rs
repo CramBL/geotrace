@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use gt_types::DisplayMode;
 use strum::IntoEnumIterator as _;
 
-use crate::ast::{Func, ParamName};
+use crate::ast::{BinaryOp, Func, ParamName, UnaryOp};
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::{self, Unit};
 
@@ -82,8 +82,7 @@ pub fn catalog() -> &'static [Construct] {
             name: "points",
             kind: ConstructKind::Source,
             summary: "the loaded track points",
-            doc: "The data a query reads: the points of every visible track, \
-                  after the global filter. Every query starts with `points`.",
+            doc: "Read navigation points from visible tracks within the global time filter.",
             examples: &["points | where velocity > 30 km/h"],
         }];
         out.extend(STAGES.iter().copied());
@@ -150,29 +149,25 @@ fn func_construct(func: Func) -> Construct {
         ),
         Func::Std => (
             "standard deviation over the window",
-            "The population standard deviation, divided by N. Same unit as the \
-             values, so it compares directly against a threshold. On a \
-             wrapping angle (`heading`, `lon`, a channel that declares a \
-             period) it is circular, robust across the wrap.",
+            "For linear values, the result is the square root of the mean squared deviation. \
+             For wrapping angles, the function uses circular standard deviation. \
+             Measured values keep their unit. Timestamp deviation is a duration.",
             &["std(heading) <= 3 deg", "std(velocity) < 2 km/h"],
         ),
         Func::Var => (
             "variance over the window",
-            "The population variance, divided by N. Its unit is the square of \
-             the values' unit, so it has no direct threshold: compare with \
-             `std` (its square root) instead, or form a ratio of two \
-             variances. Not defined on a wrapping angle (`heading`, `lon`) - \
-             use `std`.",
+            "The mean squared deviation. The result has the squared input dimension. \
+             Compare a unitless variance with a bare number. Use `std` for wrapping angles.",
             &["var(sats_fix) < 4"],
         ),
         Func::First => (
-            "value at the window's first point",
-            "The value at the earliest point of the window.",
+            "first point or sample value in aggregate input order",
+            "",
             &["first(velocity) < 5 km/h"],
         ),
         Func::Last => (
-            "value at the window's last point",
-            "The value at the latest point of the window.",
+            "last point or sample value in aggregate input order",
+            "",
             &["last(velocity) > 30 km/h"],
         ),
         Func::Delta => (
@@ -197,10 +192,9 @@ fn func_construct(func: Func) -> Construct {
         ),
         Func::Norm => (
             "magnitude of a vector channel",
-            "The Euclidean magnitude of a whole vector channel, \
-             `sqrt(x² + y² + z²)`, in the channel's unit. Frame-invariant, so \
-             it needs no component convention. Aggregate it over a window, e.g. \
-             `std(norm(@accel))`.",
+            "The Euclidean magnitude of a whole vector channel in the channel's unit. \
+             Use it directly in a channel-source predicate without a window. \
+             Use it inside an aggregate for a windowed predicate or a points-source query.",
             &["std(norm(@accel)) < 0.02 g"],
         ),
     };
@@ -475,17 +469,15 @@ const STAGES: &[Construct] = &[
         name: "with",
         kind: ConstructKind::Stage,
         summary: "set satellite-analysis parameters",
-        doc: "Supplies the parameters the util/slip metrics need (`mask`, \
-              `snr_drop`, `slip_window`). Must come directly after `points`.",
+        doc: "Set `mask`, `snr_drop`, or `slip_window` immediately after the source.",
         examples: &["points | with mask 15 deg | where util_gps < 50 %"],
     },
     Construct {
         name: "window",
         kind: ConstructKind::Stage,
-        summary: "slide an N-point window along the track",
-        doc: "Evaluates the `where` condition over a sliding group of N \
-              consecutive points instead of one point at a time. Aggregates \
-              (`avg`, `spread`, …) operate over the window.",
+        summary: "slide a count or duration window over the source",
+        doc: "A count groups consecutive points or samples. \
+              A duration groups them by timestamp. Aggregates operate over each window.",
         examples: &["points | window 10 | where avg(velocity) > 30 km/h"],
     },
     Construct {
@@ -501,11 +493,9 @@ const STAGES: &[Construct] = &[
         name: "table",
         kind: ConstructKind::Stage,
         summary: "choose the columns of the match table",
-        doc: "Sets which columns appear, in order, in each match's point \
-              table. A column is a metric, valued at each point, or an \
-              aggregate, valued once over the whole match. `time` is always \
-              the first column. Without it, the table shows every metric the \
-              query referenced.",
+        doc: "List metrics and aggregates in display order. \
+              Each aggregate describes the whole match. \
+              On `points`, `time` is first and the default includes every referenced metric.",
         examples: &[
             "points | where velocity > 30 km/h | table time, velocity, heading",
             "points | window 10 | where max(@accel.x) > 1 g | table max(@accel.x)",
@@ -513,11 +503,9 @@ const STAGES: &[Construct] = &[
     },
 ];
 
-/// The logical connectives of a `where` condition. No `enum` backs these, so
-/// they are catalogued by hand like the stages.
 const CONNECTIVES: &[Construct] = &[
     Construct {
-        name: "and",
+        name: BinaryOp::And.text(),
         kind: ConstructKind::Connective,
         summary: "both conditions must hold",
         doc: "Joins two conditions. A point (or window) matches only when \
@@ -525,7 +513,7 @@ const CONNECTIVES: &[Construct] = &[
         examples: &["points | where eph > 20 m and velocity > 5 km/h"],
     },
     Construct {
-        name: "or",
+        name: BinaryOp::Or.text(),
         kind: ConstructKind::Connective,
         summary: "either condition may hold",
         doc: "Joins two conditions. A point (or window) matches when either \
@@ -533,7 +521,7 @@ const CONNECTIVES: &[Construct] = &[
         examples: &["points | where velocity < 2 km/h or eph > 50 m"],
     },
     Construct {
-        name: "not",
+        name: UnaryOp::Not.text(),
         kind: ConstructKind::Connective,
         summary: "invert a condition",
         doc: "Matches where the condition does not. Applies to the next \

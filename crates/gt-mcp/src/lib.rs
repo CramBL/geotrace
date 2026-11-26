@@ -13,7 +13,8 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-    ServerCapabilities, ServerConfig,
+    ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, Resource, ResourceContents, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::{QuitReason, RequestContext};
 use rmcp::{
@@ -486,8 +487,41 @@ impl ServerHandler for Companion {
     }
 
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(COMPANION_NAME, VERSION))
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::new(COMPANION_NAME, VERSION))
+        .with_instructions(format!(
+            "Read {QUERY_LANGUAGE_URI} for query syntax and examples."
+        ))
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        let reference = Resource::new(QUERY_LANGUAGE_URI, "query-language")
+            .with_title("GeoTrace query language")
+            .with_description("Query syntax, operators, units and examples")
+            .with_mime_type(QUERY_LANGUAGE_MIME_TYPE);
+        Ok(ListResourcesResult::with_all_items(vec![reference]))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        if request.uri != QUERY_LANGUAGE_URI {
+            return Err(ErrorData::resource_not_found("Resource not found", None));
+        }
+        let reference = ResourceContents::text(gt_query::query_language_reference(), request.uri)
+            .with_mime_type(QUERY_LANGUAGE_MIME_TYPE);
+        Ok(ReadResourceResult::new(vec![reference]).into())
     }
 }
 
@@ -513,6 +547,8 @@ impl Bridge {
 
 const COMPANION_NAME: &str = "geotrace-mcp";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const QUERY_LANGUAGE_URI: &str = "geotrace://query-language";
+const QUERY_LANGUAGE_MIME_TYPE: &str = "text/markdown";
 const START_DESKTOP: &str = "Start GeoTrace with --session-bridge and try again.";
 
 #[cfg(test)]

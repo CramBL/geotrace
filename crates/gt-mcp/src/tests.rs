@@ -18,6 +18,7 @@ use gt_session_bridge::{
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
+use rmcp::model::ErrorCode as McpErrorCode;
 use serde_json::{Value, json};
 use tokio::io::{
     AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, DuplexStream, Lines, ReadHalf, WriteHalf,
@@ -27,6 +28,70 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
+
+#[tokio::test]
+async fn the_query_language_resource_is_available_without_the_desktop() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|_| {
+        panic!("resource lookup sent a desktop request")
+    }));
+    let initialized = client.initialize().await;
+    assert!(
+        initialized
+            .pointer("/result/capabilities/resources")
+            .is_some_and(Value::is_object)
+    );
+    let instructions = initialized
+        .pointer("/result/instructions")
+        .and_then(Value::as_str)
+        .unwrap();
+    let uri = "geotrace://query-language";
+    assert!(instructions.contains(uri));
+    assert_eq!(instructions.lines().count(), 1);
+
+    let listed = client
+        .exchange(json!({"jsonrpc": "2.0", "id": 2, "method": "resources/list"}))
+        .await;
+    let resources = listed
+        .pointer("/result/resources")
+        .and_then(Value::as_array)
+        .unwrap();
+    let [reference] = resources.as_slice() else {
+        panic!("expected one query language resource");
+    };
+    assert_eq!(reference.get("uri"), Some(&json!(uri)));
+    assert_eq!(reference.get("mimeType"), Some(&json!("text/markdown")));
+    assert!(reference.get("text").is_none());
+
+    let read = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": {"uri": uri}
+        }))
+        .await;
+    assert_eq!(
+        read.pointer("/result/contents"),
+        Some(&json!([{
+            "uri": uri,
+            "mimeType": "text/markdown",
+            "text": gt_query::query_language_reference(),
+        }]))
+    );
+
+    let unknown = client
+        .exchange(json!({
+            "jsonrpc": "2.0", "id": 4, "method": "resources/read",
+            "params": {"uri": "geotrace://unknown"}
+        }))
+        .await;
+    assert_eq!(
+        unknown.pointer("/error/code"),
+        Some(&json!(McpErrorCode::RESOURCE_NOT_FOUND.0))
+    );
+    drop(client);
+    tokio::time::timeout(Duration::from_secs(2), worker)
+        .await
+        .expect("companion shutdown")
+        .expect("companion task");
+}
 
 #[tokio::test]
 async fn the_companion_lists_tools_and_returns_structured_results() {
