@@ -101,7 +101,7 @@ The check can be turned off under Settings.
 
 > [!NOTE]
 > Releases are currently **unsigned**.
-> On macOS, the first launch needs right-click &rarr; **Open** (or `xattr -d com.apple.quarantine /path/to/geotrace`).
+> On macOS, see [how to open the unsigned GeoTrace binaries](docs/mcp.md#macos-gatekeeper) if Gatekeeper blocks a launch.
 > On Windows, SmartScreen shows **More info &rarr; Run anyway**.
 
 ## Inspect recordings from an MCP client

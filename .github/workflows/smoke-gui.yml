@@ -1,10 +1,7 @@
 name: Smoke / GUI
 
-# Install the published GUI app the way a user would and run `geotrace --version`,
-# which exits before any window or GPU work. Asserts the version on Unix. On
-# Windows the release build has no console, so a clean exit code is the signal.
-# Each step is one phase, install then run, so the workflow doubles as a
-# step-by-step guide.
+# The Windows GUI executable has no console. Check its exit status and read
+# the companion version from the console executable.
 on:
   workflow_call:
     inputs:
@@ -17,6 +14,9 @@ on:
       prerelease:
         required: true
         type: string
+      expect_companion:
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -24,6 +24,8 @@ permissions:
 env:
   REPO: CramBL/geotrace
   TAP: CramBL/homebrew-tap
+  VERSION: ${{ inputs.version }}
+  EXPECT_COMPANION: ${{ inputs.expect_companion }}
 
 defaults:
   run:
@@ -57,12 +59,25 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Run it and check the version
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          geotrace --version | tee output.txt
-          grep -qw "$VERSION" output.txt
+      - name: Verify installed binaries
+        run: &verify-unix-binaries |
+          set -euo pipefail
+          desktop="${GEOTRACE_EXE:-$(command -v geotrace)}"
+          desktop_version="$("$desktop" --version)"
+          printf '%s\n' "$desktop_version"
+          if [[ "$desktop_version" != "geotrace $VERSION" ]]; then
+            printf 'Expected geotrace %s from %s\n' "$VERSION" "$desktop" >&2
+            exit 1
+          fi
+          if [[ "$EXPECT_COMPANION" == true ]]; then
+            companion="$(dirname "$desktop")/geotrace-mcp"
+            companion_version="$("$companion" --version)"
+            printf '%s\n' "$companion_version"
+            if [[ "$companion_version" != "geotrace-mcp $VERSION" ]]; then
+              printf 'Expected geotrace-mcp %s from %s\n' "$VERSION" "$companion" >&2
+              exit 1
+            fi
+          fi
 
   powershell-installer:
     name: powershell / ${{ matrix.runner }}
@@ -85,13 +100,22 @@ jobs:
                       [Environment]::GetEnvironmentVariable("Path","Machine")
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path (Get-Command geotrace).Source)
 
-      - name: Run it
+      - name: Verify installed binaries
         shell: pwsh
-        run: |
+        run: &verify-windows-binaries |
           $ErrorActionPreference = "Stop"
-          $exe = (Get-Command geotrace).Source
+          $exe = (Get-Command geotrace.exe -CommandType Application).Source
           $p = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "geotrace --version exited $($p.ExitCode)" }
+          if ($env:EXPECT_COMPANION -eq "true") {
+            $companion = Join-Path ([System.IO.Path]::GetDirectoryName($exe)) "geotrace-mcp.exe"
+            $companionVersion = & $companion --version
+            if ($LASTEXITCODE -ne 0) { throw "geotrace-mcp --version exited $LASTEXITCODE" }
+            Write-Output $companionVersion
+            if ($companionVersion -isnot [string] -or $companionVersion -cne "geotrace-mcp $env:VERSION") {
+              throw "Expected geotrace-mcp $env:VERSION from $companion"
+            }
+          }
 
   msi:
     name: msi / windows
@@ -119,13 +143,9 @@ jobs:
                       [Environment]::GetEnvironmentVariable("Path","Machine")
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path (Get-Command geotrace).Source)
 
-      - name: Run it
+      - name: Verify installed binaries
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $exe = (Get-Command geotrace).Source
-          $p = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "geotrace --version exited $($p.ExitCode)" }
+        run: *verify-windows-binaries
 
   homebrew:
     name: brew / ${{ matrix.runner }}
@@ -162,14 +182,12 @@ jobs:
           echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
 
       - name: Install GeoTrace with Homebrew
-        run: brew install "${TAP}/geotrace"
-
-      - name: Run it and check the version
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
-          "$(brew --prefix)/bin/geotrace" --version | tee output.txt
-          grep -qw "$VERSION" output.txt
+          brew install "${TAP}/geotrace"
+          echo "GEOTRACE_EXE=$(brew --prefix "${TAP}/geotrace")/bin/geotrace" >> "$GITHUB_ENV"
+
+      - name: Verify installed binaries
+        run: *verify-unix-binaries
 
   # Prove an existing install can pick up this release: install the previous
   # stable version (writing an install receipt), run its `geotrace --update`,
@@ -206,8 +224,6 @@ jobs:
 
       - name: Resolve the stable release before this one
         id: prev
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           versions="$(gh api "repos/${REPO}/releases" --paginate \
@@ -248,13 +264,11 @@ jobs:
         if: steps.prev.outputs.skip == 'false'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: geotrace --update
-
-      - name: Check the installed version is now the release under test
-        if: steps.prev.outputs.skip == 'false'
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
-          set -euo pipefail
-          geotrace --version | tee output.txt
-          grep -qw "$VERSION" output.txt
+          desktop="$(command -v geotrace)"
+          "$desktop" --update
+          echo "GEOTRACE_EXE=$desktop" >> "$GITHUB_ENV"
+
+      - name: Verify updated binaries
+        if: steps.prev.outputs.skip == 'false'
+        run: *verify-unix-binaries

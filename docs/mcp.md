@@ -23,6 +23,20 @@ For manual setup, configure your client to launch `geotrace-mcp` as a stdio serv
 On Windows, use the path to `geotrace-mcp.exe` and escape backslashes in JSON.
 Stop active MCP sessions before updating GeoTrace on Windows.
 
+### macOS Gatekeeper
+
+GeoTrace releases include `geotrace` and `geotrace-mcp` as unsigned binaries.
+If Gatekeeper blocks a binary from the [official release](https://github.com/CramBL/geotrace/releases/latest), remove its quarantine attribute with `xattr`.
+Substitute the paths from your installation and use the command for each blocked binary.
+
+```sh
+xattr -d com.apple.quarantine "/path/to/geotrace"
+xattr -d com.apple.quarantine "/path/to/geotrace-mcp"
+```
+
+After a blocked launch, you can also use **Open Anyway** under **System Settings > Privacy & Security**.
+See [Apple's instructions](https://support.apple.com/en-us/102445).
+
 ## Start and stop MCP
 
 Click **Start MCP** in **Settings > MCP** or launch `geotrace --session-bridge`.
