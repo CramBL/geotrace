@@ -1545,7 +1545,12 @@ fn native_history_reopen_retains_the_recording_at_each_durable_rename_stage(
                 .unwrap();
         }
         if matches!(phase, InterruptedRename::RestoredSchema) {
-            file.create_group(write_probe_name).unwrap();
+            file.create_group(write_probe_name)
+                .unwrap()
+                .new_dataset_builder()
+                .with_data(&[63_u64])
+                .create("value")
+                .unwrap();
         }
         if matches!(phase, InterruptedRename::MismatchedIdentityGroup) {
             file.group(&identity_path(&source.identity))
@@ -1662,7 +1667,7 @@ fn native_history_reopen_retains_the_recording_at_each_durable_rename_stage(
     db.set_tracks_shelved(recording, &[0], true).unwrap();
 
     if matches!(phase, InterruptedRename::RestoredSchema) {
-        let file = NativeFile::open_rw(&path).unwrap();
+        let file = NativeFile::open(&path).unwrap();
         assert_eq!(
             file.group(&destination_path)
                 .unwrap()
@@ -1671,7 +1676,7 @@ fn native_history_reopen_retains_the_recording_at_each_durable_rename_stage(
                 .token,
             token
         );
-        file.unlink(write_probe_name).unwrap();
+        assert!(file.link_exists(write_probe_name));
     }
     let db = Database::open_or_create(&path).unwrap();
     let after = HistoryAccess::lock()
@@ -1680,6 +1685,17 @@ fn native_history_reopen_retains_the_recording_at_each_durable_rename_stage(
     assert!(after.same_observation(&before));
     assert_eq!(after.rows()[0].state, TrackState::Shelved);
     let file = NativeFile::open(path).unwrap();
+    if matches!(phase, InterruptedRename::RestoredSchema) {
+        assert_eq!(
+            file.group(write_probe_name)
+                .unwrap()
+                .dataset("value")
+                .unwrap()
+                .read_raw::<u64>()
+                .unwrap(),
+            [63]
+        );
+    }
     assert_eq!(
         file.attr(SCHEMA_VERSION_ATTR)
             .unwrap()
@@ -4553,6 +4569,37 @@ fn opening_a_database_with_an_interrupted_replacement_puts_the_recording_back() 
         db.log_attachments(&db_ref).expect("attachments").len(),
         1,
         "the log stored with the recording came back with it"
+    );
+}
+
+#[cfg(feature = "backend-sys")]
+#[test]
+fn native_history_reopen_preserves_an_occupied_write_probe_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.h5");
+    Database::open_or_create(&path).unwrap();
+    let mut links = {
+        let file = NativeFile::open_rw(&path).unwrap();
+        file.create_group("__geotrace_write_probe__")
+            .unwrap()
+            .new_dataset_builder()
+            .with_data(&[12_u64])
+            .create("value")
+            .unwrap();
+        file.member_names().unwrap()
+    };
+    Database::open_or_create(&path).unwrap();
+    let file = NativeFile::open(path).unwrap();
+    let mut reopened_links = file.member_names().unwrap();
+    links.sort_unstable();
+    reopened_links.sort_unstable();
+    assert_eq!(reopened_links, links);
+    assert_eq!(
+        file.dataset("/__geotrace_write_probe__/value")
+            .unwrap()
+            .read_raw::<u64>()
+            .unwrap(),
+        [12],
     );
 }
 
