@@ -54,6 +54,8 @@ mod query_job;
 mod query_results;
 mod query_validation;
 mod settings;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 mod traffic_capture;
 
 #[derive(Debug)]

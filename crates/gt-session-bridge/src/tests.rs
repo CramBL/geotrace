@@ -19,8 +19,8 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use super::endpoint::Endpoint;
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
+use super::test_util::TestEndpoint;
 use super::traffic_capture::{MAX_CAPTURE_BYTES, MAX_CAPTURE_FRAMES};
 use super::{
     ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, Inspection,
@@ -30,32 +30,12 @@ use super::{
     TrafficFrame,
 };
 
-struct TestEndpoint {
-    endpoint: Endpoint,
-    #[cfg(unix)]
-    _directory: tempfile::TempDir,
-}
-
 impl TestEndpoint {
-    fn new() -> Self {
-        #[cfg(unix)]
-        {
-            let directory = tempfile::tempdir().unwrap();
-            Self {
-                endpoint: Endpoint::in_directory(directory.path().join("endpoint")),
-                _directory: directory,
-            }
-        }
-        #[cfg(windows)]
-        Self {
-            endpoint: Endpoint::test_endpoint().unwrap(),
-        }
-    }
-
     fn start(&self) -> (Server, mpsc::Receiver<()>) {
         let (wake, wakes) = mpsc::channel(1);
-        let server =
-            Server::bind(self.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
+        let server = self
+            .start_server(move || wake.try_send(()).unwrap())
+            .unwrap();
         (server, wakes)
     }
 
@@ -68,27 +48,17 @@ impl TestEndpoint {
             .unwrap();
         stream
     }
-
-    async fn send_payload(&self, payload: &[u8]) -> impl AsyncRead + AsyncWrite + Unpin {
-        let mut stream = self.endpoint.connect().await.unwrap();
-        stream
-            .write_u32(u32::try_from(payload.len()).unwrap())
-            .await
-            .unwrap();
-        stream.write_all(payload).await.unwrap();
-        stream
-    }
 }
 
 #[tokio::test]
 async fn traffic_capture_preserves_the_request_and_the_written_reply() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (mut server, mut wakes) = fixture.start();
     let capture = server.traffic_capture();
     capture.set_enabled(true);
     let raw_request = b" \r\n { \"text\": \"a\\n\\u00e9\\/\", \"method\": \"check_query\" } \n";
     let reply = self::query_diagnostic_reply("Line 1\n\"é/\\\"".to_owned());
-    let mut stream = fixture.send_payload(raw_request).await;
+    let mut stream = fixture.send_payload(raw_request).await.unwrap();
     self::wait_for_request(&mut wakes).await;
     server.dispatch(|request| {
         assert_eq!(
@@ -115,13 +85,13 @@ async fn traffic_capture_preserves_the_request_and_the_written_reply() {
 
 #[tokio::test]
 async fn traffic_capture_records_complete_bodies_and_written_errors() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (mut server, mut wakes) = fixture.start();
     let capture = server.traffic_capture();
     capture.set_enabled(true);
 
     let invalid = &[0xff, b'\n'];
-    let mut invalid_stream = fixture.send_payload(invalid).await;
+    let mut invalid_stream = fixture.send_payload(invalid).await.unwrap();
     let invalid_reply = framing::read_payload(&mut invalid_stream, MAX_REPLY_BYTES)
         .await
         .unwrap();
@@ -183,7 +153,7 @@ async fn traffic_capture_records_complete_bodies_and_written_errors() {
 
 #[tokio::test]
 async fn traffic_capture_excludes_pending_replies_after_clear_or_disable() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (mut server, mut wakes) = fixture.start();
     let capture = server.traffic_capture();
     assert!(!capture.is_enabled());
@@ -245,7 +215,7 @@ async fn traffic_capture_excludes_pending_replies_after_clear_or_disable() {
 
 #[tokio::test]
 async fn traffic_capture_evicts_oldest_frames_at_the_retention_limits() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (mut server, mut wakes) = fixture.start();
     let capture = server.traffic_capture();
     capture.set_enabled(true);
@@ -347,7 +317,7 @@ async fn wait_for_captured_reply(capture: &TrafficCapture, exchange_id: u64) -> 
 
 #[tokio::test]
 async fn a_client_waiting_to_close_does_not_block_another_request() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (mut server, mut wakes) = fixture.start();
     let mut first = fixture.send_recording_list().await;
     self::dispatch_recording_list(&mut server, &mut wakes).await;
@@ -364,7 +334,7 @@ async fn a_client_waiting_to_close_does_not_block_another_request() {
 
 #[tokio::test]
 async fn a_full_app_queue_returns_busy_without_displacing_its_request() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (mut server, mut wakes) = fixture.start();
     let mut first = fixture.send_recording_list().await;
     self::wait_for_request(&mut wakes).await;
@@ -381,7 +351,7 @@ async fn a_full_app_queue_returns_busy_without_displacing_its_request() {
 
 #[tokio::test]
 async fn excess_connections_close_and_a_completed_exchange_releases_a_slot() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (mut server, mut wakes) = fixture.start();
     let mut open = Vec::new();
     for _ in 0..super::MAX_ACTIVE_CONNECTIONS {
@@ -455,7 +425,7 @@ fn reply_with_empty_recording_list(server: &mut Server) {
 
 #[tokio::test]
 async fn local_request_dispatches_on_the_calling_thread() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (wake, mut wakes) = mpsc::channel(1);
     let mut server =
         Server::bind(fixture.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
@@ -536,7 +506,7 @@ fn a_command_finishes_when_the_reply_receiver_closes_during_execution() {
 
 #[tokio::test]
 async fn dropping_the_client_exchange_skips_the_queued_command() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let listener = fixture.endpoint.bind().unwrap();
     let (sender, pending) = mpsc::channel(1);
     let mut server = Server {
@@ -1102,7 +1072,7 @@ fn query_check_reports_byte_spans_and_hints_in_submitted_text() {
 
 #[tokio::test]
 async fn oversized_query_requests_fail_before_connecting() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let request = Request::CheckQuery(QueryText {
         text: "\n".repeat(MAX_REQUEST_BYTES / 2),
     });
@@ -1114,7 +1084,7 @@ async fn oversized_query_requests_fail_before_connecting() {
 
 #[tokio::test]
 async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (wake, mut wakes) = mpsc::channel(1);
     let mut server =
         Server::bind(fixture.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
@@ -1308,7 +1278,7 @@ async fn framed_point_measurements_distinguish_missing_finite_and_infinite_value
 
 #[tokio::test]
 async fn client_rejects_a_peer_with_a_different_owner() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let _server = Server::bind(fixture.endpoint.clone(), || {}).unwrap();
     let stream = fixture.endpoint.connect().await.unwrap();
     let other = fixture.endpoint.with_different_owner();
@@ -1320,7 +1290,7 @@ async fn client_rejects_a_peer_with_a_different_owner() {
 
 #[tokio::test]
 async fn bad_frames_receive_errors_before_dispatch() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (wake, mut wakes) = mpsc::channel(1);
     let _server =
         Server::bind(fixture.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
@@ -1343,7 +1313,7 @@ async fn bad_frames_receive_errors_before_dispatch() {
 
 #[tokio::test]
 async fn apply_processing_rejects_extra_wire_fields_before_dispatch() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (wake, mut wakes) = mpsc::channel(1);
     let _server =
         Server::bind(fixture.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();
@@ -1386,7 +1356,7 @@ fn apply_processing_keeps_the_existing_wire_command() {
 
 #[tokio::test]
 async fn shutdown_disconnects_pending_client_and_releases_endpoint() {
-    let fixture = TestEndpoint::new();
+    let fixture = TestEndpoint::new().unwrap();
     let (wake, mut wakes) = mpsc::channel(1);
     let server =
         Server::bind(fixture.endpoint.clone(), move || wake.try_send(()).unwrap()).unwrap();

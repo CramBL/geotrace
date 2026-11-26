@@ -129,6 +129,7 @@ impl eframe::App for App {
             self.apply_resegmentation();
         }
         self.reference_window.show(ui.ctx());
+        self.show_session_traffic_window(ui);
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
             modals::show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_field);
@@ -362,6 +363,8 @@ impl App {
                         });
                         ui.close();
                     }
+                    self.session_traffic_window
+                        .menu_ui(ui, self.session_bridge.is_some());
                     ui.separator();
                     if ui.button("About GeoTrace").clicked() {
                         self.about_open = true;

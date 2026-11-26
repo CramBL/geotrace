@@ -292,6 +292,18 @@ GeoTrace restores saved logs and snap runs in the background.
 If several loaded copies share the History entry, unload them and open the entry again to restore its saved logs.
 Use the History window to restore saved logs, display settings, and snap runs from a read-only database.
 
+### Inspect session bridge traffic
+
+Open **File → Session bridge traffic…** in GeoTrace with the session bridge enabled.
+Select **Capture traffic** to record complete request and reply payloads, including error replies, for this session.
+Capture starts off.
+Closing the traffic window leaves capture enabled.
+GeoTrace keeps a bounded buffer in memory and drops the oldest entries when it fills.
+Turn capture off to stop recording and keep the retained entries.
+Use **Clear** to remove all captured entries from memory.
+Select an entry to see its exact payload and use **Copy payload** to copy it.
+GeoTrace displays and copies payloads with invalid UTF-8 or NUL bytes in lossless hex.
+
 ### Investigate a recording with MCP
 
 These examples use the repository's [demo recording](tests/fixtures/demo_trip/demo_trip.gtd).

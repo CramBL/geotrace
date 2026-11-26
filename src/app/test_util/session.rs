@@ -1,6 +1,8 @@
 use std::num::NonZeroUsize;
+use std::thread;
 
 use egui_kittest::Harness;
+use gt_session_bridge::test_util::TestEndpoint;
 use gt_session_bridge::{
     GetQueryResults, GetRecording, ListRecordings, QueryCounts, QueryJobId, QueryJobRequest,
     QueryJobState, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultPage,
@@ -10,6 +12,35 @@ use gt_test_utils::HarnessInteraction as _;
 use uuid::Uuid;
 
 use crate::app::App;
+
+use super::harness;
+
+pub fn app_with_bridge() -> (Harness<'static, App>, TestEndpoint) {
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_wait_for_pending_images(false)
+        .build_eframe(harness::transient_app);
+    let endpoint = TestEndpoint::new().unwrap();
+    let ctx = harness.ctx.clone();
+    harness.state_mut().session_bridge = Some(
+        endpoint
+            .start_server(move || ctx.request_repaint())
+            .unwrap(),
+    );
+    (harness, endpoint)
+}
+
+pub fn exchange_payload(
+    harness: &mut Harness<'_, App>,
+    endpoint: &TestEndpoint,
+    payload: &[u8],
+) -> Vec<u8> {
+    thread::scope(|scope| {
+        let client = scope.spawn(|| endpoint.exchange_payload(payload).unwrap());
+        assert!(harness.step_until(|_| client.is_finished()));
+        client.join().unwrap()
+    })
+}
 
 pub fn match_page(page: QueryResultPage) -> (Vec<QueryMatch>, Option<QueryMatchPosition>) {
     let QueryResultPage::Matches {

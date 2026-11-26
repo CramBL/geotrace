@@ -1,5 +1,5 @@
 use std::io::{self, ErrorKind};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-util"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -67,7 +67,7 @@ impl Endpoint {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) fn test_endpoint() -> io::Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let mut endpoint = Self::current_user()?;
