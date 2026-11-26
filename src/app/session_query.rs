@@ -1,5 +1,5 @@
 use gt_loaded_files::{LoadedFilesView, RecordingData};
-use gt_query_run::{CheckedQueryText, RunResults};
+use gt_query_run::{CheckedQueryText, RunDependencies, RunResults};
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, Inspection, InspectionRequest, QueryJobId, QueryJobState,
     QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest, SettingInfo,
@@ -34,7 +34,9 @@ impl SessionQuery {
 
     pub(super) fn refresh(&mut self, inputs: CapturedQueryInputs<'_>) {
         if let Some(job) = &mut self.job
-            && job.can_refresh(inputs.run_inputs().loaded_files.data_generation())
+            && job
+                .refresh_dependencies(inputs.run_inputs().loaded_files.data_generation())
+                .is_some()
         {
             job.query.update(inputs);
         }
@@ -265,7 +267,8 @@ impl Job {
             self.phase = JobPhase::Stale;
             return;
         }
-        let series = QuerySeries::capture(app);
+        let series =
+            QuerySeries::capture_for_query(app, self.query.session().checked_dependencies());
         let shared = app.shared.borrow();
         let inputs = series.inputs(shared.loaded_files.view(), &shared.tree, &shared.filter);
         self.phase = if inputs.is_some_and(|inputs| self.query.start(ctx, inputs.run_inputs())) {
@@ -275,22 +278,27 @@ impl Job {
         };
     }
 
-    fn can_refresh(&mut self, data_generation: Generation<RecordingData>) -> bool {
-        if self.phase != JobPhase::Started || self.query.session().results().is_none() {
-            return false;
+    fn refresh_dependencies(
+        &mut self,
+        data_generation: Generation<RecordingData>,
+    ) -> Option<RunDependencies> {
+        if self.phase != JobPhase::Started {
+            return None;
         }
+        let dependencies = self.query.session().result_dependencies()?;
         if self.data_generation != data_generation {
             self.phase = JobPhase::Stale;
-            return false;
+            return None;
         }
-        true
+        Some(dependencies)
     }
 
     fn refresh(&mut self, app: &mut App) {
-        if !self.can_refresh(app.shared.borrow().loaded_files.data_generation()) {
+        let data_generation = app.shared.borrow().loaded_files.data_generation();
+        let Some(dependencies) = self.refresh_dependencies(data_generation) else {
             return;
-        }
-        let series = QuerySeries::capture(app);
+        };
+        let series = QuerySeries::capture_for_query(app, dependencies);
         let shared = app.shared.borrow();
         if let Some(inputs) =
             series.inputs(shared.loaded_files.view(), &shared.tree, &shared.filter)

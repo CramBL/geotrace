@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
 use gt_fetch::TransportSource;
-use gt_session_bridge::QueryJobState;
+use gt_session_bridge::{QueryJobState, Reply, Request};
 use gt_snap::request_plan::SnapParams;
 use gt_snap::wire::Costing;
 use gt_store::{SolarStore, Store};
@@ -20,6 +20,34 @@ use crate::app::{App, ui_tests};
 enum QueryInput {
     Kp,
     Snap,
+}
+
+#[test]
+fn velocity_results_remain_current_after_snap_completion_while_minimized() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let job = session::start_query(&mut harness, "points | table velocity");
+    self::poll_minimized_until_query_finishes(&mut harness);
+    let page = session::first_query_match_request(job);
+    let before = session::results(&mut harness, page);
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let original_snap_values_generation = harness.state().snap_error_cache.generation();
+
+    test_util::snap::report_completed_run(&harness, track);
+    test_util::harness::step_minimized_logic(&mut harness);
+    {
+        let app = harness.state();
+        let shared = app.shared.borrow();
+        let track = track.resolve(shared.loaded_files.files()).unwrap();
+        assert!(app.snap.latest_run_for(track).is_some());
+    }
+    assert_eq!(
+        session::execute(&mut harness, Request::GetQueryResults(page)),
+        Reply::QueryResults { results: before },
+    );
+    assert_eq!(
+        harness.state().snap_error_cache.generation(),
+        original_snap_values_generation
+    );
 }
 
 #[rstest]

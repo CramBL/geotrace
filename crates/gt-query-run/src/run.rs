@@ -11,7 +11,8 @@ use gt_ui_types::QueryMatches;
 use rustc_hash::FxHashMap;
 
 use crate::check::QueryChunk;
-use crate::fingerprint::RunInputs;
+use crate::dependencies::RunDependencies;
+use crate::fingerprint::{RunFingerprint, RunInputs};
 use crate::provider::{
     CapturedTrackValues, SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData,
 };
@@ -99,32 +100,19 @@ impl TrackSnapshot {
     ///
     /// Cloning the points is the simple-and-correct baseline. An `Arc`-based
     /// snapshot is the known follow-up if this shows up in profiling.
-    fn collect(tracks: &[TrackRef], inputs: RunInputs<'_>) -> Vec<Self> {
-        let RunInputs {
-            loaded_files,
-            filter,
-            snap_errors,
-            jamming,
-            geomagnetic,
-            tec,
-            ..
-        } = inputs;
-        let files: &[LoadedFile] = loaded_files.files();
-        tracks
+    fn collect(fingerprint: &RunFingerprint, inputs: RunInputs<'_>) -> Vec<Self> {
+        let files: &[LoadedFile] = inputs.loaded_files.files();
+        fingerprint
+            .tracks()
             .iter()
             .filter_map(|&track_ref| {
                 let track = track_ref.resolve(files)?;
                 Some(Self {
                     track_ref,
-                    filtered_points: TimeFilteredPoints::of(&track.points, filter),
+                    filtered_points: TimeFilteredPoints::of(&track.points, inputs.filter),
                     points: track.points.clone(),
                     channels: track.channels.clone(),
-                    captured: CapturedTrackValues {
-                        snap_error: snap_errors.get(&track_ref).cloned(),
-                        jamming: jamming.get(&track_ref).cloned(),
-                        geomagnetic: geomagnetic.points_by_track.get(&track_ref).cloned(),
-                        tec: tec.points_by_track.get(&track_ref).cloned(),
-                    },
+                    captured: inputs.values(track_ref, fingerprint.dependencies).capture(),
                 })
             })
             .collect()
@@ -146,6 +134,7 @@ impl TrackSnapshot {
 /// threads: the app runs it on a worker thread, a test runs it inline.
 pub struct PreparedRun {
     queries: Vec<CheckedQuery>,
+    dependencies: RunDependencies,
     tracks: Vec<TrackSnapshot>,
     handle: RunHandle,
 }
@@ -153,12 +142,13 @@ pub struct PreparedRun {
 impl PreparedRun {
     pub(crate) fn new(
         queries: Vec<CheckedQuery>,
-        tracks: &[TrackRef],
+        fingerprint: &RunFingerprint,
         inputs: RunInputs<'_>,
     ) -> Self {
         Self {
             queries,
-            tracks: TrackSnapshot::collect(tracks, inputs),
+            dependencies: fingerprint.dependencies,
+            tracks: TrackSnapshot::collect(fingerprint, inputs),
             handle: RunHandle::default(),
         }
     }
@@ -183,14 +173,6 @@ impl PreparedRun {
         if let Some(query) = self.queries.first().filter(|q| q.is_channel_source()) {
             return self.execute_channel(query, &cancelled);
         }
-        let uses_util = self
-            .queries
-            .iter()
-            .any(|q| q.referenced_metrics().iter().any(|m| m.is_util()));
-        let uses_slip = self
-            .queries
-            .iter()
-            .any(|q| q.referenced_metrics().iter().any(|m| m.is_slip()));
         let params = merge_params(&self.queries);
 
         let mut track_data = RunTrackData::default();
@@ -203,8 +185,8 @@ impl PreparedRun {
                 TrackQueryData::derive(
                     &snapshot.points,
                     params,
-                    uses_util,
-                    uses_slip,
+                    self.dependencies.util,
+                    self.dependencies.slip,
                     snapshot.filtered_points.clone(),
                     snapshot.captured.clone(),
                 ),

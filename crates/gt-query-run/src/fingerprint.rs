@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingData};
@@ -7,6 +7,9 @@ use gt_ui_types::{
     GeomagneticPoint, GeomagneticSeries, TecPoint, TecSeries, TrackDataVisibility, WeakArcIdentity,
 };
 use rustc_hash::FxHashMap;
+
+use crate::dependencies::RunDependencies;
+use crate::provider::CapturedTrackValues;
 
 /// Per-track dense snap error values, one entry per track with a completed
 /// snap run - handed in by the app each frame, shared with its per-run cache
@@ -17,8 +20,7 @@ pub type SnapErrorValues = FxHashMap<TrackRef, Arc<Vec<Option<f64>>>>;
 /// [`SnapErrorValues`] so both reach the provider the same way.
 pub type JammingValues = FxHashMap<TrackRef, Arc<Vec<Option<f64>>>>;
 
-/// The state a query run depends on, handed in by the app each frame - the
-/// inputs [`RunFingerprint`] snapshots to gray out outdated results.
+/// Current recordings, filters and derived series for query runs.
 #[derive(Clone, Copy)]
 pub struct RunInputs<'a> {
     pub loaded_files: LoadedFilesView<'a>,
@@ -34,260 +36,201 @@ pub struct RunInputs<'a> {
     pub tec: &'a TecSeries,
 }
 
-/// Everything a run's results depend on besides the query text. Results
-/// gray out when the current state no longer matches the snapshot.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RunFingerprint {
-    data_generation: Generation<RecordingData>,
-    /// The tracks the run evaluated: enabled in the tree and passing the
-    /// track-level global filter, in tree order.
-    tracks: Vec<TrackRef>,
-    filter: GlobalFilter,
-    /// The snap run each evaluated track's `snap_error` values came from
-    /// (by `Arc` identity, absent without a run) - a re-snap changes the
-    /// values, so results referencing them gray out like any other input.
-    snap_runs: Vec<Option<WeakArcIdentity<Vec<Option<f64>>>>>,
-    /// The interference values each evaluated track saw (by `Arc` identity,
-    /// absent with no archived day). Archiving a day the track spans
-    /// changes them, so results referencing them gray out.
-    jamming_days: Vec<Option<WeakArcIdentity<Vec<Option<f64>>>>>,
-    /// The geomagnetic index values each evaluated track saw, tracked like
-    /// [`Self::jamming_days`].
-    geomagnetic_days: Vec<Option<WeakArcIdentity<Vec<GeomagneticPoint>>>>,
-    /// The TEC values each evaluated track saw, tracked like
-    /// [`Self::jamming_days`].
-    tec_days: Vec<Option<WeakArcIdentity<Vec<TecPoint>>>>,
+impl<'a> RunInputs<'a> {
+    fn evaluated_tracks(self) -> impl Iterator<Item = TrackRef> + 'a {
+        self.loaded_files
+            .files()
+            .iter()
+            .enumerate()
+            .flat_map(move |(fi, file)| {
+                file.tracks
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(ti, track)| {
+                        let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
+                        (self.visibility.track_enabled(track_ref)
+                            && gt_filter::track_passes_filter(track, self.filter))
+                        .then_some(track_ref)
+                    })
+            })
+    }
+
+    pub(crate) fn values(
+        self,
+        track: TrackRef,
+        dependencies: RunDependencies,
+    ) -> TrackValueSources<'a> {
+        TrackValueSources {
+            snap_error: dependencies
+                .uses_snap_error()
+                .then(|| self.snap_errors.get(&track))
+                .flatten(),
+            jamming: dependencies
+                .uses_jamming()
+                .then(|| self.jamming.get(&track))
+                .flatten(),
+            geomagnetic: dependencies
+                .uses_geomagnetic()
+                .then(|| self.geomagnetic.points_by_track.get(&track))
+                .flatten(),
+            tec: dependencies
+                .uses_tec()
+                .then(|| self.tec.points_by_track.get(&track))
+                .flatten(),
+        }
+    }
 }
 
-impl RunFingerprint {
-    /// Snapshot the run inputs.
-    pub fn of(inputs: RunInputs<'_>) -> Self {
-        let RunInputs {
-            loaded_files,
-            visibility,
-            filter,
-            snap_errors,
-            jamming,
-            geomagnetic,
-            tec,
-        } = inputs;
-        let mut tracks = Vec::new();
-        for (fi, file) in loaded_files.files().iter().enumerate() {
-            let fi = FileIdx::new(fi);
-            for (ti, track) in file.tracks.iter().enumerate() {
-                let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
-                if visibility.track_enabled(track_ref)
-                    && gt_filter::track_passes_filter(track, filter)
-                {
-                    tracks.push(track_ref);
-                }
-            }
+#[derive(Clone, Copy)]
+pub(crate) struct TrackValueSources<'a> {
+    snap_error: Option<&'a Arc<Vec<Option<f64>>>>,
+    jamming: Option<&'a Arc<Vec<Option<f64>>>>,
+    geomagnetic: Option<&'a Arc<Vec<GeomagneticPoint>>>,
+    tec: Option<&'a Arc<Vec<TecPoint>>>,
+}
+
+impl TrackValueSources<'_> {
+    pub(crate) fn capture(self) -> CapturedTrackValues {
+        CapturedTrackValues {
+            snap_error: self.snap_error.cloned(),
+            jamming: self.jamming.cloned(),
+            geomagnetic: self.geomagnetic.cloned(),
+            tec: self.tec.cloned(),
         }
-        let snap_runs = tracks
-            .iter()
-            .map(|track_ref| snap_errors.get(track_ref).map(WeakArcIdentity::of))
-            .collect();
-        let jamming_days = tracks
-            .iter()
-            .map(|track_ref| jamming.get(track_ref).map(WeakArcIdentity::of))
-            .collect();
-        let geomagnetic_days = tracks
-            .iter()
-            .map(|track_ref| {
-                geomagnetic
-                    .points_by_track
-                    .get(track_ref)
-                    .map(WeakArcIdentity::of)
-            })
-            .collect();
-        let tec_days = tracks
-            .iter()
-            .map(|track_ref| tec.points_by_track.get(track_ref).map(WeakArcIdentity::of))
-            .collect();
+    }
+}
+
+struct TrackValueIdentities {
+    snap_error: Option<WeakArcIdentity<Vec<Option<f64>>>>,
+    jamming: Option<WeakArcIdentity<Vec<Option<f64>>>>,
+    geomagnetic: Option<Weak<Vec<GeomagneticPoint>>>,
+    tec: Option<WeakArcIdentity<Vec<TecPoint>>>,
+}
+
+impl TrackValueIdentities {
+    fn of(values: TrackValueSources<'_>) -> Self {
         Self {
-            data_generation: loaded_files.data_generation(),
-            tracks,
-            filter: *filter,
-            snap_runs,
-            jamming_days,
-            geomagnetic_days,
-            tec_days,
+            snap_error: values.snap_error.map(WeakArcIdentity::of),
+            jamming: values.jamming.map(WeakArcIdentity::of),
+            geomagnetic: values.geomagnetic.map(Arc::downgrade),
+            tec: values.tec.map(WeakArcIdentity::of),
         }
     }
 
-    /// The tracks a run over these inputs evaluates, in tree order.
-    pub fn tracks(&self) -> &[TrackRef] {
+    fn matches(&self, values: TrackValueSources<'_>, dependencies: RunDependencies) -> bool {
+        self.snap_error == values.snap_error.map(WeakArcIdentity::of)
+            && self.jamming == values.jamming.map(WeakArcIdentity::of)
+            && self.tec == values.tec.map(WeakArcIdentity::of)
+            && self.geomagnetic_matches(values.geomagnetic, dependencies)
+    }
+
+    fn geomagnetic_matches(
+        &self,
+        current: Option<&Arc<Vec<GeomagneticPoint>>>,
+        dependencies: RunDependencies,
+    ) -> bool {
+        match (&self.geomagnetic, current) {
+            (None, None) => return true,
+            (Some(original), Some(current)) if original.as_ptr() == Arc::as_ptr(current) => {
+                return true;
+            }
+            _ => {}
+        }
+
+        // The prepared run and point results retain the captured series.
+        let original = self.geomagnetic.as_ref().and_then(Weak::upgrade);
+        if original.is_none() && self.geomagnetic.is_some() {
+            return false;
+        }
+        let before = original.as_deref().map_or(&[][..], Vec::as_slice);
+        let after = current.map_or(&[][..], |points| points.as_slice());
+        (0..before.len().max(after.len())).all(|index| {
+            let before = before.get(index);
+            let after = after.get(index);
+            (!dependencies.hp30
+                || before.and_then(|p| p.hp30).map(f64::to_bits)
+                    == after.and_then(|p| p.hp30).map(f64::to_bits))
+                && (!dependencies.kp
+                    || before.and_then(|p| p.kp).map(f64::to_bits)
+                        == after.and_then(|p| p.kp).map(f64::to_bits))
+        })
+    }
+}
+
+pub(crate) struct RunFingerprint {
+    pub(crate) dependencies: RunDependencies,
+    data_generation: Generation<RecordingData>,
+    tracks: Vec<TrackRef>,
+    filter: GlobalFilter,
+    track_values: Vec<TrackValueIdentities>,
+}
+
+impl RunFingerprint {
+    pub(crate) fn of(inputs: RunInputs<'_>, dependencies: RunDependencies) -> Self {
+        let tracks: Vec<_> = inputs.evaluated_tracks().collect();
+        let track_values = if dependencies.external_values() {
+            tracks
+                .iter()
+                .map(|&track| TrackValueIdentities::of(inputs.values(track, dependencies)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Self {
+            dependencies,
+            data_generation: inputs.loaded_files.data_generation(),
+            tracks,
+            filter: *inputs.filter,
+            track_values,
+        }
+    }
+
+    pub(crate) fn tracks(&self) -> &[TrackRef] {
         &self.tracks
     }
 
     pub(crate) fn matches_loaded_files(&self, files: LoadedFilesView<'_>) -> bool {
         self.data_generation == files.data_generation()
     }
+
+    pub(crate) fn matches(&self, inputs: RunInputs<'_>) -> bool {
+        self.matches_loaded_files(inputs.loaded_files)
+            && self.filter == *inputs.filter
+            && self.tracks.iter().copied().eq(inputs.evaluated_tracks())
+            && self
+                .tracks
+                .iter()
+                .zip(&self.track_values)
+                .all(|(&track, original)| {
+                    original.matches(inputs.values(track, self.dependencies), self.dependencies)
+                })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use gt_loaded_files::{FileHistory, LoadedFiles};
-    use rstest::rstest;
-
     use super::*;
-    use crate::test_util;
+    use crate::check;
+    use crate::test_util::LoadedState;
 
     #[test]
-    fn fingerprint_changes_with_files_visibility_and_filter() {
-        let loaded_files = LoadedFiles::new();
-        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
-        let fingerprint = |filter: &GlobalFilter| {
-            RunFingerprint::of(RunInputs {
-                loaded_files: loaded_files.view(),
-                visibility: &visibility,
-                filter,
-                snap_errors: &SnapErrorValues::default(),
-                jamming: &JammingValues::default(),
-                geomagnetic: &GeomagneticSeries::default(),
-                tec: &TecSeries::default(),
-            })
-        };
-
-        let base = fingerprint(&GlobalFilter::default());
-        assert_eq!(base, fingerprint(&GlobalFilter::default()));
-        let filtered =
-            GlobalFilter::default().with_minimum_distance(Some(uom::si::f64::Length::new::<
-                uom::si::length::kilometer,
-            >(1.0)));
-        assert_ne!(base, fingerprint(&filtered));
-    }
-
-    /// A new snap run for an evaluated track changes the fingerprint, so
-    /// results gray out. Handing in the same run keeps it equal.
-    #[test]
-    fn fingerprint_tracks_snap_run_identity() {
-        let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(test_util::loaded_file(), FileHistory::None);
-        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
+    fn fingerprint_tracks_snap_run_identity_after_the_series_drops() {
+        let mut state = LoadedState::with_channels(vec![]);
+        let chunks = check::check_all("points | table snap_error", &state.schema());
+        let dependencies = RunDependencies::of(&chunks);
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        let fingerprint = |snap_errors: &SnapErrorValues| {
-            RunFingerprint::of(RunInputs {
-                loaded_files: loaded_files.view(),
-                visibility: &visibility,
-                filter: &GlobalFilter::default(),
-                snap_errors,
-                jamming: &JammingValues::default(),
-                geomagnetic: &GeomagneticSeries::default(),
-                tec: &TecSeries::default(),
-            })
-        };
-
-        let no_run = fingerprint(&SnapErrorValues::default());
-        let run = SnapErrorValues::from_iter([(track, Arc::new(vec![Some(1.0)]))]);
-        let initial = fingerprint(&run);
-        assert_ne!(no_run, initial, "a first run changes the input");
-        assert_eq!(initial, fingerprint(&run), "same run, stable");
-        let values = &run[&track];
+        let no_run = RunFingerprint::of(state.inputs(), dependencies);
+        let values = Arc::new(vec![Some(1.0)]);
+        state.snap_errors.insert(track, values);
+        let initial = RunFingerprint::of(state.inputs(), dependencies);
+        assert_eq!(initial.tracks(), [track]);
+        assert!(!no_run.matches(state.inputs()));
+        assert!(initial.matches(state.inputs()));
+        let values = &state.snap_errors[&track];
         assert_eq!(Arc::strong_count(values), 1);
         assert_eq!(Arc::weak_count(values), 1);
-        drop(run);
-        let re_run = SnapErrorValues::from_iter([(track, Arc::new(vec![Some(2.0)]))]);
-        assert_ne!(
-            initial,
-            fingerprint(&re_run),
-            "a re-snap must gray results out"
-        );
-    }
-
-    /// Every enabled, filter-passing track is an evaluation target.
-    #[test]
-    fn fingerprint_lists_the_evaluated_tracks() {
-        let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(test_util::file_with_channels(vec![]), FileHistory::None);
-        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
-        let fingerprint = RunFingerprint::of(RunInputs {
-            loaded_files: loaded_files.view(),
-            visibility: &visibility,
-            filter: &GlobalFilter::default(),
-            snap_errors: &SnapErrorValues::default(),
-            jamming: &JammingValues::default(),
-            geomagnetic: &GeomagneticSeries::default(),
-            tec: &TecSeries::default(),
-        });
-        assert_eq!(
-            fingerprint.tracks(),
-            [TrackRef::new(FileIdx::new(0), TrackIdx::new(0))]
-        );
-    }
-
-    /// The day archives a query reads per fix. This fixture fills one for one
-    /// track, from one archived day.
-    #[derive(Default)]
-    struct ArchivedSeries {
-        geomagnetic: GeomagneticSeries,
-        tec: TecSeries,
-    }
-
-    impl ArchivedSeries {
-        /// A geomagnetic index of `hp30` at the epoch, on `track` alone.
-        fn of_geomagnetic(track: TrackRef, hp30: f64) -> Self {
-            let mut series = Self::default();
-            series.geomagnetic.points_by_track.insert(
-                track,
-                Arc::new(vec![gt_ui_types::GeomagneticPoint {
-                    x_secs: 0.0,
-                    hp30: Some(hp30),
-                    kp: None,
-                }]),
-            );
-            series
-        }
-
-        /// A TEC reading of `tecu` at the epoch, on `track` alone.
-        fn of_tec(track: TrackRef, tecu: f64) -> Self {
-            let mut series = Self::default();
-            series.tec.points_by_track.insert(
-                track,
-                Arc::new(vec![gt_ui_types::TecPoint {
-                    x_secs: 0.0,
-                    tecu: Some(tecu),
-                }]),
-            );
-            series
-        }
-    }
-
-    /// An archived day reaching an evaluated track grays out the results
-    /// referencing it, and a revision of that day grays them out again.
-    #[rstest]
-    #[case::geomagnetic(ArchivedSeries::of_geomagnetic)]
-    #[case::tec(ArchivedSeries::of_tec)]
-    fn fingerprint_tracks_the_archived_values_of_an_evaluated_track(
-        #[case] series_of: fn(TrackRef, f64) -> ArchivedSeries,
-    ) {
-        let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(test_util::loaded_file(), FileHistory::None);
-        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
-        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        let fingerprint = |series: &ArchivedSeries| {
-            RunFingerprint::of(RunInputs {
-                loaded_files: loaded_files.view(),
-                visibility: &visibility,
-                filter: &GlobalFilter::default(),
-                snap_errors: &SnapErrorValues::default(),
-                jamming: &JammingValues::default(),
-                geomagnetic: &series.geomagnetic,
-                tec: &series.tec,
-            })
-        };
-
-        let archived = series_of(track, 5.0);
-        assert_ne!(
-            fingerprint(&ArchivedSeries::default()),
-            fingerprint(&archived),
-            "an archived day changes the input"
-        );
-        assert_eq!(fingerprint(&archived), fingerprint(&archived), "stable");
-        assert_ne!(
-            fingerprint(&archived),
-            fingerprint(&series_of(track, 6.0)),
-            "a revised day must gray results out"
-        );
+        state.snap_errors.remove(&track);
+        state.snap_errors.insert(track, Arc::new(vec![Some(2.0)]));
+        assert!(!initial.matches(state.inputs()));
     }
 }

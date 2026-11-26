@@ -31,7 +31,8 @@
 //! [`PreparedRun::execute`] off the UI thread.
 
 pub use check::{QueryChunk, analysis_context, check_all, check_chunks, check_text, split_queries};
-pub use fingerprint::{JammingValues, RunFingerprint, RunInputs, SnapErrorValues};
+pub use dependencies::RunDependencies;
+pub use fingerprint::{JammingValues, RunInputs, SnapErrorValues};
 pub use provider::{
     PointResultValues, SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData,
 };
@@ -47,6 +48,7 @@ pub use session::{
 };
 
 mod check;
+mod dependencies;
 mod fingerprint;
 mod provider;
 mod results;
