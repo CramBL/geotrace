@@ -59,6 +59,7 @@ members = [
     "crates/gt-log-view",
     "crates/gt-logfile",
     "crates/gt-map",
+    "crates/gt-mcp",
     "crates/gt-pending-writes",
     "crates/gt-plot",
     "crates/gt-query",
@@ -303,7 +304,7 @@ dist = ["self-update"]
 # In-app update check and self-update via axoupdater. Off by default so builds
 # from source or via package managers (e.g. `cargo install`) carry no updater
 # code. dist turns it on for the release binaries.
-self-update = ["dep:axoupdater"]
+self-update = ["dep:axoupdater", "dep:tokio"]
 
 [dependencies]
 # Used as a library (not a standalone updater binary) for the startup update
@@ -332,11 +333,12 @@ gt-loader = { path = "crates/gt-loader" }
 gt-log-view = { path = "crates/gt-log-view" }
 gt-logfile = { path = "crates/gt-logfile" }
 gt-map = { path = "crates/gt-map" }
+gt-mcp = { path = "crates/gt-mcp" }
 gt-pending-writes = { path = "crates/gt-pending-writes" }
 gt-plot = { path = "crates/gt-plot" }
 gt-query = { path = "crates/gt-query" }
 gt-query-run = { path = "crates/gt-query-run" }
-gt-session-bridge = { path = "crates/gt-session-bridge", features = ["schema"] }
+gt-session-bridge = { path = "crates/gt-session-bridge" }
 gt-side-panel = { path = "crates/gt-side-panel" }
 gt-sky = { path = "crates/gt-sky" }
 gt-snap = { path = "crates/gt-snap" }
@@ -355,14 +357,13 @@ log.workspace = true
 mimalloc = { version = "0.1.52" }
 parking_lot.workspace = true
 rfd = "0.17.2"
-rmcp = { version = "3.11.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rustc-hash.workspace = true
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
-# Current-thread runtime for the updater and the companion.
-tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
+# Current-thread runtime for the updater.
+tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 toml.workspace = true
 uom.workspace = true
 uuid.workspace = true

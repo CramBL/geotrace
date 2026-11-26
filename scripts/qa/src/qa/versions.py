@@ -163,6 +163,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-log-view",
     "gt-logfile",
     "gt-map",
+    "gt-mcp",
     "gt-pending-writes",
     "gt-plot",
     "gt-query",
