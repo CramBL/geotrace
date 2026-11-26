@@ -25,6 +25,7 @@ use gt_store::{
 };
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
+    recording_fixtures,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationWindow, FileIdx, Latitude, Longitude};
@@ -818,7 +819,7 @@ fn enabling_automatic_position_source_in_settings_and_disabling_in_the_dialog(
     if overlaps == 0 {
         test_util::harness::drop_file_and_wait_for_load(
             &mut harness,
-            TestDroppedFile::bytes(ui_tests::minimal_gtd_bytes(), "earlier.gtd"),
+            TestDroppedFile::bytes(recording_fixtures::minimal_gtd_bytes(), "earlier.gtd"),
         );
     }
     for index in 0..overlaps {

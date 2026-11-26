@@ -185,7 +185,8 @@ fn one_drop_of_several_stored_recordings_raises_one_prompt() {
 fn a_drop_loads_the_recording_new_to_history_and_prompts_over_the_stored_one() {
     let (mut harness, dir, gtd_path) = app_with_a_stored_recording_on_disk();
     let fresh_path = dir.path().join("fresh.gtd");
-    std::fs::write(&fresh_path, ui_tests::minimal_gtd_bytes()).expect("write the second recording");
+    std::fs::write(&fresh_path, recording_fixtures::minimal_gtd_bytes())
+        .expect("write the second recording");
 
     drop_paths(&mut harness, &[gtd_path, fresh_path]);
     step_until_one_recording_is_loaded(&mut harness);
@@ -840,7 +841,7 @@ fn resegment_prompt_for(
     crate::app::ResegmentPrompt {
         origin: RecordingOperationOrigin::Independent,
         filename: "ride.gtd".to_owned(),
-        bytes: std::sync::Arc::from(ui_tests::minimal_gtd_bytes()),
+        bytes: std::sync::Arc::from(recording_fixtures::minimal_gtd_bytes()),
         stored: stored_segmentation_from_app_with_rules(app, track_split_rule, fix_placement_rule),
         track_snapshot: test_util::recordings::synthetic_track_snapshot(
             &db_ref,
@@ -906,7 +907,7 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
     harness.step();
     let stored = StoredRecording {
         meta: None,
-        bytes: ui_tests::minimal_gtd_bytes(),
+        bytes: recording_fixtures::minimal_gtd_bytes(),
         track_table: StoredTrackTable::Present(vec![
             TrackRange {
                 start: 0,

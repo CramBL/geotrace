@@ -2,6 +2,7 @@ use egui_kittest::{Harness, OsThreshold, kittest::NodeT as _, kittest::Queryable
 use gt_store::{FlareStore, IonexStore, SolarStore};
 use gt_test_utils::{
     CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness,
+    recording_fixtures,
 };
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use gt_ui_types::{MapElementRef, MapEligibility};
@@ -630,7 +631,7 @@ fn snapshot_app_plot_clock_excursion() {
 /// the claimed-accuracy vs. observed-deviation overlay the metric exists for.
 #[test]
 fn snapshot_app_plot_snap_error() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
@@ -755,7 +756,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
 /// once, however many frames follow.
 #[test]
 fn a_storm_day_archived_after_the_load_warns_on_the_map() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
@@ -812,7 +813,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
 /// many frames follow.
 #[test]
 fn a_tec_window_archived_after_the_load_warns_on_the_map() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
@@ -1062,7 +1063,7 @@ fn solar_flare_chip_is_disabled_until_a_day_is_archived() {
 /// not hidden - and enabling runs changes nothing else about the chip row.
 #[test]
 fn snap_error_chip_is_disabled_until_a_run_completes() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)

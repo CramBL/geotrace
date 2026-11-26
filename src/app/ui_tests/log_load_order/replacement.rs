@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use gt_test_utils::recording_fixtures;
+
 use super::*;
 use crate::app::load_failures::LoadProblemRequest;
 use crate::app::loader::GtdLoadMode;
@@ -40,7 +42,7 @@ fn replacement_file_dialogs_preserve_their_owner_beside_a_normal_open(
     for path in [&replacement, &normal] {
         let bytes =
             if path == &replacement && matches!(outcome, FileSelectionOutcome::LoadRecording) {
-                ui_tests::minimal_gtd_bytes()
+                recording_fixtures::minimal_gtd_bytes()
             } else {
                 format!(
                     "{} {}\n",

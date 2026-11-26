@@ -13,7 +13,7 @@ use gt_instance_lock::{
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{HistoryDatabase as _, ReadOnlyHistoryDatabase as _, Recordings};
 use gt_test_utils::snapshot_harness;
-use gt_test_utils::{HarnessInteraction as _, TestHarness};
+use gt_test_utils::{HarnessInteraction as _, TestHarness, recording_fixtures};
 
 use crate::app::App;
 use crate::app::instance_wait::{
@@ -314,7 +314,8 @@ fn a_file_named_while_the_data_directory_is_held_loads_once_it_frees() {
     let directory = tempfile::tempdir().expect("temp dir");
     let holder = DataDirectoryLock::acquire(Some(directory.path()));
     let gtd_path = directory.path().join("queued.gtd");
-    std::fs::write(&gtd_path, ui_tests::minimal_gtd_bytes()).expect("write the recording");
+    std::fs::write(&gtd_path, recording_fixtures::minimal_gtd_bytes())
+        .expect("write the recording");
     let mut harness = ui_tests::app_waiting_for_the_data_directory(&[gtd_path], directory.path());
     harness.run_steps(3);
 
@@ -340,7 +341,7 @@ fn a_file_dropped_while_the_data_directory_is_held_loads_once_it_frees() {
         .input_mut()
         .dropped_files
         .push(Arc::new(TestDroppedFile::bytes(
-            ui_tests::minimal_gtd_bytes().as_slice(),
+            recording_fixtures::minimal_gtd_bytes().as_slice(),
             "dropped.gtd",
         )));
     harness.run_steps(3);
@@ -645,7 +646,8 @@ fn taking_over_opens_the_databases_and_runs_the_loads_that_waited() {
     let directory = tempfile::tempdir().expect("temp dir");
     let _holder = DataDirectoryLock::acquire(Some(directory.path()));
     let gtd_path = directory.path().join("queued.gtd");
-    std::fs::write(&gtd_path, ui_tests::minimal_gtd_bytes()).expect("write the recording");
+    std::fs::write(&gtd_path, recording_fixtures::minimal_gtd_bytes())
+        .expect("write the recording");
     let mut harness = ui_tests::app_waiting_for_the_data_directory(&[gtd_path], directory.path());
     harness.run_steps(3);
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
@@ -978,7 +980,8 @@ fn a_file_queued_while_waiting_loads_read_only_and_is_not_stored() {
     let _holder = DataDirectoryLock::acquire(Some(directory.path()));
     let store = gt_store::Store::open_in(directory.path());
     let gtd_path = directory.path().join("queued.gtd");
-    std::fs::write(&gtd_path, ui_tests::minimal_gtd_bytes()).expect("write the recording");
+    std::fs::write(&gtd_path, recording_fixtures::minimal_gtd_bytes())
+        .expect("write the recording");
     let mut harness = ui_tests::app_waiting_for_the_data_directory(&[gtd_path], directory.path());
     harness.run_steps(3);
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);

@@ -1661,9 +1661,9 @@ fn an_import_with_a_failed_history_write_refreshes_the_listing() {
     recordings::insert_recording_as_one_whole_file_track(
         &mut store.open_recordings().unwrap(),
         "imported",
-        &ui_tests::minimal_gtd_bytes(),
+        &recording_fixtures::minimal_gtd_bytes(),
     );
-    let mut loaded = ui_tests::log_load_order::recording_outcome("imported.gtd");
+    let mut loaded = recordings::recording_outcome("imported.gtd");
     loaded.history_write_attempted = true;
     let complete = harness
         .state_mut()

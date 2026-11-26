@@ -2846,9 +2846,12 @@ name = "gt-loaded-files"
 version = "0.19.0"
 dependencies = [
  "chrono",
+ "geotrace-sdk",
  "gt-fmt",
  "gt-history-types",
+ "gt-loader",
  "gt-test-utils",
+ "gt-track-builder",
  "gt-types",
  "parking_lot",
  "rstest",

@@ -1,6 +1,6 @@
 use egui_kittest::{Harness, kittest::Queryable as _};
 use gt_logfile::LogParseError;
-use gt_test_utils::{HarnessInteraction as _, TestHarness};
+use gt_test_utils::{HarnessInteraction as _, TestHarness, recording_fixtures};
 use gt_types::LoadWarning;
 use rstest::rstest;
 
@@ -9,11 +9,10 @@ use crate::app::frame::{LOADING_OVERLAY_MOST_LISTED_JOBS, LOADING_OVERLAY_WINDOW
 use crate::app::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
-use crate::app::ui_tests;
 
 #[test]
 fn drag_drop_gtd_path_loads_file() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let tmp = tempfile::NamedTempFile::with_suffix(".gtd").expect("create temp file");
     std::io::Write::write_all(&mut tmp.as_file(), &gtd_bytes).expect("write temp gtd");
     let tmp_path = tmp.path().to_path_buf();
@@ -29,7 +28,7 @@ fn drag_drop_gtd_path_loads_file() {
 
 #[test]
 fn drag_drop_gtd_bytes_loads_file() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
 
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)

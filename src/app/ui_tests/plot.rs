@@ -7,7 +7,7 @@ use geotrace_sdk::{
     Angle, NavFileBuilder, NavFix, NavFixTime, SatelliteCoverage, SatelliteScope,
     SatelliteUsageReport, SolutionState,
 };
-use gt_test_utils::HarnessInteraction as _;
+use gt_test_utils::{HarnessInteraction as _, recording_fixtures};
 use gt_types::{FixRef, MetricKind, PointIdx};
 use gt_ui_types::{MapElementRef, MapEligibility};
 use rstest::rstest;
@@ -31,7 +31,7 @@ fn the_plot_takes_a_range_from_the_map_only_while_sync_to_map_is_on(#[case] sync
     harness.state().shared.borrow_mut().plot_state.sync_to_map = sync_to_map;
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
-        TestDroppedFile::bytes(ui_tests::minimal_gtd_bytes(), "test.gtd"),
+        TestDroppedFile::bytes(recording_fixtures::minimal_gtd_bytes(), "test.gtd"),
     );
     harness.run_steps(3);
 

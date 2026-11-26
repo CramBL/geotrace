@@ -12,6 +12,7 @@ use gt_loaded_files::FileHistory;
 use gt_store::{EnvironmentArchive, JamStore};
 use gt_test_utils::{
     By, CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, HarnessInteraction as _, TestHarness, fixtures,
+    recording_fixtures,
 };
 use gt_types::{Channel, DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
@@ -291,7 +292,7 @@ fn install_interference_archive(
 
 #[test]
 fn query_results_over_archived_interference_stay_fresh() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
@@ -398,7 +399,7 @@ fn query_capture_resolves_interference_for_a_replacement_on_the_same_day() {
 /// results out through the fingerprint.
 #[test]
 fn query_matches_on_snap_error_after_a_run() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
@@ -1689,7 +1690,7 @@ fn the_run_wide_map_button_frames_the_query_matches() {
 fn query_match_row_hover_highlights_the_match() {
     use gt_ui_types::HighlightScope;
 
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)

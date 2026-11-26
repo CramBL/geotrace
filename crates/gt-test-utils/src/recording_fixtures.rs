@@ -258,6 +258,28 @@ pub struct SyntheticGtdSpec {
     pub sats_in_fix: u32,
 }
 
+pub fn minimal_gtd_bytes() -> Vec<u8> {
+    self::synthetic_gtd_bytes(self::minimal_gtd_spec())
+}
+
+#[expect(clippy::expect_used, reason = "The fixture timestamp is fixed")]
+pub fn minimal_gtd_spec() -> SyntheticGtdSpec {
+    SyntheticGtdSpec {
+        start: DateTime::from_timestamp(RECORDING_FIXTURE_START_SECS, 0).expect("fixture start"),
+        point_count: 61,
+        step_secs: 1,
+        start_lat_deg: 51.5,
+        start_lon_deg: -0.1,
+        lat_step_deg: 0.0002,
+        lon_step_deg: -0.00015,
+        heading_deg: 270.0,
+        speed_kmh: 22.0,
+        eph_m: 2.4,
+        sats_seen: 10,
+        sats_in_fix: 7,
+    }
+}
+
 /// Build synthetic `.gtd` bytes with both nav fixes and satellite reports.
 ///
 /// This is intentionally generic so snapshot and integration tests can create

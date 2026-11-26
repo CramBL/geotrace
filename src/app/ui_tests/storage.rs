@@ -7,7 +7,7 @@ use gt_pending_writes::WriteAccess;
 use gt_store::{
     HistoryDatabase as _, JamStore, ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle,
 };
-use gt_test_utils::{ControlLabel, HarnessInteraction as _, TestHarness};
+use gt_test_utils::{ControlLabel, HarnessInteraction as _, TestHarness, recording_fixtures};
 use rstest::rstest;
 
 use crate::app::App;
@@ -66,7 +66,8 @@ fn a_file_named_before_the_databases_land_is_loaded_and_stored_once_they_do() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
     let gtd_path = dir.path().join("queued.gtd");
-    std::fs::write(&gtd_path, ui_tests::minimal_gtd_bytes()).expect("write the recording");
+    std::fs::write(&gtd_path, recording_fixtures::minimal_gtd_bytes())
+        .expect("write the recording");
 
     let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[gtd_path]);
     harness.run_steps(3);
@@ -97,7 +98,8 @@ fn a_recording_loaded_in_a_read_only_session_is_not_stored() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
     let gtd_path = dir.path().join("read-only.gtd");
-    std::fs::write(&gtd_path, ui_tests::minimal_gtd_bytes()).expect("write the recording");
+    std::fs::write(&gtd_path, recording_fixtures::minimal_gtd_bytes())
+        .expect("write the recording");
     let (mut harness, databases) =
         harness::app_with_the_databases_still_opening_for(&[gtd_path], WriteAccess::ReadOnly);
     harness.run_steps(3);
@@ -131,7 +133,7 @@ fn a_file_dropped_before_the_databases_land_loads_once_they_do() {
         .input_mut()
         .dropped_files
         .push(Arc::new(TestDroppedFile::bytes(
-            ui_tests::minimal_gtd_bytes().as_slice(),
+            recording_fixtures::minimal_gtd_bytes().as_slice(),
             "dropped.gtd",
         )));
     harness.run_steps(3);
@@ -178,7 +180,7 @@ fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
         .input_mut()
         .dropped_files
         .push(Arc::new(TestDroppedFile::bytes(
-            ui_tests::minimal_gtd_bytes().as_slice(),
+            recording_fixtures::minimal_gtd_bytes().as_slice(),
             "dropped.gtd",
         )));
     harness.run_steps(3);
@@ -293,7 +295,10 @@ fn environment_auto_pruning_keeps_the_days_the_loaded_recording_needs() {
 
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
-        TestDroppedFile::bytes(ui_tests::minimal_gtd_bytes().as_slice(), "ride.gtd"),
+        TestDroppedFile::bytes(
+            recording_fixtures::minimal_gtd_bytes().as_slice(),
+            "ride.gtd",
+        ),
     );
     assert!(
         harness.step_until(|harness| !harness.state().environment_prune_running()),

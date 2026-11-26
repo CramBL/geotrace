@@ -146,6 +146,8 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use chrono::{DateTime, Duration};
+    use geotrace_sdk::{Meta, NavFileBuilder};
+    use gt_track_builder::SegmentationConfig;
     use gt_types::{FileIdx, TimeRange, TrackIdx, TrackRef};
     use rstest::rstest;
 
@@ -195,6 +197,58 @@ mod tests {
         assert_eq!(recording.time_range, Some(TimeRange::new(start, end)));
         assert_eq!(recording.track_count, 1);
         assert!(page.next_after.is_none());
+    }
+
+    #[rstest]
+    #[case::absolute_path(r"C:\private\morning.gtd", None, "morning.gtd", "morning.gtd")]
+    #[case::prefixed_path("auto:/private/morning.gtd", None, "morning.gtd", "morning.gtd")]
+    #[case::prefixed_basename("auto:morning.gtd", None, "morning.gtd", "auto:morning.gtd")]
+    #[case::explicit_identity(
+        r"C:\private\morning.gtd",
+        Some(r"C:\private\morning.gtd"),
+        r"C:\private\morning.gtd",
+        "morning.gtd"
+    )]
+    fn recording_discovery_reports_the_display_name_and_filename_for_byte_imports(
+        #[case] import_name: &str,
+        #[case] explicit_identity: Option<&str>,
+        #[case] expected_name: &str,
+        #[case] expected_filename: &str,
+    ) {
+        let meta = Meta::builder()
+            .maybe_identity(explicit_identity)
+            .build()
+            .expect("metadata");
+        let recording = NavFileBuilder::new()
+            .with_meta(meta)
+            .open()
+            .finish()
+            .expect("recording");
+        let mut bytes = Vec::new();
+        recording.write(&mut bytes).expect("encode recording");
+        let loaded = gt_loader::load_gtd_bytes_with_progress(
+            &bytes,
+            import_name.to_owned(),
+            |_, _| {},
+            &SegmentationConfig::default(),
+        )
+        .expect("load recording bytes");
+        let mut files = LoadedFiles::new();
+        files.push(
+            loaded.file,
+            FileHistory::recording(loaded.identity, test_util::empty_recording_meta(), None),
+        );
+
+        let page = ListRecordings::new(None, NonZeroUsize::MIN).execute(files.view());
+
+        let [recording] = page.recordings.as_slice() else {
+            panic!("expected one recording");
+        };
+        assert_eq!(
+            gt_fmt::render_name_template("{identity}", &recording.name_fields),
+            expected_name
+        );
+        assert_eq!(recording.name_fields.filename, expected_filename);
     }
 
     #[test]

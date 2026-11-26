@@ -3,17 +3,15 @@ use std::io;
 use chrono::Duration;
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::Queryable as _};
-use gt_loaded_files::FileHistory;
 use gt_loader::LoadError;
 use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey};
 use gt_logfile::{LogParseError, ParsedLog};
-use gt_plot::AnalysisConfig;
 use gt_store::{
     DatabaseRef, DbError, LogAttachmentId, Store, StoredLogFilter, StoredLogFilterCondition,
     StoredLogFilterEffects, StoredLogFilterStack, StoredLogSettings, StoredRecording,
     StoredTrackTable, StoredYearResolution,
 };
-use gt_test_utils::{By, HarnessInteraction as _};
+use gt_test_utils::{By, HarnessInteraction as _, recording_fixtures};
 use rstest::rstest;
 
 use crate::app::association_batches::RecordingOperationOrigin;
@@ -21,15 +19,14 @@ use crate::app::history_db;
 use crate::app::load_failures::{
     LoadFailure, LoadFailureCause, LoadReadRequest, LoadRecovery, LoadSource,
 };
-use crate::app::loader::{
-    LoadedRecordingPlacement, LoadedRecordingResult, LooseLogResult, SavedLogResult,
-};
+use crate::app::loader::{LoadedRecordingPlacement, LooseLogResult, SavedLogResult};
 use crate::app::log_viewer::association_dialog;
 use crate::app::recording_from_disk::{
     LOAD_FROM_DISK_LABEL, RecordingAlreadyInHistory, RecordingContent, RecordingFromDisk,
     ScreenedRecordings,
 };
 use crate::app::storage::QueuedLoad;
+use crate::app::test_util::recordings;
 use crate::app::{App, ParsedLogOrigin, loader, test_util, ui_tests};
 use crate::settings::InitialPositionSourcePolicy;
 
@@ -60,20 +57,6 @@ fn log_outcome(name: &str) -> LooseLogResult {
     LooseLogResult {
         filename: Some(name.to_owned()),
         parsed: parsed_log(name),
-    }
-}
-
-pub(super) fn recording_outcome(name: &str) -> LoadedRecordingResult {
-    let file = gt_loader::load_bytes(&ui_tests::minimal_gtd_bytes(), name.to_owned())
-        .expect("parse recording");
-    let series = gt_plot::prepare_file_series(&file, AnalysisConfig::default());
-    LoadedRecordingResult {
-        file,
-        series,
-        history: FileHistory::None,
-        history_write_attempted: false,
-        applied_current_marker_settings: false,
-        placement: LoadedRecordingPlacement::AddAnEntry,
     }
 }
 
@@ -197,9 +180,9 @@ fn initial_association_is_independent_of_log_and_recording_completion_order(
                 .and_then(LoadedLog::associated_recording),
             None
         );
-        recording(Ok(recording_outcome("recording.gtd")));
+        recording(Ok(recordings::recording_outcome("recording.gtd")));
     } else {
-        recording(Ok(recording_outcome("recording.gtd")));
+        recording(Ok(recordings::recording_outcome("recording.gtd")));
         harness.step();
         log(Ok(log_outcome("log.txt")));
     }
@@ -239,9 +222,11 @@ fn initial_association_waits_for_every_overlapping_recording(
     drop(batch);
     let mut completions: Vec<Option<Box<dyn FnOnce()>>> = vec![
         Some(Box::new(move || log(Ok(log_outcome("log.txt"))))),
-        Some(Box::new(move || first(Ok(recording_outcome("first.gtd"))))),
         Some(Box::new(move || {
-            second(Ok(recording_outcome("second.gtd")))
+            first(Ok(recordings::recording_outcome("first.gtd")))
+        })),
+        Some(Box::new(move || {
+            second(Ok(recordings::recording_outcome("second.gtd")))
         })),
     ];
     for (step, index) in order.into_iter().enumerate() {
@@ -289,7 +274,7 @@ fn initial_chooser_ties_follow_loaded_order_then_arrival_order(
             .state_mut()
             .loader
             .controlled_recording_load_for_test(name, RecordingOperationOrigin::Independent);
-        complete(Ok(recording_outcome(name)));
+        complete(Ok(recordings::recording_outcome(name)));
         harness.step();
     }
     let initial_candidates: Vec<_> = harness
@@ -326,13 +311,13 @@ fn initial_chooser_ties_follow_loaded_order_then_arrival_order(
     drop(batch);
     log(Ok(log_outcome("log.txt")));
     if second_completes_first {
-        second(Ok(recording_outcome("arriving-second.gtd")));
+        second(Ok(recordings::recording_outcome("arriving-second.gtd")));
         harness.step();
-        first(Ok(recording_outcome("arriving-first.gtd")));
+        first(Ok(recordings::recording_outcome("arriving-first.gtd")));
     } else {
-        first(Ok(recording_outcome("arriving-first.gtd")));
+        first(Ok(recordings::recording_outcome("arriving-first.gtd")));
         harness.step();
-        second(Ok(recording_outcome("arriving-second.gtd")));
+        second(Ok(recordings::recording_outcome("arriving-second.gtd")));
     }
     harness.run_steps(3);
     let dialog = harness.get(
@@ -381,7 +366,7 @@ fn a_failed_recording_load_releases_pending_log_association(#[values(true, false
         .loader
         .controlled_loose_log_load_for_test("log.txt", batch.log());
     drop(batch);
-    good(Ok(recording_outcome("good.gtd")));
+    good(Ok(recordings::recording_outcome("good.gtd")));
     log(Ok(log_outcome("log.txt")));
     harness.step();
     assert!(harness.state().association_dialog.is_none());
@@ -445,7 +430,7 @@ fn load_failures_stay_after_later_loads_succeed_in_the_same_frame() {
         LoadSource::Filename("broken.log".to_owned()),
         LoadFailureCause::ParseLog(LogParseError::Empty),
     )));
-    recording(Ok(recording_outcome("recording.gtd")));
+    recording(Ok(recordings::recording_outcome("recording.gtd")));
     log(Ok(log_outcome("log.txt")));
     saved(Ok(saved_log_outcome("saved.log")));
     harness.step();
@@ -503,7 +488,9 @@ fn initial_association_waits_for_history_screening_and_the_recording_load(
                 new_to_history: vec![RecordingFromDisk {
                     arrival: screening,
                     filename: "recording.gtd".to_owned(),
-                    content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
+                    content: RecordingContent::Bytes(
+                        recording_fixtures::minimal_gtd_bytes().into(),
+                    ),
                     mode: loader::GtdLoadMode::Regular,
                 }],
             },
@@ -516,9 +503,9 @@ fn initial_association_waits_for_history_screening_and_the_recording_load(
 fn initial_association_waits_for_history_open_results(#[values(true, false)] succeeds: bool) {
     let dir = tempfile::tempdir().expect("temp directory");
     let path = dir.path().join("history.h5");
-    let stored = test_util::recordings::store_recording(
+    let stored = recordings::store_recording(
         &path,
-        &ui_tests::minimal_gtd_bytes(),
+        &recording_fixtures::minimal_gtd_bytes(),
         &ui_tests::two_live_track_ranges(),
     );
     let mut harness = harness(false);
@@ -528,7 +515,7 @@ fn initial_association_waits_for_history_open_results(#[values(true, false)] suc
         .begin_submission(std::iter::empty());
     harness
         .state_mut()
-        .install_history_worker(test_util::recordings::worker_on(&path));
+        .install_history_worker(recordings::worker_on(&path));
     let requested = if succeeds {
         stored
     } else {
@@ -604,7 +591,7 @@ fn pending_logs_receive_separate_dialogs_in_filename_order() {
     z(Ok(log_outcome("z.txt")));
     a(Ok(log_outcome("a.txt")));
     harness.step();
-    recording(Ok(recording_outcome("recording.gtd")));
+    recording(Ok(recordings::recording_outcome("recording.gtd")));
     harness.run_steps(2);
     let first = harness
         .state()
@@ -680,7 +667,7 @@ fn a_later_unrelated_recording_load_preserves_a_resolved_log_without_a_source() 
         .state_mut()
         .loader
         .controlled_recording_load_for_test("recording.gtd", RecordingOperationOrigin::Independent);
-    recording(Ok(recording_outcome("recording.gtd")));
+    recording(Ok(recordings::recording_outcome("recording.gtd")));
     harness.run_steps(2);
     assert_eq!(
         harness
@@ -711,7 +698,7 @@ fn an_explicit_footer_choice_preserves_the_source_when_pending_loads_finish(
         .state_mut()
         .loader
         .controlled_recording_load_for_test("first.gtd", RecordingOperationOrigin::Independent);
-    first(Ok(recording_outcome("first.gtd")));
+    first(Ok(recordings::recording_outcome("first.gtd")));
     harness.step();
     let second = harness
         .state_mut()
@@ -770,7 +757,7 @@ fn an_explicit_footer_choice_preserves_the_source_when_pending_loads_finish(
     if !choose_recording {
         assert_eq!(source, PositionSourceState::None);
     }
-    second(Ok(recording_outcome("second.gtd")));
+    second(Ok(recordings::recording_outcome("second.gtd")));
     harness.run_steps(2);
     assert_eq!(
         harness
@@ -817,7 +804,7 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
         },
     }));
     harness.step();
-    recording(Ok(recording_outcome("unrelated.gtd")));
+    recording(Ok(recordings::recording_outcome("unrelated.gtd")));
     harness.run_steps(2);
     let loaded = harness.state().first_log().expect("saved log");
     assert_eq!(loaded.attachment(), Some(&attachment));
@@ -859,11 +846,13 @@ fn cancelling_the_history_recording_prompt_releases_pending_logs() {
                     from_disk: RecordingFromDisk {
                         arrival: screening,
                         filename: "recording.gtd".to_owned(),
-                        content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
+                        content: RecordingContent::Bytes(
+                            recording_fixtures::minimal_gtd_bytes().into(),
+                        ),
                         mode: loader::GtdLoadMode::Regular,
                     },
                     history_path: Default::default(),
-                    track_snapshot: test_util::recordings::synthetic_track_snapshot(
+                    track_snapshot: recordings::synthetic_track_snapshot(
                         &DatabaseRef {
                             identity: "stored".to_owned(),
                             group_name: "recording".to_owned(),
@@ -924,11 +913,13 @@ fn successive_history_screening_responses_preserve_every_recording_before_associ
                     from_disk: RecordingFromDisk {
                         arrival: screening,
                         filename: name.to_owned(),
-                        content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
+                        content: RecordingContent::Bytes(
+                            recording_fixtures::minimal_gtd_bytes().into(),
+                        ),
                         mode: loader::GtdLoadMode::Regular,
                     },
                     history_path: Default::default(),
-                    track_snapshot: test_util::recordings::synthetic_track_snapshot(
+                    track_snapshot: recordings::synthetic_track_snapshot(
                         &DatabaseRef {
                             identity: "stored".to_owned(),
                             group_name: name.to_owned(),
@@ -1006,7 +997,7 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
                 "recording.gtd",
                 RecordingOperationOrigin::Independent,
             );
-        recording(Ok(recording_outcome("recording.gtd")));
+        recording(Ok(recordings::recording_outcome("recording.gtd")));
         harness.step();
         let candidates: Vec<_> = harness
             .state()
@@ -1116,7 +1107,7 @@ fn a_slow_log_load_does_not_delay_another_logs_initial_selection(#[values(true, 
         .controlled_loose_log_load_for_test("slow.log", batch.log());
     drop(batch);
     fast(Ok(log_outcome("fast.log")));
-    recording(Ok(recording_outcome("recording.gtd")));
+    recording(Ok(recordings::recording_outcome("recording.gtd")));
     harness.run_steps(2);
     assert_eq!(harness.state().loader.loading_jobs.len(), 1);
     assert_initial_association(&mut harness, ask, 1);
@@ -1189,7 +1180,7 @@ fn later_batches_preserve_initial_candidate_membership(
         );
     drop(later_batch);
     if later_completes_first {
-        later(Ok(recording_outcome("later.gtd")));
+        later(Ok(recordings::recording_outcome("later.gtd")));
         harness.step();
         assert_eq!(
             harness
@@ -1199,12 +1190,12 @@ fn later_batches_preserve_initial_candidate_membership(
                 .position_source_state(),
             PositionSourceState::PendingInitialSelection
         );
-        first(Ok(recording_outcome("first.gtd")));
+        first(Ok(recordings::recording_outcome("first.gtd")));
     } else {
-        first(Ok(recording_outcome("first.gtd")));
+        first(Ok(recordings::recording_outcome("first.gtd")));
         harness.run_steps(2);
         assert_initial_association(&mut harness, ask, 1);
-        later(Ok(recording_outcome("later.gtd")));
+        later(Ok(recordings::recording_outcome("later.gtd")));
     }
     harness.run_steps(2);
     if later_completes_first {
@@ -1275,12 +1266,12 @@ fn resegment_decisions_complete_every_recording_operation(
                 db_ref: recording.clone(),
                 placement: LoadedRecordingPlacement::AddAnEntry,
                 settings: None,
-                result: Ok(test_util::recordings::opened_recording(
+                result: Ok(recordings::opened_recording(
                     &recording,
                     StoredRecording {
                         meta: None,
                         bytes: if readable {
-                            ui_tests::minimal_gtd_bytes()
+                            recording_fixtures::minimal_gtd_bytes()
                         } else {
                             Vec::new()
                         },
@@ -1339,12 +1330,12 @@ fn arrival_batches_complete_history_screening_and_prompt_decisions(
 ) {
     let dir = tempfile::tempdir().expect("temp directory");
     let path = dir.path().join("history.h5");
-    let bytes = ui_tests::minimal_gtd_bytes();
-    test_util::recordings::store_recording(&path, &bytes, &ui_tests::two_live_track_ranges());
+    let bytes = recording_fixtures::minimal_gtd_bytes();
+    recordings::store_recording(&path, &bytes, &ui_tests::two_live_track_ranges());
     let mut harness = harness(false);
     harness
         .state_mut()
-        .install_history_worker(test_util::recordings::worker_on(&path));
+        .install_history_worker(recordings::worker_on(&path));
     harness.state_mut().load_arriving_files(vec![
         QueuedLoad::Bytes {
             bytes: bytes.into(),
@@ -1386,7 +1377,7 @@ fn deferred_arrival_sets_keep_independent_candidates_after_storage_opens() {
     harness
         .state_mut()
         .load_arriving_files(vec![QueuedLoad::Bytes {
-            bytes: ui_tests::minimal_gtd_bytes().into(),
+            bytes: recording_fixtures::minimal_gtd_bytes().into(),
             name: "recording.gtd".to_owned(),
         }]);
     assert!(harness.state().loader.loading_jobs.is_empty());
@@ -1446,13 +1437,13 @@ fn independent_history_and_later_arrivals_preserve_initial_selection_scope(
     harness.run_steps(2);
     let mut completions: Vec<Option<Box<dyn FnOnce()>>> = vec![
         Some(Box::new(move || {
-            first(Ok(recording_outcome("arrival-a.gtd")))
+            first(Ok(recordings::recording_outcome("arrival-a.gtd")))
         })),
         Some(Box::new(move || {
-            second(Ok(recording_outcome("arrival-b.gtd")))
+            second(Ok(recordings::recording_outcome("arrival-b.gtd")))
         })),
         Some(Box::new(move || {
-            independent(Ok(recording_outcome("history-c.gtd")))
+            independent(Ok(recordings::recording_outcome("history-c.gtd")))
         })),
     ];
     let mut first_completed = false;
@@ -1567,10 +1558,10 @@ fn a_saved_attachment_load_preserves_an_explicit_loose_arrivals_readiness(
                 .len(),
             1
         );
-        recording(Ok(recording_outcome("recording.gtd")));
+        recording(Ok(recordings::recording_outcome("recording.gtd")));
         assert_initial_association(&mut harness, ask, 1);
     } else {
-        recording(Ok(recording_outcome("recording.gtd")));
+        recording(Ok(recordings::recording_outcome("recording.gtd")));
         assert_initial_association(&mut harness, ask, 1);
         assert_eq!(harness.state().loader.loading_jobs.len(), 1);
         saved(Ok(saved_result));
@@ -1659,15 +1650,15 @@ fn independent_history_open_apis_preserve_an_arrivals_candidate_scope(
 ) {
     let dir = tempfile::tempdir().expect("temp directory");
     let path = dir.path().join("history.h5");
-    let stored = test_util::recordings::store_recording(
+    let stored = recordings::store_recording(
         &path,
-        &ui_tests::minimal_gtd_bytes(),
+        &recording_fixtures::minimal_gtd_bytes(),
         &ui_tests::two_live_track_ranges(),
     );
     let mut harness = harness(false);
     harness
         .state_mut()
-        .install_history_worker(test_util::recordings::worker_on(&path));
+        .install_history_worker(recordings::worker_on(&path));
     let batch = harness
         .state_mut()
         .association_batches
@@ -1699,7 +1690,7 @@ fn independent_history_open_apis_preserve_an_arrivals_candidate_scope(
             .position_source_state(),
         PositionSourceState::PendingInitialSelection
     );
-    arrival(Ok(recording_outcome("arrival.gtd")));
+    arrival(Ok(recordings::recording_outcome("arrival.gtd")));
     assert_initial_association(&mut harness, false, 1);
     let source = harness
         .state()

@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeDelta};
 use egui_kittest::Harness;
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
+use gt_loaded_files::FileHistory;
 use gt_pending_writes::PendingWrites;
+use gt_plot::AnalysisConfig;
 use gt_store::{
     DatabaseRef, HistoryAccess, HistoryDatabase as _, ReadOnlyRecordings, RecordingDebugTag,
     RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, Store, StoredFixPlacementRule,
@@ -22,8 +24,22 @@ use tempfile::TempDir;
 use crate::app::App;
 use crate::app::association_batches::AssociationSubmission;
 use crate::app::history_db::{HistoryWorker, OpenedRecording, Response};
-use crate::app::loader;
+use crate::app::loader::{self, LoadedRecordingPlacement, LoadedRecordingResult};
 use crate::app::test_util::harness;
+
+pub fn recording_outcome(name: &str) -> LoadedRecordingResult {
+    let file = gt_loader::load_bytes(&recording_fixtures::minimal_gtd_bytes(), name.to_owned())
+        .expect("parse recording");
+    let series = gt_plot::prepare_file_series(&file, AnalysisConfig::default());
+    LoadedRecordingResult {
+        file,
+        series,
+        history: FileHistory::None,
+        history_write_attempted: false,
+        applied_current_marker_settings: false,
+        placement: LoadedRecordingPlacement::AddAnEntry,
+    }
+}
 
 pub fn app_with_stored_tracks<'a>(
     tracks: &[TrackRange],
@@ -92,16 +108,7 @@ pub fn bytes_starting_at(start_secs: i64, point_count: usize) -> Vec<u8> {
     gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
         start: DateTime::from_timestamp(start_secs, 0).expect("valid timestamp"),
         point_count,
-        step_secs: 1,
-        start_lat_deg: 51.5,
-        start_lon_deg: -0.1,
-        lat_step_deg: 0.0002,
-        lon_step_deg: -0.00015,
-        heading_deg: 270.0,
-        speed_kmh: 22.0,
-        eph_m: 2.4,
-        sats_seen: 10,
-        sats_in_fix: 7,
+        ..recording_fixtures::minimal_gtd_spec()
     })
 }
 
