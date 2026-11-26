@@ -1513,6 +1513,58 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
 }
 
 #[test]
+fn history_pages_list_latest_starts_first_and_missing_ranges_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    {
+        let mut db = store.open_recordings().unwrap();
+        for (identity, seconds, points) in [
+            ("oldest", -10, 24),
+            ("untimed", 0, 0),
+            ("newest", 10, 2),
+            ("epoch", 0, 1),
+        ] {
+            let bytes = recordings::bytes_starting_at(seconds, points);
+            let meta = gt_store::extract_meta(&bytes).unwrap();
+            let track = (meta.nav_point_count > 0).then_some(TrackRange {
+                start: 0,
+                end: meta.nav_point_count,
+                state: TrackState::Live,
+            });
+            db.insert(
+                identity,
+                &meta,
+                track.as_slice(),
+                recordings::segmentation(),
+                &bytes,
+            )
+            .unwrap();
+        }
+    }
+
+    let mut harness = self::owner_app(&store);
+    let mut request = ListHistoryRecordings {
+        limit: Some(NonZeroUsize::MIN),
+        ..UNFILTERED
+    };
+    for (identity, start_us) in [
+        ("newest", Some(10_000_000)),
+        ("epoch", Some(0)),
+        ("oldest", Some(-10_000_000)),
+        ("untimed", None),
+    ] {
+        let page = self::await_page(&mut harness, request);
+        let [entry] = page.recordings.as_slice() else {
+            panic!("expected one History recording per page");
+        };
+        assert_eq!(entry.identity, identity);
+        assert_eq!(entry.time_range.map(|range| range.start_us()), start_us);
+        request.cursor = page.next_cursor;
+    }
+    assert_eq!(request.cursor, None);
+}
+
+#[test]
 fn a_stored_recording_spanning_midnight_is_discoverable_after_reopening_read_only() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());

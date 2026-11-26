@@ -11,7 +11,12 @@ pub struct HistoryEntries {
 }
 
 impl HistoryEntries {
-    pub fn new(entries: Vec<RecordingEntry>) -> Self {
+    pub fn new(mut entries: Vec<RecordingEntry>) -> Self {
+        let untimed: Vec<_> = entries
+            .extract_if(.., |entry| entry.meta.time_range.is_none())
+            .collect();
+        entries.extend(untimed);
+
         let mut seen_groups = HashSet::with_capacity(entries.len());
         let mut repeated_groups = HashSet::new();
         for entry in &entries {

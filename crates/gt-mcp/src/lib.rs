@@ -163,7 +163,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "List stored History recordings. Filter by overlapping UTC dates and use next_cursor with the same dates for the next page.",
+        description = "List stored History recordings by navigation start time, newest first. Entries without a time range appear last. Filter by overlapping UTC dates and use next_cursor with the same dates to continue.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn list_history_recordings(
