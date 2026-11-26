@@ -383,6 +383,7 @@ gt-fetch = { path = "crates/gt-fetch", features = ["test-util"] }
 # Defines `schema::DAYS_GROUP`. A test marks an interrupted delete in that group.
 gt-jam-store = { path = "crates/external_environmental_data/gt-jam-store" }
 gt-log-view = { path = "crates/gt-log-view", features = ["test-util"] }
+gt-side-panel = { path = "crates/gt-side-panel", features = ["test-util"] }
 gt-test-utils = { path = "crates/gt-test-utils", features = [
     "archive",
     "history",
