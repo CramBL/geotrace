@@ -4,7 +4,8 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingData};
 use gt_query::ChannelSchema;
 use gt_query_run::{
-    CheckRefresh, JammingValues, QuerySession, RunInputs, RunOutcome, SnapErrorValues,
+    CheckRefresh, JammingValues, QuerySession, RunDependencies, RunInputs, RunOutcome,
+    SnapErrorValues,
 };
 use gt_side_panel::TreeState;
 use gt_types::Generation;
@@ -46,7 +47,11 @@ impl BackgroundQuery {
 
     pub(super) fn update(&mut self, inputs: CapturedQueryInputs<'_>) -> bool {
         let received = self.receive_outcome();
-        if self.session.results().is_some() && self.last_freshness_check != Some(inputs.revision) {
+        if let Some(dependencies) = self.session.result_dependencies()
+            && self
+                .last_freshness_check
+                .is_none_or(|previous| !previous.matches(inputs.revision, dependencies))
+        {
             self.session.refresh_staleness(inputs.run);
             self.last_freshness_check = Some(inputs.revision);
         }
@@ -116,14 +121,28 @@ impl<'a> CapturedQueryInputs<'a> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 struct QueryInputsRevision {
     series: QuerySeriesRevision,
     visibility: Generation<TrackDataVisibility>,
     filter: GlobalFilter,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+impl QueryInputsRevision {
+    fn matches(self, current: Self, dependencies: RunDependencies) -> bool {
+        self.filter == current.filter
+            && self.visibility == current.visibility
+            && self.series.data == current.series.data
+            && (!dependencies.uses_snap_error()
+                || self.series.snap_errors == current.series.snap_errors)
+            && (!dependencies.uses_jamming() || self.series.jamming == current.series.jamming)
+            && (!dependencies.uses_geomagnetic()
+                || self.series.geomagnetic == current.series.geomagnetic)
+            && (!dependencies.uses_tec() || self.series.tec == current.series.tec)
+    }
+}
+
+#[derive(Clone, Copy)]
 struct QuerySeriesRevision {
     data: Generation<RecordingData>,
     snap_errors: Generation<SnapErrorCache>,
@@ -143,18 +162,42 @@ pub(super) struct QuerySeries {
 
 impl QuerySeries {
     pub(super) fn capture(app: &mut App) -> Self {
-        let snap_errors = app.snap_error_values();
+        Self::capture_series(app, None)
+    }
+
+    pub(super) fn capture_for_query(app: &mut App, dependencies: RunDependencies) -> Self {
+        Self::capture_series(app, Some(dependencies))
+    }
+
+    fn capture_series(app: &mut App, dependencies: Option<RunDependencies>) -> Self {
+        let snap_errors = if dependencies.is_none_or(RunDependencies::uses_snap_error) {
+            app.snap_error_values()
+        } else {
+            SnapErrorValues::default()
+        };
         let shared = app.shared.borrow();
         let files = shared.loaded_files.view();
-        let jamming = app.jamming.plot_series(files);
-        let geomagnetic = app.geomagnetic_indices.plot_series(files);
-        let tec = app.tec_maps.plot_series(files);
+        let (jamming, jamming_values) = if dependencies.is_none_or(RunDependencies::uses_jamming) {
+            (app.jamming.plot_series(files), app.jamming.query_values())
+        } else {
+            (JammingSeries::default(), JammingValues::default())
+        };
+        let geomagnetic = if dependencies.is_none_or(RunDependencies::uses_geomagnetic) {
+            app.geomagnetic_indices.plot_series(files)
+        } else {
+            GeomagneticSeries::default()
+        };
+        let tec = if dependencies.is_none_or(RunDependencies::uses_tec) {
+            app.tec_maps.plot_series(files)
+        } else {
+            TecSeries::default()
+        };
         Self {
             jamming,
             geomagnetic,
             tec,
             snap_errors,
-            jamming_values: app.jamming.query_values(),
+            jamming_values,
             revision: QuerySeriesRevision {
                 data: files.data_generation(),
                 snap_errors: app.snap_error_cache.generation(),

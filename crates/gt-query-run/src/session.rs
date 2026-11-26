@@ -3,6 +3,7 @@ use gt_query::{ChannelSchema, CheckedQuery, Diagnostic, Span};
 use gt_ui_types::QueryMatches;
 
 use crate::check::{self, QueryChunk};
+use crate::dependencies::RunDependencies;
 use crate::fingerprint::{RunFingerprint, RunInputs};
 use crate::results::{ChannelResults, PointsResults, RunResults};
 use crate::run::{PreparedRun, RunHandle, RunKind, RunOutcome, RunProduct};
@@ -101,6 +102,7 @@ pub struct QuerySession {
     /// unload that changes the channels re-checks even when the text is
     /// unchanged (a `@name` error resolves once its channel appears).
     checked_schema: ChannelSchema,
+    checked_dependencies: RunDependencies,
     in_flight: Option<InFlightRun>,
     completed: Option<CompletedRun>,
     /// Sequence number the next completed run's matches carry. Starts at 1, so
@@ -116,6 +118,7 @@ impl QuerySession {
             chunks: check::check_all(&text, &ChannelSchema::new()),
             checked_text: text.clone(),
             checked_schema: ChannelSchema::new(),
+            checked_dependencies: RunDependencies::default(),
             text,
             in_flight: None,
             completed: None,
@@ -150,6 +153,7 @@ impl QuerySession {
             return CheckRefresh::Unchanged;
         }
         self.chunks = check::check_all(&self.text, schema);
+        self.checked_dependencies = RunDependencies::of(&self.chunks);
         self.checked_text = self.text.clone();
         self.checked_schema = schema.clone();
         if text_changed {
@@ -162,6 +166,10 @@ impl QuerySession {
     /// The checked queries of the editor text, in editor order.
     pub fn chunks(&self) -> &[QueryChunk] {
         &self.chunks
+    }
+
+    pub fn checked_dependencies(&self) -> RunDependencies {
+        self.checked_dependencies
     }
 
     /// Whether every query in the editor checks and there is at least one, so
@@ -200,8 +208,8 @@ impl QuerySession {
             .iter()
             .filter_map(|c| c.result.as_ref().ok().cloned())
             .collect();
-        let fingerprint = RunFingerprint::of(inputs);
-        let prepared = PreparedRun::new(queries, fingerprint.tracks(), inputs);
+        let fingerprint = RunFingerprint::of(inputs, self.checked_dependencies);
+        let prepared = PreparedRun::new(queries, &fingerprint, inputs);
         self.in_flight = Some(InFlightRun {
             handle: prepared.handle(),
             track_total: prepared.track_count(),
@@ -263,6 +271,10 @@ impl QuerySession {
         Some(&self.completed.as_ref()?.results)
     }
 
+    pub fn result_dependencies(&self) -> Option<RunDependencies> {
+        Some(self.completed.as_ref()?.fingerprint.dependencies)
+    }
+
     /// Matches of the last completed run.
     pub fn matches(&self) -> Option<&QueryMatches> {
         Some(self.results()?.matches())
@@ -282,7 +294,7 @@ impl QuerySession {
         let Some(completed) = &mut self.completed else {
             return;
         };
-        let stale = RunFingerprint::of(inputs) != completed.fingerprint;
+        let stale = !completed.fingerprint.matches(inputs);
         completed.results.set_stale(stale);
     }
 
@@ -312,6 +324,7 @@ impl From<CheckedQueryText> for QuerySession {
             checked_text: text.clone(),
             text,
             checked_schema: schema,
+            checked_dependencies: RunDependencies::of(&chunks),
             chunks,
             ..Self::new()
         }
@@ -320,11 +333,15 @@ impl From<CheckedQueryText> for QuerySession {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gt_query::{AggregateColumn, TableColumn};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
+    use gt_ui_types::{GeomagneticPoint, GeomagneticSeries, TecPoint, TecSeries};
     use rstest::rstest;
 
     use super::*;
+    use crate::fingerprint::{JammingValues, SnapErrorValues};
     use crate::results::MatchValues;
     use crate::test_util::{self, LoadedState};
 
@@ -380,30 +397,130 @@ mod tests {
     }
 
     #[test]
-    fn results_go_stale_when_the_inputs_change() {
-        let mut state = LoadedState::with_channels(vec![]);
+    fn a_series_change_expires_results_for_the_queries_that_read_it() {
+        let state = LoadedState::with_channels(vec![]);
+        let inputs = state.inputs();
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let values = Arc::new(vec![Some(2.0), None]);
+        let snap_errors = SnapErrorValues::from_iter([(track, Arc::clone(&values))]);
+        let jamming = JammingValues::from_iter([(track, values)]);
+        let mut geomagnetic = GeomagneticSeries::default();
+        geomagnetic.points_by_track.insert(
+            track,
+            Arc::new(vec![GeomagneticPoint {
+                x_secs: 0.0,
+                kp: None,
+                hp30: Some(2.0),
+            }]),
+        );
+        let mut tec = TecSeries::default();
+        tec.points_by_track.insert(
+            track,
+            Arc::new(vec![TecPoint {
+                x_secs: 0.0,
+                tecu: Some(2.0),
+            }]),
+        );
+
+        let mut velocity = QuerySession::new();
+        test_util::run_text(&mut velocity, &state, "points | where velocity > 30 km/h");
+        let mut consumer = QuerySession::new();
+        for (text, current_inputs) in [
+            (
+                "points | table snap_error",
+                RunInputs {
+                    snap_errors: &snap_errors,
+                    ..inputs
+                },
+            ),
+            (
+                "points | table jamming",
+                RunInputs {
+                    jamming: &jamming,
+                    ..inputs
+                },
+            ),
+            (
+                "points | table hp30",
+                RunInputs {
+                    geomagnetic: &geomagnetic,
+                    ..inputs
+                },
+            ),
+            (
+                "points | where tec > 1",
+                RunInputs {
+                    tec: &tec,
+                    ..inputs
+                },
+            ),
+        ] {
+            test_util::run_text(&mut consumer, &state, text);
+            consumer.refresh_staleness(current_inputs);
+            velocity.refresh_staleness(current_inputs);
+            assert!(consumer.results().unwrap().stale(), "{text}");
+            assert!(!velocity.results().unwrap().stale(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_later_block_aggregate_depends_on_its_geomagnetic_index() {
+        let state = LoadedState::with_channels(vec![]);
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let mut geomagnetic = GeomagneticSeries::default();
+        let original = GeomagneticPoint {
+            x_secs: 0.0,
+            hp30: Some(2.0),
+            kp: Some(3.0),
+        };
+        let pair = |index| Arc::new(vec![index; 2]);
+        geomagnetic.points_by_track.insert(track, pair(original));
         let mut session = QuerySession::new();
-        test_util::run_text(
-            &mut session,
-            &state,
-            "points | where velocity > 30 km/h | draw",
+        session.set_text("points | table velocity\n\npoints | window 2 | table avg(kp)".to_owned());
+        session.sync_checks(&state.schema());
+        let run = session
+            .start_run(RunInputs {
+                geomagnetic: &geomagnetic,
+                ..state.inputs()
+            })
+            .unwrap();
+        session.finish_run(run.execute());
+        drop(run);
+        let Some(RunResults::Points(results)) = session.results() else {
+            panic!("expected point results");
+        };
+        assert_eq!(
+            results.queries[1].matches[0].matches[0].aggregates,
+            [Some(3.0)]
         );
 
-        session.refresh_staleness(state.inputs());
-        assert!(
-            !session.results().expect("results").stale(),
-            "unchanged inputs keep the results fresh"
+        session.set_text("points | table hp30".to_owned());
+        session.sync_checks(&state.schema());
+        geomagnetic.points_by_track.insert(
+            track,
+            pair(GeomagneticPoint {
+                hp30: Some(4.0),
+                ..original
+            }),
         );
+        session.refresh_staleness(RunInputs {
+            geomagnetic: &geomagnetic,
+            ..state.inputs()
+        });
+        assert!(!session.results().unwrap().stale());
 
-        state.snap_errors.insert(
-            TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-            std::sync::Arc::new(vec![Some(1.0), None]),
+        geomagnetic.points_by_track.insert(
+            track,
+            pair(GeomagneticPoint {
+                kp: Some(5.0),
+                ..original
+            }),
         );
-        session.refresh_staleness(state.inputs());
-        assert!(
-            session.results().expect("results").stale(),
-            "a snap run the results never saw grays them out"
-        );
+        session.refresh_staleness(RunInputs {
+            geomagnetic: &geomagnetic,
+            ..state.inputs()
+        });
+        assert!(session.results().unwrap().stale());
     }
 
     #[test]
