@@ -53,6 +53,7 @@ jobs:
       kind: ${{ steps.meta.outputs.kind }}
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      expect_companion: ${{ steps.meta.outputs.expect_companion }}
     steps:
       - id: meta
         env:
@@ -62,6 +63,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           DISPATCH_TAG: ${{ inputs.tag }}
           RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          LAST_GUI_WITHOUT_COMPANION: "0.19.0"
         run: |
           set -euo pipefail
           TAG="${RELEASE_TAG:-}"
@@ -82,6 +84,15 @@ jobs:
             *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
             *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
           esac
+          if [[ "$TAG" == app/v* ]]; then
+            base_version="${version%%[-+]*}"
+            oldest="$(printf '%s\n' "$base_version" "$LAST_GUI_WITHOUT_COMPANION" | sort -V | head -n 1)"
+            if [[ "$base_version" == "$oldest" ]]; then
+              echo "expect_companion=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "expect_companion=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
 
   gui:
     needs: meta
@@ -91,6 +102,7 @@ jobs:
       tag: ${{ needs.meta.outputs.tag }}
       version: ${{ needs.meta.outputs.version }}
       prerelease: ${{ needs.meta.outputs.prerelease }}
+      expect_companion: ${{ needs.meta.outputs.expect_companion != 'false' }}
 
   # Stable releases install from crates.io / PyPI. Prereleases (which skip those
   # registries) install the same artifact straight from the tag / release, so

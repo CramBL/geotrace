@@ -107,7 +107,9 @@ The GUI updater ignores prereleases.
 
 ## After a release
 
-`.github/workflows/release-smoke.yml` installs every artifact on every platform (running `geotrace --version` and building SDK consumers) to catch a broken release fast.
+`.github/workflows/release-smoke.yml` verifies the installed GUI binaries and builds SDK consumers on the release platforms.
+The GUI checks run `geotrace --version` and verify the version of the installed `geotrace-mcp` beside it, including after a self-update.
+Releases through `app/v0.19.0` shipped only the GUI binary.
 It runs automatically on every release, including prereleases, but the two tracks trigger it differently because of a GitHub rule: a release created with the built-in `GITHUB_TOKEN` does not emit a `release: published` event that can start another workflow.
 
 - The **SDK** release creates its GitHub release with a repo-scoped PAT (`GEOTRACE_WITH_REPO_SCOPE`), so its `release: published` event triggers the smoke workflow directly.
