@@ -3,9 +3,8 @@ use std::ops::Range;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::RecordingData;
 use gt_map::{NavMap, PresentationCamera};
-use gt_session_bridge::{
-    ErrorCode, OpenPoint, QueryJobId, QueryMatchExtent, QueryMatchRange, RangeTarget, ShowOnMap,
-};
+use gt_query_run::MatchExtent;
+use gt_session_bridge::{ErrorCode, OpenPoint, QueryJobId, RangeTarget, ShowOnMap};
 use gt_types::{DataCategory, FixRef, Generation, Latitude, Longitude, PointIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, MapElementRef, MapEligibility, MapPresence, MapPresenceResult, MatchHighlight,
@@ -78,7 +77,7 @@ impl MapPresentation {
         match self.target {
             PresentationTarget::Point { fix, .. } => scope.draws(MapElementRef::Fix(fix)),
             PresentationTarget::Range { highlight, job } => {
-                job.is_none_or(|id| queries.has_current_results(id))
+                job.is_none_or(|id| queries.has_current_results(id, shared.loaded_files.view()))
                     && scope
                         .eligibility()
                         .prepare_track(highlight.track)
@@ -184,14 +183,14 @@ impl App {
                 query,
                 matched,
             } => {
-                let results = queries.results(self, session, job)?;
-                let files = self.shared.borrow();
-                let matched =
-                    QueryMatchRange::resolve(results, files.loaded_files.view(), query, matched)?;
-                let QueryMatchExtent::Points(points) = matched.extent else {
+                let run = queries.result_session(self, session, job)?;
+                let shared = self.shared.borrow();
+                let results = run.retained_results(shared.loaded_files.view())?;
+                let matched = results.query(query)?.match_at(matched.into())?;
+                let MatchExtent::Points(points) = matched.extent() else {
                     return Err(ErrorCode::QueryMatchIsChannel);
                 };
-                (matched.track, points, Some(job))
+                (matched.track(), points.clone(), Some(job))
             }
         };
         let shared = self.shared.borrow();

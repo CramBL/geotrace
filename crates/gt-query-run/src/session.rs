@@ -8,6 +8,8 @@ use crate::fingerprint::{RunFingerprint, RunInputs};
 use crate::results::{ChannelResults, PointsResults, RunResults};
 use crate::run::{PreparedRun, RunHandle, RunKind, RunOutcome, RunProduct};
 
+pub(super) mod retained;
+
 pub const MIXED_CHANNEL_MESSAGE: &str =
     "A channel-source query must be the only query in the editor";
 
@@ -221,7 +223,10 @@ impl QuerySession {
     /// Take in the outcome of the run in flight: its results become the current
     /// ones, or - when it was cancelled - the previous results stay untouched.
     pub fn finish_run(&mut self, outcome: RunOutcome) {
-        let Some(in_flight) = self.in_flight.take() else {
+        let Some(in_flight) = self
+            .in_flight
+            .take_if(|run| outcome.belongs_to(&run.handle))
+        else {
             return;
         };
         let Some((product, track_data)) = outcome.into_product() else {

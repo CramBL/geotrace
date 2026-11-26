@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use gt_loaded_files::LoadedFilesView;
 use gt_query::{AggregateColumn, Quantity, TableColumn, Unit};
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, MatchValues, PanelQuery, PointResultValues, PointsResults,
-    RunResults, TrackQueryData,
+    ChannelResults, ChannelTrackResult, MatchPosition, MatchValues, PanelQuery, PointResultValues,
+    PointsResults, RetainedResultError, RunResults, TrackQueryData,
 };
 use gt_types::{NavPoint, TrackRef};
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,20 @@ pub struct QueryMatchPosition {
     pub match_ordinal: usize,
 }
 
+impl From<QueryMatchPosition> for MatchPosition {
+    fn from(
+        QueryMatchPosition {
+            track_ordinal,
+            match_ordinal,
+        }: QueryMatchPosition,
+    ) -> Self {
+        Self {
+            track_ordinal,
+            match_ordinal,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueryResults {
     pub job: QueryJobId,
@@ -83,42 +97,15 @@ impl QueryResults {
     }
 }
 
-pub struct QueryMatchRange<'a> {
-    pub track: TrackRef,
-    pub extent: QueryMatchExtent<'a>,
-}
-
-impl<'a> QueryMatchRange<'a> {
-    pub fn resolve(
-        results: &'a RunResults,
-        files: LoadedFilesView<'a>,
-        query: usize,
-        position: QueryMatchPosition,
-    ) -> Result<Self, ErrorCode> {
-        let query = ResultQuery::select(results, query)?;
-        let track = query.track(files, position.track_ordinal)?;
-        let matched = track.matched(position)?;
-        let extent = match track.source {
-            MatchSource::Channel { channel, track } => QueryMatchExtent::Channel {
-                name: &channel.channel,
-                times: track
-                    .timeline
-                    .times
-                    .get(matched.rows.clone())
-                    .ok_or(ErrorCode::InvalidQueryCursor)?,
-            },
-            MatchSource::Points { .. } => QueryMatchExtent::Points(matched.rows.clone()),
-        };
-        Ok(Self {
-            track: track.track,
-            extent,
-        })
+impl From<RetainedResultError> for ErrorCode {
+    fn from(error: RetainedResultError) -> Self {
+        match error {
+            RetainedResultError::InvalidPosition => Self::InvalidQueryCursor,
+            RetainedResultError::Stale => Self::StaleQueryResults,
+            RetainedResultError::StaleTrack => Self::StaleTrack,
+            RetainedResultError::Unavailable => Self::QueryResultsUnavailable,
+        }
     }
-}
-
-pub enum QueryMatchExtent<'a> {
-    Channel { name: &'a str, times: &'a [f64] },
-    Points(Range<usize>),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

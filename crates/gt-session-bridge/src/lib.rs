@@ -33,9 +33,8 @@ pub use crate::query_job::{
     QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
 };
 pub use crate::query_results::{
-    GetQueryResults, QueryMatch, QueryMatchExtent, QueryMatchPosition, QueryMatchRange,
-    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResults,
+    GetQueryResults, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
+    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResults,
 };
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
 pub use crate::settings::{

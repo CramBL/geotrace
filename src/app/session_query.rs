@@ -1,5 +1,5 @@
 use gt_loaded_files::{LoadedFilesView, RecordingData};
-use gt_query_run::{CheckedQueryText, RunDependencies, RunResults};
+use gt_query_run::{CheckedQueryText, QuerySession, RunDependencies};
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, Inspection, InspectionRequest, QueryJobId, QueryJobState,
     QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest, SettingInfo,
@@ -42,21 +42,23 @@ impl SessionQuery {
         }
     }
 
-    pub(super) fn results(
+    pub(super) fn result_session(
         &mut self,
         app: &mut App,
         session: Uuid,
         id: QueryJobId,
-    ) -> Result<&RunResults, ErrorCode> {
+    ) -> Result<&QuerySession, ErrorCode> {
         let job = self.job_mut(session, id)?;
         job.refresh(app);
-        job.results()
+        job.result_session()
     }
 
-    pub(super) fn has_current_results(&self, id: QueryJobId) -> bool {
+    pub(super) fn has_current_results(&self, id: QueryJobId, files: LoadedFilesView<'_>) -> bool {
         self.job
             .as_ref()
-            .is_some_and(|job| job.id == id && job.results().is_ok())
+            .filter(|job| job.id == id)
+            .and_then(|job| job.result_session().ok())
+            .is_some_and(|session| session.retained_results(files).is_ok())
     }
 
     fn poll(&mut self) {
@@ -344,19 +346,15 @@ impl Job {
         }
     }
 
-    fn results(&self) -> Result<&RunResults, ErrorCode> {
+    fn result_session(&self) -> Result<&QuerySession, ErrorCode> {
         let session = self.query.session();
-        let results = match self.phase {
+        match self.phase {
             JobPhase::Cancelled | JobPhase::Failed => Err(ErrorCode::QueryResultsUnavailable),
             JobPhase::Cancelling | JobPhase::Preparing => Err(ErrorCode::QueryNotComplete),
             JobPhase::Stale => Err(ErrorCode::StaleQueryResults),
             JobPhase::Started if session.run_in_flight() => Err(ErrorCode::QueryNotComplete),
-            JobPhase::Started => session.results().ok_or(ErrorCode::QueryResultsUnavailable),
-        }?;
-        if results.stale() {
-            return Err(ErrorCode::StaleQueryResults);
+            JobPhase::Started => Ok(session),
         }
-        Ok(results)
     }
 }
 
@@ -434,7 +432,8 @@ impl App {
                 .history_open_status(session, args)
                 .map(|operation| ReplyOnly(Reply::HistoryOpen { operation })),
             Request::GetQueryResults(args) => self.execute_with_session_query(|app, queries| {
-                let results = queries.results(app, session, args.job)?;
+                let run = queries.result_session(app, session, args.job)?;
+                let results = run.results().ok_or(ErrorCode::QueryResultsUnavailable)?;
                 QueryResults::project(results, app.shared.borrow().loaded_files.view(), args)
                     .map(|results| ReplyOnly(Reply::QueryResults { results }))
             }),
