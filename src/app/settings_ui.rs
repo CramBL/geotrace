@@ -32,6 +32,7 @@ mod interface;
 mod interference;
 mod label;
 mod mcp;
+mod mcp_config;
 mod persist;
 pub(super) mod processing;
 pub(super) mod search;
@@ -168,13 +169,14 @@ impl SettingsPage {
     pub(super) fn searchable_labels(self) -> impl Iterator<Item = &'static str> {
         let labels: &[&str] = match self {
             Self::Processing => processing::SEARCHABLE_LABELS,
-            Self::Analysis | Self::Mcp => &[],
+            Self::Analysis => &[],
             Self::AircraftInterference => interference::SEARCHABLE_LABELS,
             Self::GeomagneticIndices => geomagnetic_indices::SEARCHABLE_LABELS,
             Self::IonosphericTec => tec::SEARCHABLE_LABELS,
             Self::SolarFlares => solar_flares::SEARCHABLE_LABELS,
             Self::SnapToRoad => snap::SEARCHABLE_LABELS,
             Self::Interface => interface::SEARCHABLE_LABELS,
+            Self::Mcp => mcp::SEARCHABLE_LABELS,
             Self::Application => application::SEARCHABLE_LABELS,
         };
         labels

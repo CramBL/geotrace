@@ -16,10 +16,6 @@ repository.workspace = true
 readme.workspace = true
 rust-version.workspace = true
 
-# Unix termination signals: the crate does not build on Windows.
-[target.'cfg(unix)'.dependencies]
-signal-hook.workspace = true
-
 # publish = false (above) hides this package from dist by default. Opt the binary
 # back in so dist still builds and releases the GUI app.
 [package.metadata.dist]
@@ -306,6 +302,10 @@ dist = ["self-update"]
 # code. dist turns it on for the release binaries.
 self-update = ["dep:axoupdater", "dep:tokio"]
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+signal-hook.workspace = true
+
 [dependencies]
 # Used as a library (not a standalone updater binary) for the startup update
 # check, behind the `self-update` feature. Driven through its `async` API on a
@@ -362,6 +362,7 @@ semver = "1"
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
+thiserror.workspace = true
 # Current-thread runtime for the updater.
 tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 toml.workspace = true

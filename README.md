@@ -110,25 +110,10 @@ Use an MCP client to inspect loaded tracks and History, run queries, and show re
 The client can also open desktop controls and change supported settings.
 
 Open **Settings > MCP** in GeoTrace and click **Start MCP**.
-When launching GeoTrace from a terminal, you can pass `--session-bridge` to start MCP immediately.
+Click **Copy MCP config** and paste the `geotrace` entry into your client's `mcpServers` configuration.
+Run GeoTrace and the client locally under the same user account.
 
-Configure your MCP client to launch `geotrace-mcp` as a stdio server.
-Use the companion from the same GeoTrace installation and run both programs locally under the same user account.
-
-```json
-{
-  "mcpServers": {
-    "geotrace": {
-      "command": "/absolute/path/to/geotrace-mcp"
-    }
-  }
-}
-```
-
-On Windows, use the path to `geotrace-mcp.exe` and escape backslashes in JSON.
-Stop active MCP sessions before updating GeoTrace on Windows.
-
-See the [MCP guide](docs/mcp.md) for the tool reference, query language resource, and runnable examples.
+See the [MCP guide](docs/mcp.md) for manual setup, the tool reference, query syntax, and examples.
 
 ## Network access
 
