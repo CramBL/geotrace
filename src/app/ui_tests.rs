@@ -8,7 +8,7 @@ use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
 use gt_log_view::{FilterEffect, FilterGroupId, LoadedLog};
 use gt_pending_writes::PendingWrites;
 use gt_store::JamStore;
-use gt_test_utils::recording_fixtures::RECORDING_FIXTURE_START_SECS;
+use gt_test_utils::recording_fixtures::{self, RECORDING_FIXTURE_START_SECS};
 use gt_test_utils::{By, HarnessInteraction as _, SyntheticGtdSpec, TestHarness};
 
 use super::App;
@@ -71,27 +71,6 @@ fn node_outside_the_side_panel<'h>(harness: &'h Harness<'_, App>, label: &'h str
 
 fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(RECORDING_FIXTURE_START_SECS, 0).expect("fixed timestamp is valid")
-}
-
-fn minimal_gtd_bytes() -> Vec<u8> {
-    gt_test_utils::synthetic_gtd_bytes(self::minimal_gtd_spec())
-}
-
-fn minimal_gtd_spec() -> SyntheticGtdSpec {
-    SyntheticGtdSpec {
-        start: base_time(),
-        point_count: 61,
-        step_secs: 1,
-        start_lat_deg: 51.5,
-        start_lon_deg: -0.1,
-        lat_step_deg: 0.0002,
-        lon_step_deg: -0.00015,
-        heading_deg: 270.0,
-        speed_kmh: 22.0,
-        eph_m: 2.4,
-        sats_seen: 10,
-        sats_in_fix: 7,
-    }
 }
 
 fn load_three_overlapping_files(harness: &mut Harness<App>) {
@@ -193,7 +172,7 @@ fn harness_with_three_files_loaded() -> Harness<'static, App> {
 /// Build an app with one loaded file and the query window open. Shared setup
 /// for the interactive query-history tests.
 fn app_with_a_recording() -> Harness<'static, App> {
-    self::app_with_recording_bytes(self::minimal_gtd_bytes())
+    self::app_with_recording_bytes(recording_fixtures::minimal_gtd_bytes())
 }
 
 fn app_with_recording_bytes(bytes: Vec<u8>) -> Harness<'static, App> {

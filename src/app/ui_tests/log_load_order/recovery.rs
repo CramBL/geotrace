@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
 use gt_store::{AttachedLog, LogAttachmentError};
+use gt_test_utils::recording_fixtures;
 
 use super::*;
 use crate::app::load_failures::LoadRetryAttempt;
 use crate::app::log_viewer::association_dialog::LogAssociationRequest;
+use crate::app::test_util::recordings;
 
 fn file_failure(path: PathBuf) -> LoadFailure {
     LoadFailure::new(
@@ -49,7 +51,7 @@ fn retry_failures_and_background_recovery_preserve_the_active_reading_position()
         .state_mut()
         .loader
         .controlled_recording_load_for_test("recording.gtd", RecordingOperationOrigin::Independent);
-    recording(Ok(recording_outcome("recording.gtd")));
+    recording(Ok(recordings::recording_outcome("recording.gtd")));
     harness.run_steps(2);
     harness.state_mut().initial_position_source_policy = InitialPositionSourcePolicy::Ask;
     let active = harness.state().log_viewer.selected_log();
@@ -419,11 +421,11 @@ fn a_recording_retry_settings_prompt_completes_or_cancels_its_attempt(
             db_ref: recording.clone(),
             placement: LoadedRecordingPlacement::AddAnEntry,
             settings: None,
-            result: Ok(test_util::recordings::opened_recording(
+            result: Ok(recordings::opened_recording(
                 &recording,
                 StoredRecording {
                     meta: None,
-                    bytes: ui_tests::minimal_gtd_bytes(),
+                    bytes: recording_fixtures::minimal_gtd_bytes(),
                     track_table: StoredTrackTable::Present(
                         ui_tests::two_live_track_ranges().to_vec(),
                     ),

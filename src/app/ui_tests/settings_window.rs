@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use gt_map::{DoubleClickBehavior, DragPanButton, MapControls, ScrollBehavior};
-use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
+use gt_test_utils::{By, HarnessInteraction as _, TestHarness, recording_fixtures};
 use strum::IntoEnumIterator as _;
 
 use crate::app::App;
@@ -457,7 +457,7 @@ fn snapshot_settings_window_search_matches() {
 fn load_recording_with_metadata(harness: &mut Harness<App>) {
     test_util::harness::drop_file_and_wait_for_load(
         harness,
-        TestDroppedFile::bytes(ui_tests::minimal_gtd_bytes(), "ride.gtd"),
+        TestDroppedFile::bytes(recording_fixtures::minimal_gtd_bytes(), "ride.gtd"),
     );
     let mut shared = harness.state().shared.borrow_mut();
     if let Some(file) = shared.loaded_files.get_mut(0) {
@@ -723,7 +723,7 @@ fn settings_window_closes_on_esc() {
 /// `apply_startup_settings`.
 #[test]
 fn query_history_persists_across_settings_roundtrip() {
-    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let gtd_bytes = recording_fixtures::minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)

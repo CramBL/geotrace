@@ -5,7 +5,9 @@ use gt_session_bridge::{
     ErrorCode, GetQueryResults, OpenPoint, QueryJobId, QueryJobState, QueryMatchPosition,
     QueryPageRequest, RangeTarget, Reply, Request, ShowOnMap,
 };
-use gt_test_utils::{HarnessInteraction as _, Queryable as _, SyntheticGtdSpec};
+use gt_test_utils::{
+    HarnessInteraction as _, Queryable as _, SyntheticGtdSpec, recording_fixtures,
+};
 use gt_types::{
     DataCategory, FileIdx, FixRef, Latitude, Longitude, PointIdx, TrackIdx, TrackRef, mercator,
 };
@@ -250,14 +252,14 @@ fn session_map_validates_query_match_indices_and_geometry() {
 }
 
 #[rstest]
-#[case::within_projection(ui_tests::minimal_gtd_spec().start_lat_deg)]
+#[case::within_projection(recording_fixtures::minimal_gtd_spec().start_lat_deg)]
 #[case::north_of_projection(89.0)]
 #[case::south_of_projection(-89.0)]
 fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] start_lat_deg: f64) {
     let mut harness =
         ui_tests::app_with_recording_bytes(gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
             start_lat_deg,
-            ..ui_tests::minimal_gtd_spec()
+            ..recording_fixtures::minimal_gtd_spec()
         }));
     let track = session::first_track_reference(&mut harness);
     let point = 20;
