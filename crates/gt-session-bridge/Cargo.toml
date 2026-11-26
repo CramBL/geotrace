@@ -36,6 +36,7 @@ xxhash-rust.workspace = true
 [dev-dependencies]
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-loader = { path = "../gt-loader" }
+gt-query-run = { path = "../gt-query-run", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils" }
 proptest.workspace = true
 
