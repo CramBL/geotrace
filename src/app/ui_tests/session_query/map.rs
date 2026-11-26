@@ -643,6 +643,129 @@ fn session_map_drops_a_queued_range_when_its_inputs_change() {
 }
 
 #[rstest]
+#[case::track(false)]
+#[case::query_match(true)]
+fn session_map_rejects_ranges_with_highlights_disabled_and_keeps_the_point_request(
+    #[case] retained_match: bool,
+) {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    let target = if retained_match {
+        let job = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+        assert!(matches!(
+            session::wait_for_query_to_stop(&mut harness, job),
+            QueryJobState::Completed { .. }
+        ));
+        RangeTarget::QueryMatch {
+            job,
+            query: 0,
+            matched: QueryMatchPosition::default(),
+        }
+    } else {
+        RangeTarget::Track {
+            track,
+            start: Some(0),
+            end: Some(3),
+        }
+    };
+    let request = Request::ShowOnMap(ShowOnMap { target });
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .display_mask
+        .set_visible(DisplayCategory::QueryHighlights, false);
+    let point = 60;
+    assert_eq!(
+        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
+        Reply::MapPresentationQueued
+    );
+    assert_eq!(
+        session::execute(&mut harness, request.clone()),
+        ErrorCode::QueryHighlightsDisabled.into()
+    );
+    harness.step();
+    let pinned = MapElementRef::Fix(FixRef::new(
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        PointIdx::new(point),
+    ));
+    let mut shared = harness.state_mut().shared.borrow_mut();
+    assert_eq!(shared.highlight.sticky(), Some(pinned));
+    assert_eq!(shared.highlight.presented_match, None);
+    assert!(
+        !shared
+            .display_mask
+            .is_visible(DisplayCategory::QueryHighlights)
+    );
+    shared
+        .display_mask
+        .set_visible(DisplayCategory::QueryHighlights, true);
+    drop(shared);
+
+    assert_eq!(
+        session::execute(&mut harness, request),
+        Reply::MapPresentationQueued
+    );
+    harness.step();
+    assert!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .highlight
+            .presented_match
+            .is_some()
+    );
+}
+
+#[test]
+fn session_map_drops_a_queued_range_when_highlights_are_disabled_before_drawing() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    let request = Request::ShowOnMap(ShowOnMap {
+        target: RangeTarget::Track {
+            track,
+            start: Some(0),
+            end: Some(3),
+        },
+    });
+    let before = harness.state().map.viewport_geo_bounds().unwrap();
+    assert_eq!(
+        session::execute(&mut harness, request),
+        Reply::MapPresentationQueued
+    );
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .display_mask
+        .set_visible(DisplayCategory::QueryHighlights, false);
+    harness.step();
+    let after = harness.state().map.viewport_geo_bounds().unwrap();
+    assert_eq!(
+        (after.lat_min, after.lat_max, after.lon_min, after.lon_max),
+        (
+            before.lat_min,
+            before.lat_max,
+            before.lon_min,
+            before.lon_max
+        )
+    );
+    let mut shared = harness.state_mut().shared.borrow_mut();
+    assert_eq!(shared.highlight.presented_match, None);
+    assert!(shared.pending_session_map.is_none());
+    shared
+        .display_mask
+        .set_visible(DisplayCategory::QueryHighlights, true);
+    drop(shared);
+    harness.step();
+    assert_eq!(
+        harness.state().shared.borrow().highlight.presented_match,
+        None
+    );
+}
+
+#[rstest]
 #[case::invalid_point(usize::MAX, false, ErrorCode::InvalidPoint)]
 #[case::stale_track(0, true, ErrorCode::StaleTrack)]
 fn session_map_rejects_invalid_point_references(

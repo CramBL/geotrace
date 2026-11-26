@@ -51,6 +51,12 @@ impl MapPresentation {
         points: Range<usize>,
         job: Option<QueryJobId>,
     ) -> Result<Self, ErrorCode> {
+        if !shared
+            .display_mask
+            .is_visible(DisplayCategory::QueryHighlights)
+        {
+            return Err(ErrorCode::QueryHighlightsDisabled);
+        }
         if !gt_map::query_match_has_geometry(shared.map_presence(query_matches), track, &points) {
             return Err(ErrorCode::NoVisibleMapGeometry);
         }
