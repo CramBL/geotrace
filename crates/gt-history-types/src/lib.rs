@@ -17,8 +17,8 @@ pub use log_attachment::{
     StoredLogSettings, StoredYearResolution, logs_directory_for_database,
 };
 pub use track_snapshot::{
-    HISTORY_LOCK, HistoryAccess, RecordingReplacement, StoredLayoutRevision, StoredTrackSnapshot,
-    StoredTrackSnapshotUpdate, TrackLayoutVisibility,
+    HISTORY_LOCK, HistoryAccess, HistoryRenameOutcome, RecordingReplacement, StoredLayoutRevision,
+    StoredTrackSnapshot, StoredTrackSnapshotUpdate, TrackLayoutVisibility,
 };
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,
@@ -228,6 +228,36 @@ impl DatabaseRef {
         self.group_name.rsplit_once('_').is_some_and(|(_, suffix)| {
             Uuid::parse_str(suffix).is_ok_and(|id| id.get_version() == Some(Version::Random))
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct IdentityRename<'a> {
+    pub source: &'a str,
+    pub destination: &'a str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordingIdentityMove {
+    before: DatabaseRef,
+    after: DatabaseRef,
+}
+
+impl RecordingIdentityMove {
+    pub fn to_identity(before: DatabaseRef, identity: &str) -> Self {
+        let after = DatabaseRef {
+            identity: identity.to_owned(),
+            group_name: before.group_name.clone(),
+        };
+        Self { before, after }
+    }
+
+    pub fn before(&self) -> &DatabaseRef {
+        &self.before
+    }
+
+    pub fn after(&self) -> &DatabaseRef {
+        &self.after
     }
 }
 
@@ -1055,6 +1085,18 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
     /// recordings under `old` keep a stale [`DatabaseRef`] until the caller
     /// refreshes them.
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError>;
+
+    /// Returns `Some` when the backend confirms each move of the original recording payload.
+    fn rename_identity_with_moves(
+        &mut self,
+        IdentityRename {
+            source,
+            destination,
+        }: IdentityRename<'_>,
+    ) -> Result<Option<Vec<RecordingIdentityMove>>, DbError> {
+        self.rename_identity(source, destination)?;
+        Ok(None)
+    }
 }
 
 /// Format a count as a human-readable short string: `230`, `1.3k`, `100k`, `1m`.
