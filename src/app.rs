@@ -37,6 +37,7 @@ use recording_name_template::TemplatePreviewRecording;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
+use session_panels::PendingPanelReveals;
 use session_plot::PlotPresentation;
 use session_traffic_window::SessionTrafficWindow;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
@@ -102,6 +103,7 @@ mod recording_ui_state;
 mod reference_window;
 mod session_history;
 mod session_map;
+mod session_panels;
 mod session_plot;
 mod session_query;
 mod session_recordings;
@@ -411,6 +413,7 @@ pub struct App {
     session_traffic_window: SessionTrafficWindow,
     session_history: SessionHistory,
     pending_session_query_draft: Option<String>,
+    pending_session_panel_reveals: PendingPanelReveals,
     pending_session_setting: Option<SettingKey>,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
@@ -665,6 +668,7 @@ impl App {
             session_traffic_window: SessionTrafficWindow::default(),
             session_history: SessionHistory::default(),
             pending_session_query_draft: None,
+            pending_session_panel_reveals: PendingPanelReveals::default(),
             pending_session_setting: None,
             pending_writes: options.pending_writes,
             shutdown: shutdown::ShutdownState::default(),

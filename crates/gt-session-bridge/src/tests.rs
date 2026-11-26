@@ -58,6 +58,30 @@ impl TestEndpoint {
 }
 
 #[tokio::test]
+async fn opening_a_panel_rejects_fields_from_other_variants_before_dispatch() {
+    let endpoint = TestEndpoint::new().unwrap();
+    let (_server, mut wakes) = endpoint.start();
+    let track = TrackReference {
+        recording: RecordingReference {
+            session: Uuid::nil(),
+            number: 0,
+        },
+        index: 0,
+        revision: 0,
+    };
+    for request in [
+        json!({"method": "open_panel", "panel": "plot", "track": track}),
+        json!({"method": "open_panel", "panel": "sky_trails"}),
+    ] {
+        let payload = serde_json::to_vec(&request).unwrap();
+        let mut stream = endpoint.send_payload(&payload).await.unwrap();
+        let reply: Reply = framing::read(&mut stream, MAX_REPLY_BYTES).await.unwrap();
+        assert_eq!(reply, Reply::from(ErrorCode::InvalidRequest));
+        assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+    }
+}
+
+#[tokio::test]
 async fn track_visibility_requires_a_bounded_nonempty_array_before_dispatch() {
     let endpoint = TestEndpoint::new().unwrap();
     let (_server, mut wakes) = endpoint.start();

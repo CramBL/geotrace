@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use egui_notify::Toasts;
+use gt_session_bridge::SessionPanel;
 
 pub(super) enum McpActionNotice {
     CancelQueuedQuery,
@@ -15,6 +16,7 @@ pub(super) enum McpActionNotice {
     QueueQuery,
     ReprocessRecordings,
     RequestQueryCancellation,
+    RevealPanel(SessionPanel),
     RevealSetting(&'static str),
     UnloadRecordings,
     UpdateQueryDraft,
@@ -35,6 +37,15 @@ impl McpActionNotice {
             Self::QueueFiles => "queued files to open".into(),
             Self::UpdateQueryDraft => "updated the query editor".into(),
             Self::QueueQuery => "queued a query".into(),
+            Self::RevealPanel(panel) => match panel {
+                SessionPanel::History => "showed History",
+                SessionPanel::LogViewer => "showed the Log viewer",
+                SessionPanel::Plot => "showed the plot",
+                SessionPanel::Query => "showed the Query window",
+                SessionPanel::Settings => "showed Settings",
+                SessionPanel::SkyTrails => "showed Sky trails",
+            }
+            .into(),
             Self::ChangeSetting(label) => format!("changed {label}").into(),
             Self::RevealSetting(label) => format!("revealed {label}").into(),
             Self::UnloadRecordings => "unloaded recordings".into(),

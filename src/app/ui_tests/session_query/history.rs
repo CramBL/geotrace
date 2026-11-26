@@ -13,7 +13,8 @@ use gt_pending_writes::WriteAccess;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, HistoryDates, HistoryOpenId,
     HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings, ListRecordings,
-    OpenHistoryRecording, QueryCounts, QueryJobState, RecordingReference, Reply, Request,
+    OpenHistoryRecording, OpenPanel, QueryCounts, QueryJobState, RecordingReference, Reply,
+    Request, SessionPanel,
 };
 use gt_side_panel::{CheckState, NodeKey};
 use gt_store::{
@@ -1623,8 +1624,10 @@ fn history_discovery_reports_when_read_only_startup_has_no_database() {
     assert!(!store.recordings_path().exists());
 }
 
-#[test]
-fn the_history_toolbar_preserves_the_cursor_on_close_and_expires_it_on_reopen() {
+#[rstest]
+#[case::toolbar(false)]
+#[case::session(true)]
+fn reopening_history_expires_the_cursor(#[case] reopen_from_session: bool) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
     {
@@ -1654,6 +1657,17 @@ fn the_history_toolbar_preserves_the_cursor_on_close_and_expires_it_on_reopen() 
         ..request
     };
     let second = self::await_page(&mut harness, continuation);
+    let open_history = Request::OpenPanel(OpenPanel::History {});
+    let queued = Reply::PanelOpenQueued {
+        panel: SessionPanel::History,
+    };
+    assert_eq!(session::execute(&mut harness, open_history.clone()), queued);
+    assert_eq!(
+        session::execute(&mut harness, Request::ListHistoryRecordings(continuation)),
+        Reply::HistoryRecordings {
+            page: second.clone()
+        }
+    );
 
     harness.get_by_label(ICON_CLOCK_COUNTER_CLOCKWISE).click();
     harness.run_steps(2);
@@ -1663,8 +1677,12 @@ fn the_history_toolbar_preserves_the_cursor_on_close_and_expires_it_on_reopen() 
         Reply::HistoryRecordings { page: second }
     );
 
-    harness.get_by_label(ICON_CLOCK_COUNTER_CLOCKWISE).click();
-    harness.run_steps(2);
+    if reopen_from_session {
+        assert_eq!(session::execute(&mut harness, open_history), queued);
+    } else {
+        harness.get_by_label(ICON_CLOCK_COUNTER_CLOCKWISE).click();
+        harness.run_steps(2);
+    }
     assert!(harness.state().history_window.open);
     assert_eq!(
         session::execute(&mut harness, Request::ListHistoryRecordings(continuation)),

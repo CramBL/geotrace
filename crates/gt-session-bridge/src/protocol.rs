@@ -21,7 +21,7 @@ use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
 use crate::recording_control::ManageRecordings;
-use crate::session_state::SessionState;
+use crate::session_state::{OpenPanel, SessionPanel, SessionState};
 use crate::settings::{SetSetting, SettingInfo, SettingSelection};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -44,6 +44,7 @@ pub enum Request {
     ListRecordings(ListRecordings),
     ManageRecordings(ManageRecordings),
     OpenHistoryRecording(OpenHistoryRecording),
+    OpenPanel(OpenPanel),
     OpenPoint(OpenPoint),
     OpenQuery(QueryText),
     OpenSetting(SettingSelection),
@@ -286,6 +287,7 @@ pub enum Reply {
     HistoryRecordings { page: HistoryRecordings },
     MapPresentationQueued,
     Metrics { page: Metrics },
+    PanelOpenQueued { panel: SessionPanel },
     PlotPresentationQueued,
     ProcessingApplied,
     QueryCheck { validation: QueryValidation },
@@ -341,6 +343,7 @@ pub enum ErrorCode {
     InvalidSettingType,
     InvalidSettingValue,
     NoLoadedNavPoints,
+    NoSkyTrailReports,
     NoVisibleMapGeometry,
     NoVisiblePlotTime,
     QueryColumnsTooLarge,

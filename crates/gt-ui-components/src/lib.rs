@@ -17,4 +17,4 @@ pub use fractional_section::{
     FractionalSection, FractionalSectionResponse, FractionalSectionSizing,
 };
 pub use metadata::MetadataView;
-pub use tool_window::{ToolWindow, ToolWindowSizing};
+pub use tool_window::{ToolWindow, ToolWindowRaise, ToolWindowSizing};
