@@ -172,7 +172,7 @@ fn main() -> ExitCode {
                  -h, --help       Print help and exit\n      \
                  --offline    Run without network access: no map tiles, downloads, \
                  snapping, or update check\n      \
-                 --session-bridge    Allow local clients to list loaded recordings{}",
+                 --session-bridge    Allow local clients to inspect and control the desktop session{}",
                 env!("CARGO_PKG_VERSION"),
                 SELF_UPDATE_HELP,
             );

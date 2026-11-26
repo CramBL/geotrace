@@ -352,6 +352,7 @@ With the default mask of 15°, the demo gives these values.
 A higher mask changes which satellites count toward that share.
 The reported EPH and satellite counts stay the same.
 Queries use the explicit `with mask ... deg` value, so the script sends a new query with the updated value.
+The script uses fixed decimal notation to preserve the effective mask in the query.
 The plot uses the current desktop mask and the script restores it before framing the plot.
 
 In a session with several loaded recordings, the query runs over all enabled tracks in the global filter.
@@ -367,6 +368,7 @@ import json
 import math
 import subprocess
 import time
+from decimal import Decimal
 from itertools import count
 
 
@@ -445,7 +447,10 @@ def investigate(call, workflow, requested_mask):
     print("Metrics:", [metric for metric in definitions if metric["name"] in metrics])
 
     def read_matches(mask=None):
-        source = "points" if mask is None else f"points | with mask {mask} deg"
+        source = "points"
+        if mask is not None:
+            mask_literal = format(Decimal(str(mask)), "f")
+            source = f"points | with mask {mask_literal} deg"
         text = f"{source} | where eph > 20 m | table {', '.join(metrics)}"
         checked = call("check_query", text=text)
         if checked["status"] != "valid":
