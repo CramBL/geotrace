@@ -295,8 +295,11 @@ Recordings with equal start times can appear in either order.
 Set `limit` to 1 to get the first matching recording.
 Filter by UTC dates with `dates.from` and `dates.through`, both inclusive.
 A recording matches when its navigation time range overlaps the date filter.
-Recordings without a time range appear at the end of the unfiltered listing.
-The bounds in `time_range` are microseconds since the UTC epoch.
+Recordings without a stored time range appear at the end of the unfiltered listing.
+The `start` and `end` bounds in `time_range` use RFC 3339 UTC strings and preserve microsecond precision.
+GeoTrace returns `time_range` as null for a missing range or a bound outside years 0000 through 9999.
+For a bound outside those years, GeoTrace also sets `time_range_unrepresentable` to true.
+Ordering and date filters use the stored bounds.
 Pass `next_cursor` as `cursor` with the same dates to continue, or start again after History refreshes or the app restarts.
 Recording IDs remain stable across app restarts with the same History database contents and path.
 GeoTrace returns up to 32 recordings per page and sets `metadata_truncated` when it shortens a title or identity.

@@ -3,19 +3,20 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDate, TimeDelta};
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
     AnalysisSettingKey, ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults,
     GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
-    HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings, MAX_VISIBILITY_TRACKS,
-    Metrics, NumericObservation, OpenHistoryRecording, OpenPoint, PointDetails, QueryJobId,
-    QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest,
-    QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
-    QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget, Recording,
-    RecordingReference, Recordings, Reply, Request, SetSetting, SetTrackVisibility, SettingApply,
-    SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap,
-    ShowOnPlot, TrackReference, TrackVisibilityAction, TrackVisibilityResult,
+    HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings,
+    MAX_VISIBILITY_TRACKS, Metrics, NumericObservation, OpenHistoryRecording, OpenPoint,
+    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
+    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
+    QueryResultTime, QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget,
+    Recording, RecordingReference, Recordings, Reply, Request, SetSetting, SetTrackVisibility,
+    SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
+    SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference, TrackVisibilityAction,
+    TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -571,7 +572,18 @@ async fn assert_history_listing_uses_the_date_filter(client: &mut Client) {
     assert_eq!(result.pointer("/result/isError"), Some(&json!(false)));
     assert_eq!(
         result.pointer("/result/structuredContent"),
-        Some(&json!({"recordings": [], "next_cursor": null}))
+        Some(&json!({
+            "recordings": [{
+                "id": Uuid::from_u128(42), "identity": "recorder", "title": null,
+                "metadata_truncated": false,
+                "time_range": {
+                    "start": "2025-02-02T00:00:00.000001Z",
+                    "end": "2025-02-02T00:00:01.234567Z"
+                },
+                "nav_points": 2, "total_tracks": 1, "shelved_tracks": 0
+            }],
+            "next_cursor": null
+        }))
     );
 }
 
@@ -872,12 +884,29 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                     through: None,
                 }),
             limit: Some(NonZeroUsize::MIN),
-        }) if Some(*from) == NaiveDate::from_ymd_opt(2025, 2, 2) => Ok(Reply::HistoryRecordings {
-            page: HistoryRecordings {
-                recordings: Vec::new(),
-                next_cursor: None,
-            },
-        }),
+        }) if Some(*from) == NaiveDate::from_ymd_opt(2025, 2, 2) => {
+            let midnight = from.and_time(NaiveTime::MIN).and_utc();
+            Ok(Reply::HistoryRecordings {
+                page: HistoryRecordings {
+                    recordings: vec![HistoryRecording {
+                        id: serde_json::from_value(json!(Uuid::from_u128(42)))
+                            .map_err(io::Error::other)?,
+                        identity: "recorder".to_owned(),
+                        title: None,
+                        metadata_truncated: false,
+                        time_range: Some(TimeRange {
+                            start: midnight + TimeDelta::microseconds(1),
+                            end: midnight + TimeDelta::microseconds(1_234_567),
+                        }),
+                        time_range_unrepresentable: false,
+                        nav_points: 2,
+                        total_tracks: 1,
+                        shelved_tracks: 0,
+                    }],
+                    next_cursor: None,
+                },
+            })
+        }
         Request::GetRangeDetails(GetRangeDetails {
             track,
             start: None,
