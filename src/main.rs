@@ -292,7 +292,7 @@ fn main() -> ExitCode {
                 },
             );
             if session_bridge {
-                app.start_session_bridge(cc.egui_ctx.clone())?;
+                app.start_session_bridge();
             }
             Ok(Box::new(app))
         }),

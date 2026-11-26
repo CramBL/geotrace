@@ -90,6 +90,14 @@ impl BackgroundQuery {
             .is_some_and(|operation| operation.phase.is_active())
     }
 
+    pub(super) fn release_active_session_job(&mut self) {
+        if let Some(operation) = &mut self.operation
+            && operation.phase.is_active()
+        {
+            operation.scope = None;
+        }
+    }
+
     pub(super) fn session_state(&self, session: Uuid) -> Option<SessionQueryState> {
         let operation = self.operation?;
         let phase = match operation.phase {
@@ -428,11 +436,16 @@ mod tests {
 
     use egui::accesskit::Role;
     use egui_kittest::{Harness, kittest::Queryable as _};
-    use gt_session_bridge::{ErrorCode, QueryJobState, Request};
+    use gt_query_run::{PreparedRun, RunOutcome};
+    use gt_session_bridge::{
+        ErrorCode, ListRecordings, QueryJobRequest, QueryJobState, QueryJobStatus, QueryText,
+        Reply, Request, SessionRequest,
+    };
     use gt_test_utils::recording_fixtures;
     use rstest::rstest;
 
     use super::{QueryPhase, QuerySeries};
+    use crate::app::App;
     use crate::app::test_util::harness::{self, TestDroppedFile};
     use crate::app::test_util::session;
 
@@ -464,22 +477,9 @@ mod tests {
         let job = session::start_query(&mut harness, "points | where velocity > 999 km/h");
         let app = harness.state_mut();
         let past_matches = app.editor_query.session.matches().unwrap().clone();
-        let series = QuerySeries::capture(app);
-        let prepared = {
-            let shared = app.shared.borrow();
-            let inputs = series
-                .inputs(shared.loaded_files.view(), &shared.tree, &shared.filter)
-                .unwrap();
-            app.editor_query
-                .session
-                .start_run(inputs.run_inputs())
-                .unwrap()
-        };
+        let (prepared, send) = self::hold_query_completion(app);
         let handle = prepared.handle();
         let outcome = prepared.execute();
-        let (send, receive) = mpsc::channel();
-        app.editor_query.operation.as_mut().unwrap().phase = QueryPhase::Running;
-        app.editor_query.worker = Some(receive);
 
         match end {
             RunEnd::Cancel => {
@@ -527,5 +527,91 @@ mod tests {
             ),
             ErrorCode::QueryJobNotFound.into()
         );
+    }
+
+    #[test]
+    fn the_restarted_bridge_can_claim_a_running_query() {
+        let (mut harness, endpoint) = session::app_with_bridge();
+        harness::drop_file_and_wait_for_load(
+            &mut harness,
+            TestDroppedFile::bytes(recording_fixtures::minimal_gtd_bytes(), "test.gtd"),
+        );
+        let Reply::Recordings { page } = session::exchange_request(
+            &mut harness,
+            &endpoint,
+            &Request::ListRecordings(ListRecordings {
+                after: None,
+                limit: None,
+            }),
+        ) else {
+            panic!("expected loaded recordings");
+        };
+        let session = page.recordings.first().unwrap().id.session;
+        let request = Request::RunQuery(QueryText {
+            text: "points | draw".to_owned(),
+        });
+        let app = harness.state_mut();
+        let Reply::QueryJob { job: original } = app
+            .execute_session_request(SessionRequest {
+                request: request.clone(),
+                session,
+            })
+            .unwrap()
+        else {
+            panic!("expected the original query job");
+        };
+        let (prepared, send) = self::hold_query_completion(app);
+        app.stop_session_bridge();
+        app.start_session_bridge();
+
+        let Reply::QueryJob { job: busy } =
+            session::exchange_request(&mut harness, &endpoint, &request)
+        else {
+            panic!("expected a busy query job after restart");
+        };
+        assert_eq!(busy.state, QueryJobState::Busy);
+        assert_eq!(busy.job.id, original.job.id);
+        assert_ne!(busy.job.session, original.job.session);
+        assert_eq!(
+            session::exchange_request(
+                &mut harness,
+                &endpoint,
+                &Request::GetQueryStatus(QueryJobRequest { job: original.job }),
+            ),
+            ErrorCode::StaleSession.into()
+        );
+        assert_eq!(
+            session::exchange_request(
+                &mut harness,
+                &endpoint,
+                &Request::CancelQuery(QueryJobRequest { job: busy.job }),
+            ),
+            Reply::QueryJob {
+                job: QueryJobStatus {
+                    job: busy.job,
+                    state: QueryJobState::Cancelling,
+                },
+            }
+        );
+        assert!(prepared.handle().cancelled());
+        send.send(prepared.execute()).unwrap();
+    }
+
+    fn hold_query_completion(app: &mut App) -> (PreparedRun, mpsc::Sender<RunOutcome>) {
+        let series = QuerySeries::capture(app);
+        let prepared = {
+            let shared = app.shared.borrow();
+            let inputs = series
+                .inputs(shared.loaded_files.view(), &shared.tree, &shared.filter)
+                .unwrap();
+            app.editor_query
+                .session
+                .start_run(inputs.run_inputs())
+                .unwrap()
+        };
+        let (send, receive) = mpsc::channel();
+        app.editor_query.operation.as_mut().unwrap().phase = QueryPhase::Running;
+        app.editor_query.worker = Some(receive);
+        (prepared, send)
     }
 }

@@ -11,18 +11,6 @@ use super::mcp_action_notice::McpActionNotice;
 use super::query_run::QueryPhase;
 
 impl App {
-    pub(super) fn dispatch_session_request(&mut self, ctx: &egui::Context) {
-        if let Some(mut bridge) = self.session_bridge.take() {
-            bridge.dispatch(|request| {
-                self.execute_session_request(request)
-                    .unwrap_or_else(Reply::from)
-            });
-            self.session_bridge = Some(bridge);
-        }
-        // Send the job ID before copying the selected tracks.
-        self.prepare_session_query(ctx);
-    }
-
     fn submit_session_query(&mut self, scope: Uuid, text: String) -> Result<Reply, ErrorCode> {
         if self.shutdown_requested() {
             return Err(ErrorCode::ShuttingDown);

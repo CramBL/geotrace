@@ -109,11 +109,8 @@ The check can be turned off under Settings.
 Use an MCP client to inspect loaded tracks and History, run queries, and show results on the map and plot.
 The client can also open desktop controls and change supported settings.
 
-Start GeoTrace with its session bridge enabled.
-
-```sh
-geotrace --session-bridge
-```
+Open **Settings > MCP** in GeoTrace and click **Start MCP**.
+When launching GeoTrace from a terminal, you can pass `--session-bridge` to start MCP immediately.
 
 Configure your MCP client to launch `geotrace-mcp` as a stdio server.
 Use the companion from the same GeoTrace installation and run both programs locally under the same user account.

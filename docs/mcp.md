@@ -2,6 +2,13 @@
 
 Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-client) to connect your MCP client to GeoTrace.
 
+GeoTrace starts with MCP off unless you pass `--session-bridge`.
+Click **Stop MCP** in **Settings > MCP** to close access to GeoTrace.
+GeoTrace clears captured traffic.
+GeoTrace continues work from accepted requests.
+After restarting MCP, request new loaded recording and track references.
+If a query is still running, call `run_query` to get its new job identifier in the `busy` response.
+
 ## Tools
 
 | Tool | Use |

@@ -367,7 +367,7 @@ impl App {
                         ui.close();
                     }
                     self.session_traffic_window
-                        .menu_ui(ui, self.session_bridge.is_some());
+                        .menu_ui(ui, self.session_bridge.server().is_some());
                     ui.separator();
                     if ui.button("About GeoTrace").clicked() {
                         self.about_open = true;

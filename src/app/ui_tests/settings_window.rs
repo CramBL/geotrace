@@ -25,6 +25,7 @@ impl SettingsPage {
             | Self::SolarFlares => crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL,
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Drag to pan",
+            Self::Mcp => "Start MCP",
             Self::Application => crate::app::environment_storage_ui::AUTO_PRUNE_LABEL,
         }
     }
@@ -42,6 +43,7 @@ impl SettingsPage {
             Self::SolarFlares => "settings_window_solar_flares",
             Self::SnapToRoad => "settings_window_snap_to_road",
             Self::Interface => "settings_window_interface",
+            Self::Mcp => "settings_window_mcp",
             Self::Application => "settings_window_application",
         }
     }

@@ -108,17 +108,18 @@ impl Server {
                     Err(error) => drop(ready_tx.send(Err(error))),
                     Ok((runtime, listener)) => {
                         if ready_tx.send(Ok(())).is_ok() {
-                            runtime.block_on(async move {
+                            let stopped = runtime.block_on(async {
                                 tokio::select! {
                                     biased;
-                                    _ = stop_rx => {}
-                                    result = self::accept_connections(listener, &pending_tx, &wake, &worker_capture) => {
-                                        if let Err(error) = result {
-                                            log::warn!("Local session bridge stopped ({error})");
-                                        }
-                                    }
+                                    _ = stop_rx => None,
+                                    result = self::accept_connections(listener, &pending_tx, &wake, &worker_capture) => result.err(),
                                 }
                             });
+                            drop(pending_tx);
+                            if let Some(error) = stopped {
+                                log::warn!("Local session bridge stopped ({error})");
+                                wake();
+                            }
                         }
                     }
                 }
@@ -151,6 +152,10 @@ impl Server {
     pub fn traffic_capture(&self) -> TrafficCapture {
         self.traffic_capture.clone()
     }
+
+    pub fn is_running(&self) -> bool {
+        !self.pending.is_closed()
+    }
 }
 
 pub struct SessionRequest {
@@ -160,6 +165,8 @@ pub struct SessionRequest {
 
 impl Drop for Server {
     fn drop(&mut self) {
+        self.traffic_capture.set_enabled(false);
+        self.traffic_capture.clear();
         drop(self.stop.take());
         if let Some(worker) = self.worker.take()
             && worker.join().is_err()
