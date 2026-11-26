@@ -4,9 +4,8 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::RecordingData;
 use gt_plot::PlotViewRequest;
 use gt_query::QueryMetric;
-use gt_session_bridge::{
-    ErrorCode, QueryJobId, QueryMatchExtent, QueryMatchRange, RangeTarget, ShowOnPlot,
-};
+use gt_query_run::MatchExtent;
+use gt_session_bridge::{ErrorCode, QueryJobId, RangeTarget, ShowOnPlot};
 use gt_types::{Generation, MetricKind, TrackRef};
 use uuid::Uuid;
 
@@ -71,7 +70,9 @@ impl PlotPresentation {
         self.generation == shared.loaded_files.data_generation()
             && self.filter == shared.filter
             && shared.tree.visibility().track_enabled(self.track)
-            && self.job.is_none_or(|id| queries.has_current_results(id))
+            && self
+                .job
+                .is_none_or(|id| queries.has_current_results(id, shared.loaded_files.view()))
     }
 }
 
@@ -103,20 +104,24 @@ impl App {
                 query,
                 matched,
             } => {
-                let results = queries.results(self, session, job)?;
+                let run = queries.result_session(self, session, job)?;
                 let shared = self.shared.borrow();
-                let matched =
-                    QueryMatchRange::resolve(results, shared.loaded_files.view(), query, matched)?;
-                match matched.extent {
-                    QueryMatchExtent::Points(points) => {
-                        PlotPresentation::points(&shared, matched.track, points, metrics, Some(job))
-                    }
-                    QueryMatchExtent::Channel { name, times } => {
-                        PlotPresentation::new(&shared, matched.track, Some(job), || {
+                let results = run.retained_results(shared.loaded_files.view())?;
+                let matched = results.query(query)?.match_at(matched.into())?;
+                match matched.extent() {
+                    MatchExtent::Points(points) => PlotPresentation::points(
+                        &shared,
+                        matched.track(),
+                        points.clone(),
+                        metrics,
+                        Some(job),
+                    ),
+                    MatchExtent::Channel { name, times } => {
+                        PlotPresentation::new(&shared, matched.track(), Some(job), || {
                             PlotViewRequest::new(
                                 times.iter().copied(),
                                 metrics,
-                                Some(name.to_owned()),
+                                Some((*name).to_owned()),
                             )
                         })
                     }

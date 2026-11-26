@@ -167,6 +167,13 @@ impl PreparedRun {
     /// evaluation, with cancellation checks between tracks (gt-query checks
     /// within them).
     pub fn execute(&self) -> RunOutcome {
+        RunOutcome {
+            evaluation: self.evaluate(),
+            handle: self.handle(),
+        }
+    }
+
+    fn evaluate(&self) -> Evaluation {
         let cancelled = || self.handle.cancelled();
         // A channel-source query runs standalone (the session gates a mix), on
         // its own sample timeline.
@@ -178,7 +185,7 @@ impl PreparedRun {
         let mut track_data = RunTrackData::default();
         for snapshot in &self.tracks {
             if cancelled() {
-                return RunOutcome::cancelled();
+                return Evaluation::Cancelled;
             }
             track_data.insert(
                 snapshot.track_ref,
@@ -207,18 +214,20 @@ impl PreparedRun {
         let inputs = track_inputs(&providers);
 
         match gt_query::run_pipeline(&self.queries, &inputs, &cancelled) {
-            Some(pipeline) => RunOutcome::completed(
-                RunProduct::Points(PointsRun::with_aggregates_valued(pipeline, &providers)),
+            Some(pipeline) => Evaluation::Completed {
+                product: RunProduct::Points(PointsRun::with_aggregates_valued(
+                    pipeline, &providers,
+                )),
                 track_data,
-            ),
-            None => RunOutcome::cancelled(),
+            },
+            None => Evaluation::Cancelled,
         }
     }
 
     /// Evaluate one channel-source `query` over each track's sample timeline.
     /// Nav metrics are rejected on a channel source, so no derived series are
     /// needed.
-    fn execute_channel(&self, query: &CheckedQuery, cancelled: &impl Fn() -> bool) -> RunOutcome {
+    fn execute_channel(&self, query: &CheckedQuery, cancelled: &impl Fn() -> bool) -> Evaluation {
         let providers: Vec<(TrackRef, SliceProvider<'_>)> = self
             .tracks
             .iter()
@@ -230,7 +239,7 @@ impl PreparedRun {
         let inputs = track_inputs(&providers);
 
         let Some(output) = gt_query::run_cancellable(query, &inputs, cancelled) else {
-            return RunOutcome::cancelled();
+            return Evaluation::Cancelled;
         };
         // The source channel is present (the query checked as a channel source).
         let name = query.source_channel().unwrap_or_default();
@@ -298,8 +307,8 @@ impl PreparedRun {
             .collect();
         let matches = results::channel_query_matches(query.mode(), &per_track);
 
-        RunOutcome::completed(
-            RunProduct::Channel(Box::new(ChannelRun {
+        Evaluation::Completed {
+            product: RunProduct::Channel(Box::new(ChannelRun {
                 channel: name.to_owned(),
                 components,
                 aggregate_columns: gt_query::aggregate_columns(&output.columns)
@@ -309,8 +318,8 @@ impl PreparedRun {
                 tracks: track_results,
                 matches,
             })),
-            RunTrackData::default(),
-        )
+            track_data: RunTrackData::default(),
+        }
     }
 }
 
@@ -345,7 +354,10 @@ fn merge_params(queries: &[CheckedQuery]) -> Params {
 ///
 /// Opaque: the session turns it into [`RunResults`](crate::RunResults). A
 /// cancelled run carries no partial output - the previous results stand.
-pub struct RunOutcome(Evaluation);
+pub struct RunOutcome {
+    evaluation: Evaluation,
+    handle: RunHandle,
+}
 
 enum Evaluation {
     Cancelled,
@@ -356,20 +368,13 @@ enum Evaluation {
 }
 
 impl RunOutcome {
-    fn completed(product: RunProduct, track_data: RunTrackData) -> Self {
-        Self(Evaluation::Completed {
-            product,
-            track_data,
-        })
-    }
-
-    fn cancelled() -> Self {
-        Self(Evaluation::Cancelled)
+    pub(crate) fn belongs_to(&self, handle: &RunHandle) -> bool {
+        Arc::ptr_eq(&self.handle.cancel, &handle.cancel)
     }
 
     /// The evaluated product, or `None` when the run was cancelled.
     pub(crate) fn into_product(self) -> Option<(RunProduct, RunTrackData)> {
-        match self.0 {
+        match self.evaluation {
             Evaluation::Completed {
                 product,
                 track_data,
