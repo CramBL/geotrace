@@ -22,7 +22,7 @@ use rmcp::{
 };
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn Error>> {
+pub async fn run() -> Result<(), Box<dyn Error>> {
     if env::args_os().nth(1).as_deref() == Some(OsStr::new("--version")) {
         println!("{COMPANION_NAME} {VERSION}");
         return Ok(());
