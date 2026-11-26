@@ -2,7 +2,30 @@
 
 Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-client) to connect your MCP client to GeoTrace.
 
-GeoTrace starts with MCP off unless you pass `--session-bridge`.
+## Configure your client
+
+**Copy MCP config** uses the absolute path to the companion in your GeoTrace installation.
+If you move GeoTrace or an upgrade changes its install path, copy the config again.
+If you build GeoTrace yourself, build `geotrace` and `geotrace-mcp` in the same output directory.
+
+For manual setup, configure your client to launch `geotrace-mcp` as a stdio server.
+
+```json
+{
+  "mcpServers": {
+    "geotrace": {
+      "command": "/absolute/path/to/geotrace-mcp"
+    }
+  }
+}
+```
+
+On Windows, use the path to `geotrace-mcp.exe` and escape backslashes in JSON.
+Stop active MCP sessions before updating GeoTrace on Windows.
+
+## Start and stop MCP
+
+Click **Start MCP** in **Settings > MCP** or launch `geotrace --session-bridge`.
 Click **Stop MCP** in **Settings > MCP** to close access to GeoTrace.
 GeoTrace clears captured traffic.
 GeoTrace continues work from accepted requests.
