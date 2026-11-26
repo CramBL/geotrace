@@ -66,6 +66,7 @@ impl eframe::App for App {
         self.begin_shutdown_if_requested(ctx);
         self.apply_finished_background_work(ctx);
         self.drive_shutdown(ctx);
+        self.receive_query_completion();
         self.dispatch_session_request(ctx);
         self.drive_settings_autosave(ctx);
     }
@@ -822,17 +823,17 @@ impl App {
             let panel_rect = ui.max_rect();
             let mut s = self.shared.borrow_mut();
             if let Some(inputs) = query_series.inputs(s.loaded_files.view(), &s.tree, &s.filter) {
-                self.session_query.refresh(inputs);
+                self.editor_query.refresh(inputs);
             }
             let query_matches = self
                 .editor_query
                 .session()
                 .map_matches(s.loaded_files.view());
-            s.discard_stale_session_map(&mut self.map, query_matches, &self.session_query);
+            s.discard_stale_session_map(&mut self.map, query_matches, &self.editor_query);
 
             if s.pending_session_plot
                 .as_ref()
-                .is_some_and(|presentation| !presentation.is_current(&s, &self.session_query))
+                .is_some_and(|presentation| !presentation.is_current(&s, &self.editor_query))
             {
                 s.pending_session_plot = None;
             }
@@ -1006,9 +1007,6 @@ impl App {
             // below is driving a scrub, and vanishes as soon as it closes.
             highlight.scrub_time = None;
             if let Some(inputs) = query_series.inputs(loaded_files.view(), tree, filter) {
-                if self.editor_query.update(inputs) {
-                    self.query_window.select_results_tab();
-                }
                 let action = self.query_window.show(
                     ui.ctx(),
                     self.editor_query.session_mut(),
@@ -1033,12 +1031,15 @@ impl App {
                 );
                 match action {
                     Some(QueryAction::Run) => {
-                        if self.editor_query.start(ui.ctx(), inputs.run_inputs()) {
+                        if self
+                            .editor_query
+                            .start_editor(ui.ctx(), inputs.run_inputs())
+                        {
                             self.query_window
                                 .record_run(self.editor_query.session().text());
                         }
                     }
-                    Some(QueryAction::Cancel) => self.editor_query.session().cancel_run(),
+                    Some(QueryAction::Cancel) => self.editor_query.cancel(),
                     None => {}
                 }
             } else {

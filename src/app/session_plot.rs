@@ -9,7 +9,7 @@ use gt_session_bridge::{ErrorCode, QueryJobId, RangeTarget, ShowOnPlot};
 use gt_types::{Generation, MetricKind, TrackRef};
 use uuid::Uuid;
 
-use super::session_query::SessionQuery;
+use super::query_run::BackgroundQuery;
 use super::{App, SharedAppState};
 
 pub(super) struct PlotPresentation {
@@ -66,7 +66,7 @@ impl PlotPresentation {
         })
     }
 
-    pub(super) fn is_current(&self, shared: &SharedAppState, queries: &SessionQuery) -> bool {
+    pub(super) fn is_current(&self, shared: &SharedAppState, queries: &BackgroundQuery) -> bool {
         self.generation == shared.loaded_files.data_generation()
             && self.filter == shared.filter
             && shared.tree.visibility().track_enabled(self.track)
@@ -79,7 +79,6 @@ impl PlotPresentation {
 impl App {
     pub(super) fn session_show_on_plot(
         &mut self,
-        queries: &mut SessionQuery,
         session: Uuid,
         ShowOnPlot { target, metrics }: ShowOnPlot,
     ) -> Result<PlotPresentation, ErrorCode> {
@@ -104,9 +103,12 @@ impl App {
                 query,
                 matched,
             } => {
-                let run = queries.result_session(self, session, job)?;
+                self.require_completed_query(session, job)?;
                 let shared = self.shared.borrow();
-                let results = run.retained_results(shared.loaded_files.view())?;
+                let results = self
+                    .editor_query
+                    .session()
+                    .retained_results(shared.loaded_files.view())?;
                 let matched = results.query(query)?.match_at(matched.into())?;
                 match matched.extent() {
                     MatchExtent::Points(points) => PlotPresentation::points(

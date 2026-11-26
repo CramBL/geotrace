@@ -399,7 +399,6 @@ pub struct App {
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
     session_bridge: Option<SessionBridge>,
-    session_query: session_query::SessionQuery,
     session_history: SessionHistory,
     pending_session_query_draft: Option<String>,
     pending_session_setting: Option<SettingKey>,
@@ -653,7 +652,6 @@ impl App {
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
             session_bridge: None,
-            session_query: session_query::SessionQuery::default(),
             session_history: SessionHistory::default(),
             pending_session_query_draft: None,
             pending_session_setting: None,

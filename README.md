@@ -175,8 +175,9 @@ After `query_draft_queued`, use the editor to revise the draft and run it when r
 
 Submit the same `text` to `run_query` to start a background query job.
 GeoTrace evaluates the tracks enabled in the track tree and applies the current global filter, including its time window.
-The job has its own query text and results and leaves the Query window, query history, and map effects intact.
-A start request returns status `busy` and the active job identifier while a job is active.
+GeoTrace opens the Query window with the accepted text and adds the run to query history.
+The window and `get_query_results` show the same completed run.
+A start request returns status `busy` and the active job identifier if a desktop or MCP run is in progress.
 When GeoTrace can start a job, invalid or empty text returns the same validation result as `check_query`.
 
 Pass the returned `job` to `get_query_status` or `cancel_query`.
@@ -185,7 +186,10 @@ If the connection closes before the reply arrives, retry `run_query` to get the 
 Poll until the status is `completed`, `cancelled`, `failed`, or `stale`.
 Completion reports the match, track, and skipped counts for each query block in input order.
 The status reports `stale` when the current recording data, filter, enabled tracks, or derived inputs differ from the run's inputs.
-GeoTrace retains one job until another query starts or the desktop session ends.
+The Query window's Cancel button cancels the same job as `cancel_query`.
+After a cancellation, the window can still display the previous run.
+GeoTrace retains a completed job until another run starts, the query filter is cleared, or the desktop session ends.
+Editing the draft leaves the completed job available.
 
 For a completed job, pass its `job`, the zero-based `query` block index, and a `page` of `{"kind":"matches"}` to `get_query_results`.
 The match page lists each match's track reference, half-open range, first and last timestamps, and aggregate values.

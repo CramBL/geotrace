@@ -5,11 +5,12 @@ use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::X as ICON_X;
 use geotrace_sdk::ChannelUnit;
+use gt_session_bridge::{ErrorCode, Request};
 use gt_test_utils::TestHarness;
 use rustc_hash::FxHashMap;
 
 use crate::app::App;
-use crate::app::test_util;
+use crate::app::test_util::{self, session};
 use crate::app::ui_tests;
 
 /// "Reset filters" clears the query filter too, not just the global filter, so
@@ -476,8 +477,12 @@ fn autocomplete_click_accepts_candidate() {
 /// "Clear query filter", which clears it.
 #[test]
 fn toolbar_context_menu_clears_query_filter() {
-    let mut harness = ui_tests::app_with_query_window_open();
-    ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
+    let mut harness = ui_tests::app_with_a_recording();
+    let job = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, job),
+        session::completed_single_track_query(1)
+    );
     // Close the window so the toolbar shows the active-filter alert.
     harness.state_mut().query_window.open = false;
     harness.run_steps(3);
@@ -493,6 +498,13 @@ fn toolbar_context_menu_clears_query_filter() {
     assert!(
         !harness.state().query_filter_active(),
         "the context menu cleared the query filter"
+    );
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::GetQueryResults(session::first_query_match_request(job)),
+        ),
+        ErrorCode::QueryJobNotFound.into()
     );
 }
 
