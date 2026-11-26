@@ -1558,7 +1558,10 @@ fn history_pages_list_latest_starts_first_and_missing_ranges_last() {
             panic!("expected one History recording per page");
         };
         assert_eq!(entry.identity, identity);
-        assert_eq!(entry.time_range.map(|range| range.start_us()), start_us);
+        assert_eq!(
+            entry.time_range.map(|range| range.start.timestamp_micros()),
+            start_us
+        );
         request.cursor = page.next_cursor;
     }
     assert_eq!(request.cursor, None);
@@ -1594,8 +1597,8 @@ fn a_stored_recording_spanning_midnight_is_discoverable_after_reopening_read_onl
         (2, 1, 1)
     );
     let range = restored.time_range.unwrap();
-    assert_eq!(range.start_us(), midnight.timestamp_micros() - 500_001);
-    assert_eq!(range.end_us(), midnight.timestamp_micros() + 500_001);
+    assert_eq!(range.start, midnight - TimeDelta::microseconds(500_001));
+    assert_eq!(range.end, midnight + TimeDelta::microseconds(500_001));
     assert!(!owner.state().history_window.open);
     assert!(owner.state().shared.borrow().loaded_files.is_empty());
     drop(owner);

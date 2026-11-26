@@ -2,16 +2,15 @@ use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 use std::path::Path;
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, Datelike as _, NaiveDate, NaiveTime};
 use gt_history_types::{
-    DatabaseRef, HistoryEntries, HistoryOpenSelection, HistoryOpenSelectionError,
-    NavPointTimeRange, RecordingEntry,
+    DatabaseRef, HistoryEntries, HistoryOpenSelection, HistoryOpenSelectionError, RecordingEntry,
 };
 use serde::{Deserialize, Serialize};
 use uuid::{Builder, Uuid};
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::protocol::{ErrorCode, RecordingReference};
+use crate::protocol::{ErrorCode, RecordingReference, TimeRange};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -228,7 +227,9 @@ pub struct HistoryRecording {
     pub identity: String,
     pub title: Option<String>,
     pub metadata_truncated: bool,
-    pub time_range: Option<NavPointTimeRange>,
+    pub time_range: Option<TimeRange>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub time_range_unrepresentable: bool,
     pub nav_points: u64,
     pub total_tracks: usize,
     pub shelved_tracks: usize,
@@ -238,13 +239,20 @@ impl HistoryRecording {
     fn of(id: HistoryRecordingId, entry: &RecordingEntry) -> Self {
         let (identity, _) = gt_loaded_files::display_identity(&entry.db_ref.identity);
         let title = entry.title.as_deref();
+        let time_range = entry.meta.time_range.and_then(|range| {
+            let start = DateTime::from_timestamp_micros(range.start_us())?;
+            let end = DateTime::from_timestamp_micros(range.end_us())?;
+            (RFC3339_YEARS.contains(&start.year()) && RFC3339_YEARS.contains(&end.year()))
+                .then_some(TimeRange { start, end })
+        });
         Self {
             id,
             identity: self::metadata_preview(identity),
             title: title.map(self::metadata_preview),
             metadata_truncated: identity.len() > MAX_METADATA_BYTES
                 || title.is_some_and(|title| title.len() > MAX_METADATA_BYTES),
-            time_range: entry.meta.time_range,
+            time_range,
+            time_range_unrepresentable: entry.meta.time_range.is_some() && time_range.is_none(),
             nav_points: entry.meta.nav_point_count,
             total_tracks: entry.total_tracks,
             shelved_tracks: entry.shelved_tracks,
@@ -260,6 +268,7 @@ fn metadata_preview(text: &str) -> String {
 
 const MAX_PER_PAGE: usize = 32;
 const MAX_METADATA_BYTES: usize = 512;
+const RFC3339_YEARS: RangeInclusive<i32> = 0..=9_999;
 const UTC_DAY_MICROS: i64 = 86_400_000_000;
 
 #[cfg(test)]

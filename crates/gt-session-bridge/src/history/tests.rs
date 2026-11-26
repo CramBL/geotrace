@@ -1,8 +1,75 @@
-use gt_history_types::RecordingMeta;
+use gt_history_types::{NavPointTimeRange, RecordingMeta};
+use serde_json::{Value, json};
 
 use super::*;
 use crate::framing::{Frame, MAX_REPLY_BYTES};
 use crate::protocol::Reply;
+
+#[test]
+fn history_time_ranges_encode_exact_rfc3339_bounds_and_distinguish_unavailable_ranges() {
+    let extended_year = NaiveDate::from_ymd_opt(10_000, 1, 1)
+        .unwrap()
+        .and_time(NaiveTime::MIN)
+        .and_utc()
+        .timestamp_micros();
+    let cases: [(&str, &[i64]); 5] = [
+        ("extended year", &[extended_year - 1, extended_year]),
+        ("last four-digit year", &[extended_year - 1]),
+        ("epoch crossing", &[-123_456, 654_321]),
+        ("outside chrono", &[i64::MIN, -1]),
+        ("untimed", &[]),
+    ];
+    let entries = HistoryEntries::new(
+        cases
+            .into_iter()
+            .map(|(identity, times)| {
+                let mut entry = self::entry(identity);
+                entry.meta.time_range = NavPointTimeRange::covering(times);
+                entry.meta.nav_point_count = times.len() as u64;
+                entry
+            })
+            .collect(),
+    );
+    let page = HistoryListing {
+        database: Path::new("history.hdf5"),
+        entries: &entries,
+        revision: 0,
+        session: Uuid::nil(),
+    }
+    .page(ListHistoryRecordings {
+        cursor: None,
+        dates: None,
+        limit: None,
+    })
+    .unwrap();
+    let wire = serde_json::to_value(&page).unwrap();
+    let rows = wire["recordings"].as_array().unwrap();
+    assert_eq!(rows.len(), 5);
+    assert_eq!(
+        rows[1]["time_range"],
+        json!({
+            "start": "9999-12-31T23:59:59.999999Z",
+            "end": "9999-12-31T23:59:59.999999Z",
+        })
+    );
+    assert_eq!(
+        rows[2]["time_range"],
+        json!({
+            "start": "1969-12-31T23:59:59.876544Z",
+            "end": "1970-01-01T00:00:00.654321Z",
+        })
+    );
+    for row in [&rows[0], &rows[3]] {
+        assert_eq!(row["time_range"], Value::Null);
+        assert_eq!(row["time_range_unrepresentable"], json!(true));
+    }
+    assert_eq!(rows[4]["time_range"], Value::Null);
+    assert!(rows[4].get("time_range_unrepresentable").is_none());
+    assert_eq!(
+        serde_json::from_value::<HistoryRecordings>(wire).unwrap(),
+        page
+    );
+}
 
 #[test]
 fn a_cursor_continues_only_the_same_snapshot_and_dates() {
