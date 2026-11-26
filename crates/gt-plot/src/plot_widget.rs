@@ -2,6 +2,7 @@
 //! ([`show_track_plot`]), and the submodules it orchestrates.
 
 use std::cell::Cell;
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 
@@ -9,7 +10,7 @@ use chrono::{DateTime, Utc};
 use egui::{Align2, Color32, RichText, Stroke, TextStyle};
 use egui_plot::{AxisHints, LineStyle, PlotTransform, Span, VLine};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
-use gt_filter::GlobalFilter;
+use gt_filter::{GlobalFilter, TimeWindow};
 use gt_flare::MarkedFlare;
 use gt_loaded_files::RecordingNames;
 use gt_types::satellites::ConstellationSet;
@@ -65,60 +66,56 @@ mod tec;
 mod time_axis;
 mod utilization;
 
-/// The global filter's time window in Unix seconds. Everything the plot draws,
-/// fits and reports is clamped to it. The default is the window of
-/// [`GlobalFilter::default`]: open at both ends.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-struct FilterTimeWindow {
-    start: Option<f64>,
-    end: Option<f64>,
-}
+struct FilterTimeWindow(TimeWindow);
 
 impl From<&GlobalFilter> for FilterTimeWindow {
     fn from(filter: &GlobalFilter) -> Self {
-        let Some((start, end)) = filter.time_window().bounds() else {
-            return Self {
-                start: Some(f64::INFINITY),
-                end: Some(f64::NEG_INFINITY),
-            };
-        };
-        Self {
-            start: start.map(|time| GpsTime::from_utc(time).as_secs_f64_with_subseconds()),
-            end: end.map(|time| GpsTime::from_utc(time).as_secs_f64_with_subseconds()),
-        }
+        Self(filter.time_window())
     }
 }
 
 impl FilterTimeWindow {
-    /// The window as the hard bound of a mipmap level selection, unbounded at
-    /// an edge the filter left open.
+    /// Plot coordinates for viewport geometry and context lines.
     fn hard_bound(self) -> RangeInclusive<f64> {
-        self.start.unwrap_or(f64::NEG_INFINITY)..=self.end.unwrap_or(f64::INFINITY)
+        let Some((start, end)) = self.0.bounds() else {
+            return f64::INFINITY..=f64::NEG_INFINITY;
+        };
+        let plot_x = |time| GpsTime::from_utc(time).as_secs_f64_with_subseconds();
+        start.map_or(f64::NEG_INFINITY, plot_x)..=end.map_or(f64::INFINITY, plot_x)
+    }
+
+    fn compare_sample(self, time: Option<DateTime<Utc>>) -> Ordering {
+        let (Some(time), Some((start, end))) = (time, self.0.bounds()) else {
+            return Ordering::Greater;
+        };
+        if start.is_some_and(|start| time < start) {
+            Ordering::Less
+        } else if end.is_some_and(|end| time > end) {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
     }
 
     /// The part of `seconds` inside the window, empty when the two do not
     /// overlap.
     fn intersection(self, seconds: RangeInclusive<f64>) -> RangeInclusive<f64> {
-        let start = self
-            .start
-            .map_or(*seconds.start(), |start| seconds.start().max(start));
-        let end = self
-            .end
-            .map_or(*seconds.end(), |end| seconds.end().min(end));
+        let bound = self.hard_bound();
+        let start = seconds.start().max(*bound.start());
+        let end = seconds.end().min(*bound.end());
         start..=end
     }
 }
 
 /// What one fill of [`PlotState::level_cache`] read.
 ///
-/// `cache_valid` compares every field exactly except `effective_x_min` and
-/// `effective_x_max`, which may move by up to ~10 pixels of line. The time
-/// window is one of the exact ones: a fix the window drops leaves the plot
-/// however small the move that dropped it.
+/// The cache allows small changes in plot coordinates and compares [TimeWindow] exactly.
 #[derive(Debug, Clone, Copy)]
 struct LevelCacheInputs {
     effective_x_min: f64,
     effective_x_max: f64,
+    plot_x: [f64; 2],
     time_window: FilterTimeWindow,
     available_width_bits: u32,
     sample_cap: usize,
@@ -601,8 +598,12 @@ pub fn show_track_plot(
     let time_window = FilterTimeWindow::from(filter);
     let samples = MetricKind::iter()
         .filter(|&kind| {
-            visible_series(&state.series_cache, &visible)
-                .any(|placed| placed.series.has_samples_in(kind, time_window.hard_bound()))
+            visible_series(&state.series_cache, &visible).any(|placed| {
+                placed
+                    .track_ref()
+                    .resolve(files)
+                    .is_some_and(|track| placed.series.has_samples_in(track, kind, time_window))
+            })
         })
         .collect();
     let off_scale_clock_baseline = off_scale_clock_baseline(&state.series_cache, &visible);
@@ -784,17 +785,20 @@ pub fn show_track_plot(
         // `eff_x_min`/`eff_x_max` may end up inverted when the active filter
         // and the visible viewport don't overlap.  `MipMap` normalizes that
         // into an empty-range query (see `SelectionRange::counted_span`).
+        let plot_x = [*x_range.start(), *x_range.end()];
         let effective = time_window.intersection(x_range);
         let eff_x_min = *effective.start();
         let eff_x_max = *effective.end();
         let inputs = LevelCacheInputs {
             effective_x_min: eff_x_min,
             effective_x_max: eff_x_max,
+            plot_x,
             time_window,
             available_width_bits: available_width.to_bits(),
             sample_cap,
         };
         let line_viewport = LineViewport {
+            plot_x,
             x_min: eff_x_min,
             x_max: eff_x_max,
             time_window,
@@ -817,6 +821,11 @@ pub fn show_track_plot(
                 && level_cache.len() == series_cache.len()
                 && (inputs.effective_x_min - last.effective_x_min).abs() <= threshold
                 && (inputs.effective_x_max - last.effective_x_max).abs() <= threshold
+                && inputs
+                    .plot_x
+                    .iter()
+                    .zip(last.plot_x)
+                    .all(|(current, previous)| (current - previous).abs() <= threshold)
         });
 
         // Recompute if the view changed enough since the last frame.
@@ -826,7 +835,14 @@ pub fn show_track_plot(
         } else {
             let fresh: Vec<TrackLevelCache> = series_cache
                 .par_iter()
-                .map(|s| levels::compute_level_cache(&s.series, line_viewport))
+                .map(|placed| {
+                    placed
+                        .track_ref()
+                        .resolve(files)
+                        .map_or_else(TrackLevelCache::default, |track| {
+                            levels::compute_level_cache(&placed.series, track, line_viewport)
+                        })
+                })
                 .collect();
             new_level_cache_inputs = Some(inputs);
             std::borrow::Cow::Owned(fresh)

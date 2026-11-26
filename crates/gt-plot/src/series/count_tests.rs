@@ -51,7 +51,7 @@ fn drawn_runs(series: &TrackSeries, kind: MetricKind, target: usize) -> Vec<Vec<
         .runs
         .iter()
         .map(|run| {
-            let points = run.select_slice(
+            let points = run.mipmap.geometry().select_slice(
                 SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
                 target,
             );
@@ -311,13 +311,16 @@ fn decimated_samples_retain_original_report_references() {
     let series = series(points);
     let metric = series.metrics.get(&MetricKind::SatsFix).expect("metric");
     let run = metric.runs.first().expect("one run");
-    let selected = run.select_slice(
+    let selection = run.mipmap.geometry().select_indices(
         SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
         2,
     );
+    let selected = run.mipmap.geometry().slice_at(selection);
     assert!(selected.len() < 2_000);
-    for sample in selected {
-        let source = metric.sample_source(0, sample.x).expect("original source");
+    for (offset, sample) in selected.iter().enumerate() {
+        let source = run
+            .sample_source(selection, offset)
+            .expect("original source");
         let Some(NavigationEvidenceSource::UsageAggregate(index)) = source.evidence else {
             panic!("report aggregate");
         };
@@ -401,7 +404,12 @@ fn dop_runs_preserve_missing_samples_backward_steps_and_analysis_refresh(#[case]
     ];
     for target in [2, usize::MAX] {
         assert_eq!(drawn_runs(&series, kind, target), expected);
-        assert!(series.eph_m.finest_level().is_empty());
+        assert!(
+            series
+                .eph_m
+                .iter()
+                .all(|run| run.mipmap.geometry().finest_level().is_empty())
+        );
     }
     series.apply_analysis(&track, AnalysisConfig::default());
     assert_eq!(drawn_runs(&series, kind, 2), expected);

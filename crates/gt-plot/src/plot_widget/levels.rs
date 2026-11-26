@@ -1,15 +1,14 @@
 //! Mipmap level selection: the per-frame sample budget and the cached
 //! per-track level choices every metric line draws from.
 
-use std::ops::RangeInclusive;
-
+use chrono::{DateTime, Utc};
 use gt_analysis::clock_offset::{ClockOffsetPlacement, ExcursionSample};
-use gt_egui_mipmap::{LevelSelection, MipMap, SelectionRange};
-use gt_types::MetricKind;
+use gt_egui_mipmap::{IndexedMipMap, LevelSelection, MipMap, SelectionRange};
+use gt_types::{LoadedTrack, MetricKind};
 use rustc_hash::FxHashMap;
 
 use super::FilterTimeWindow;
-use crate::series::TrackSeries;
+use crate::series::{FixMetricRun, TrackSeries};
 
 /// Full-resolution sample target for a single track filling the plot width:
 /// ~2 samples per pixel, floored so a very narrow plot still has usable detail.
@@ -69,10 +68,9 @@ pub(super) fn track_target(
 /// `time_window`, and every marker overlay clips itself against them.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct LineViewport {
+    pub(super) plot_x: [f64; 2],
     pub(super) x_min: f64,
     pub(super) x_max: f64,
-    /// The global filter's window, passed on as the hard bound of every level
-    /// selection: a line ends at the window's edge.
     pub(super) time_window: FilterTimeWindow,
     pub(super) width: f32,
     pub(super) cap: usize,
@@ -96,6 +94,33 @@ impl LineViewport {
             .collect()
     }
 
+    fn select_recorded(
+        self,
+        run: &IndexedMipMap,
+        target: usize,
+        sample_time: impl Fn(usize) -> Option<DateTime<Utc>>,
+    ) -> LevelSelection {
+        let [start, end] = self.plot_x;
+        if self.time_window == FilterTimeWindow::default() {
+            return run
+                .geometry()
+                .select_indices(SelectionRange::within_viewport(start..=end), target);
+        }
+        run.select_indices(start..=end, target, |index| {
+            self.time_window.compare_sample(sample_time(index))
+        })
+    }
+
+    fn target_for(self, run: &IndexedMipMap) -> usize {
+        track_target(
+            run.geometry().x_range(),
+            self.x_min,
+            self.x_max,
+            self.width,
+            self.cap,
+        )
+    }
+
     /// Whether any of `run` lies inside the viewport.
     ///
     /// A run outside the viewport still selects the points around it, so slice
@@ -103,6 +128,26 @@ impl LineViewport {
     pub(super) fn shows(self, run: &MipMap) -> bool {
         run.x_range()
             .is_some_and(|(lo, hi)| lo <= self.x_max && hi >= self.x_min)
+    }
+
+    pub(super) fn shows_recorded(self, run: &IndexedMipMap) -> bool {
+        self.intersects_plot(run.geometry().x_range())
+    }
+
+    fn intersects_plot(self, x_range: Option<(f64, f64)>) -> bool {
+        let [start, end] = self.plot_x;
+        x_range.is_some_and(|(lo, hi)| lo <= end && hi >= start)
+    }
+
+    pub(super) fn visible_fix_runs<'runs>(
+        self,
+        runs: &'runs [FixMetricRun],
+        levels: &[FixRunLevel],
+    ) -> impl Iterator<Item = (&'runs FixMetricRun, LevelSelection)> {
+        runs.iter()
+            .zip(levels)
+            .filter(move |(_, level)| self.intersects_plot(level.filtered_extent))
+            .map(|(run, level)| (run, level.selection))
     }
 }
 
@@ -115,87 +160,44 @@ type ComponentRunLevels = Vec<LevelSelection>;
 #[derive(Debug, Clone, Default)]
 pub(super) struct TrackLevelCache {
     pub(super) metrics: FxHashMap<MetricKind, Vec<LevelSelection>>,
-    velocity_kmh: LevelSelection,
-    eph_m: LevelSelection,
-    heading_deg: LevelSelection,
-    clock_delta_ms: LevelSelection,
+    pub(super) fixes: FxHashMap<MetricKind, Vec<FixRunLevel>>,
     /// One entry per channel of the track, then one per component of that
     /// channel.
     pub(super) channels: Vec<Vec<ComponentRunLevels>>,
 }
 
-impl TrackLevelCache {
-    /// Selection for a metric with one continuous series.
-    pub(super) fn level_for(&self, kind: MetricKind) -> Option<LevelSelection> {
-        Some(match kind {
-            MetricKind::Velocity => self.velocity_kmh,
-            MetricKind::Eph => self.eph_m,
-            MetricKind::HeadingDeg => self.heading_deg,
-            MetricKind::ClockDeltaMs => self.clock_delta_ms,
-            MetricKind::SystemBootDeltaMs
-            | MetricKind::Hdop
-            | MetricKind::Vdop
-            | MetricKind::Pdop
-            | MetricKind::SatsSeen
-            | MetricKind::SatsFix
-            | MetricKind::GpsSeen
-            | MetricKind::GpsFix
-            | MetricKind::GlonassSeen
-            | MetricKind::GlonassFix
-            | MetricKind::GalileoSeen
-            | MetricKind::GalileoFix
-            | MetricKind::BeidouSeen
-            | MetricKind::BeidouFix
-            | MetricKind::NavicSeen
-            | MetricKind::NavicFix
-            | MetricKind::QzssSeen
-            | MetricKind::QzssFix
-            | MetricKind::UtilAll
-            | MetricKind::UtilGps
-            | MetricKind::UtilGlonass
-            | MetricKind::UtilGalileo
-            | MetricKind::UtilBeidou
-            | MetricKind::UtilNavic
-            | MetricKind::UtilQzss
-            | MetricKind::SlipAll
-            | MetricKind::SlipGps
-            | MetricKind::SlipGlonass
-            | MetricKind::SlipGalileo
-            | MetricKind::SlipBeidou
-            | MetricKind::SlipNavic
-            | MetricKind::SlipQzss
-            | MetricKind::SnapError
-            | MetricKind::Jamming
-            | MetricKind::Hp30
-            | MetricKind::Kp
-            | MetricKind::Tec => {
-                return None;
-            }
-        })
-    }
+#[derive(Debug, Clone)]
+pub(super) struct FixRunLevel {
+    selection: LevelSelection,
+    filtered_extent: Option<(f64, f64)>,
 }
 
 impl TrackSeries {
-    pub(super) fn has_samples_in(&self, kind: MetricKind, window: RangeInclusive<f64>) -> bool {
-        if self
-            .metrics
-            .get(&kind)
-            .into_iter()
-            .flat_map(|metric| &metric.runs)
-            .chain(self.mipmap_for(kind))
-            .any(|run| {
-                let samples = run.finest_level();
-                let start = samples.partition_point(|sample| sample.x < *window.start());
-                samples
-                    .get(start)
-                    .is_some_and(|sample| window.contains(&sample.x))
+    pub(super) fn has_samples_in(
+        &self,
+        track: &LoadedTrack,
+        kind: MetricKind,
+        window: FilterTimeWindow,
+    ) -> bool {
+        let fix_time = |index: usize| track.points.get(index).map(|point| point.tpv.time().utc());
+        let available = if let Some(metric) = self.metrics.get(&kind) {
+            metric.runs.iter().any(|run| {
+                run.mipmap
+                    .has_samples(|index| window.compare_sample(run.sample_time(track, index)))
             })
-        {
+        } else {
+            self.fix_mipmaps_for(kind).iter().any(|run| {
+                run.mipmap
+                    .has_samples(|index| window.compare_sample(fix_time(index)))
+            })
+        };
+        if available {
             return true;
         }
         if kind == MetricKind::ClockDeltaMs {
+            let bound = window.hard_bound();
             let samples_in_window = |samples: &[ExcursionSample]| {
-                samples.iter().any(|sample| window.contains(&sample.t))
+                samples.iter().any(|sample| bound.contains(&sample.t))
             };
             let off_scale = match &self.clock_offset_placement {
                 ClockOffsetPlacement::BaselineOffScale(baseline) => {
@@ -212,89 +214,99 @@ impl TrackSeries {
         false
     }
 
-    /// `None` for metrics with no mipmap, matching
-    /// [`TrackLevelCache::level_for`].
-    pub(super) fn mipmap_for(&self, kind: MetricKind) -> Option<&gt_egui_mipmap::MipMap> {
-        Some(match kind {
-            MetricKind::Velocity => &self.velocity_kmh,
-            MetricKind::Eph => &self.eph_m,
-            MetricKind::HeadingDeg => &self.heading_deg,
-            MetricKind::ClockDeltaMs => &self.clock_delta_ms,
-            MetricKind::SystemBootDeltaMs
-            | MetricKind::Hdop
-            | MetricKind::Vdop
-            | MetricKind::Pdop
-            | MetricKind::SatsSeen
-            | MetricKind::SatsFix
-            | MetricKind::GpsSeen
-            | MetricKind::GpsFix
-            | MetricKind::GlonassSeen
-            | MetricKind::GlonassFix
-            | MetricKind::GalileoSeen
-            | MetricKind::GalileoFix
-            | MetricKind::BeidouSeen
-            | MetricKind::BeidouFix
-            | MetricKind::NavicSeen
-            | MetricKind::NavicFix
-            | MetricKind::QzssSeen
-            | MetricKind::QzssFix
-            | MetricKind::UtilAll
-            | MetricKind::UtilGps
-            | MetricKind::UtilGlonass
-            | MetricKind::UtilGalileo
-            | MetricKind::UtilBeidou
-            | MetricKind::UtilNavic
-            | MetricKind::UtilQzss
-            | MetricKind::SlipAll
-            | MetricKind::SlipGps
-            | MetricKind::SlipGlonass
-            | MetricKind::SlipGalileo
-            | MetricKind::SlipBeidou
-            | MetricKind::SlipNavic
-            | MetricKind::SlipQzss
-            | MetricKind::SnapError
-            | MetricKind::Jamming
-            | MetricKind::Hp30
-            | MetricKind::Kp
-            | MetricKind::Tec => {
-                return None;
-            }
-        })
+    pub(super) fn fix_mipmaps_for(&self, kind: MetricKind) -> &[FixMetricRun] {
+        self.fix_metrics()
+            .into_iter()
+            .find_map(|(metric, runs)| (metric == kind).then_some(runs))
+            .unwrap_or_default()
+    }
+
+    fn fix_metrics(&self) -> [(MetricKind, &[FixMetricRun]); 4] {
+        [
+            (MetricKind::Velocity, &self.velocity_kmh),
+            (MetricKind::Eph, &self.eph_m),
+            (MetricKind::HeadingDeg, &self.heading_deg),
+            (MetricKind::ClockDeltaMs, &self.clock_delta_ms),
+        ]
     }
 }
+
 /// Compute fresh level selections for all metrics of one track's series.
 ///
 /// The sample target is derived per track from how many pixels the track
 /// occupies in the current view ([`track_target`]), so a track that is only a
 /// few pixels wide selects a coarse mipmap level with just a few points.
-pub(super) fn compute_level_cache(series: &TrackSeries, viewport: LineViewport) -> TrackLevelCache {
-    let target = track_target(
+pub(super) fn compute_level_cache(
+    series: &TrackSeries,
+    track: &LoadedTrack,
+    viewport: LineViewport,
+) -> TrackLevelCache {
+    let fixed_target = track_target(
         series.x_range,
         viewport.x_min,
         viewport.x_max,
         viewport.width,
         viewport.cap,
     );
-    let range = viewport.selection_range();
-    let sel = |mm: &MipMap| mm.select_indices(range, target);
-    TrackLevelCache {
-        metrics: series
-            .metrics
+    let fix_time = |index: usize| track.points.get(index).map(|point| point.tpv.time().utc());
+    let fixed = series.fix_metrics().into_iter().map(|(kind, runs)| {
+        let mut levels: Vec<_> = runs
             .iter()
-            .map(|(kind, metric)| (*kind, viewport.select_run_levels(&metric.runs)))
-            .collect(),
-        velocity_kmh: sel(&series.velocity_kmh),
-        eph_m: sel(&series.eph_m),
-        heading_deg: sel(&series.heading_deg),
-        clock_delta_ms: sel(&series.clock_delta_ms),
+            .map(|run| FixRunLevel {
+                selection: LevelSelection::default(),
+                filtered_extent: if viewport.time_window == FilterTimeWindow::default() {
+                    run.mipmap.geometry().x_range()
+                } else {
+                    run.mipmap.clipped_x_range(|index| {
+                        viewport.time_window.compare_sample(fix_time(index))
+                    })
+                },
+            })
+            .collect();
+        let visible_count = levels
+            .iter()
+            .filter(|level| viewport.intersects_plot(level.filtered_extent))
+            .count();
+        let target = fixed_target.div_ceil(visible_count.max(1)).max(2);
+        for (run, level) in runs.iter().zip(&mut levels) {
+            level.selection = viewport.select_recorded(&run.mipmap, target, fix_time);
+        }
+        (kind, levels)
+    });
+    let dynamic = series.metrics.iter().map(|(kind, metric)| {
+        let levels = metric
+            .runs
+            .iter()
+            .map(|run| {
+                viewport.select_recorded(&run.mipmap, viewport.target_for(&run.mipmap), |index| {
+                    run.sample_time(track, index)
+                })
+            })
+            .collect();
+        (*kind, levels)
+    });
+    TrackLevelCache {
+        metrics: dynamic.collect(),
+        fixes: fixed.collect(),
         channels: series
             .channels
             .iter()
-            .map(|channel| {
+            .zip(&track.channels)
+            .map(|(channel, source)| {
                 channel
                     .components
                     .iter()
-                    .map(|component| viewport.select_run_levels(&component.runs))
+                    .map(|component| {
+                        component
+                            .runs
+                            .iter()
+                            .map(|run| {
+                                viewport.select_recorded(run, viewport.target_for(run), |index| {
+                                    source.times.get(index).copied()
+                                })
+                            })
+                            .collect()
+                    })
                     .collect()
             })
             .collect(),
@@ -311,7 +323,11 @@ const BUDGET_TRACK_MULTIPLE: usize = 8;
 mod tests {
     use std::ops::RangeInclusive;
 
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeDelta, Utc};
+    use gt_filter::GlobalFilter;
+    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::time_types::{GpsTime, SysTime};
+    use gt_types::tpv::TimePositionVelocity;
     use gt_types::{FileSource, LoadedFile, NavPoint};
     use rustc_hash::FxHashMap;
 
@@ -349,27 +365,25 @@ mod tests {
         );
         let cache = compute_level_cache(
             &placed.series,
+            placed.track_ref().resolve(&files).unwrap(),
             LineViewport {
+                plot_x: [x_min, x_max],
                 x_min,
                 x_max,
-                time_window: FilterTimeWindow {
-                    start: Some(x_min),
-                    end: Some(x_max),
-                },
+                time_window: FilterTimeWindow::from(&GlobalFilter::default().with_time_bounds(
+                    Some(at_second(*window.start())),
+                    Some(at_second(*window.end())),
+                )),
                 width: PLOT_WIDTH_PX,
                 cap: single_target(PLOT_WIDTH_PX),
             },
         );
-        let level = cache
-            .level_for(MetricKind::Velocity)
-            .expect("velocity has a mipmap");
-        let mipmap = placed
+        placed
             .series
-            .mipmap_for(MetricKind::Velocity)
-            .expect("velocity has a mipmap");
-        mipmap
-            .slice_at(level)
+            .fix_mipmaps_for(MetricKind::Velocity)
             .iter()
+            .zip(&cache.fixes[&MetricKind::Velocity])
+            .flat_map(|(run, level)| run.mipmap.geometry().slice_at(level.selection))
             .map(|point| point.x as i64 - FIRST_FIX_SECS)
             .collect()
     }
@@ -380,6 +394,194 @@ mod tests {
     fn a_fix_outside_the_time_window_is_not_drawn() {
         let points = gt_test_utils::fixtures::nav_points_from(at_second(0), 10, 1);
         assert_eq!(drawn_seconds(points, 3..=5), [3, 4, 5]);
+    }
+
+    #[test]
+    fn a_backward_fix_time_step_keeps_the_two_recorded_plot_runs() {
+        let points = [0, 2, 1, 3]
+            .into_iter()
+            .enumerate()
+            .map(|(index, second)| {
+                let time = at_second(second);
+                NavPoint::new(
+                    TimePositionVelocity::builder()
+                        .time(GpsTime::from_utc(time))
+                        .sys_time(SysTime::from_utc(
+                            time - TimeDelta::milliseconds(index as i64),
+                        ))
+                        .lat(Latitude::new(55.0))
+                        .lon(Longitude::new(12.0))
+                        .eph_m(index as f32)
+                        .build(),
+                    None,
+                )
+            })
+            .collect();
+        let files = [recording(points)];
+        let placed = crate::series::build_all_series(&files, AnalysisConfig::default());
+        let placed = placed.first().unwrap();
+        let series = &placed.series;
+        let filter =
+            GlobalFilter::default().with_time_bounds(Some(at_second(1)), Some(at_second(3)));
+        let x_min = FIRST_FIX_SECS as f64;
+        let x_max = x_min + 3.0;
+        let viewport = LineViewport {
+            plot_x: [x_min, x_max],
+            x_min,
+            x_max,
+            time_window: FilterTimeWindow::from(&filter),
+            width: PLOT_WIDTH_PX,
+            cap: single_target(PLOT_WIDTH_PX),
+        };
+        let cache = compute_level_cache(
+            series,
+            placed.track_ref().resolve(&files).unwrap(),
+            viewport,
+        );
+        for kind in [MetricKind::Eph, MetricKind::ClockDeltaMs] {
+            let selected: Vec<Vec<(i64, f64)>> = series
+                .fix_mipmaps_for(kind)
+                .iter()
+                .zip(&cache.fixes[&kind])
+                .map(|(run, level)| {
+                    run.mipmap
+                        .geometry()
+                        .slice_at(level.selection)
+                        .iter()
+                        .map(|point| (point.x as i64 - FIRST_FIX_SECS, point.y))
+                        .collect()
+                })
+                .collect();
+            assert_eq!(selected, [vec![(2, 1.0)], vec![(1, 2.0), (3, 3.0)]]);
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::disjoint_geometry(999, None)]
+    #[case::disjoint_filtered_geometry(0, Some(10))]
+    fn offscreen_fix_runs_leave_the_visible_run_its_full_sample_target(
+        #[case] offscreen_run_start: i64,
+        #[case] lower_time_bound: Option<i64>,
+    ) {
+        let visible_start = 10;
+        let visible_count = 128;
+        let offscreen_runs = 32;
+        let mut points = Vec::new();
+        for _ in 0..offscreen_runs {
+            points.extend(gt_test_utils::fixtures::nav_points_from(
+                at_second(offscreen_run_start),
+                2,
+                1_000 - offscreen_run_start,
+            ));
+        }
+        points.extend(gt_test_utils::fixtures::nav_points_from(
+            at_second(visible_start),
+            visible_count,
+            1,
+        ));
+        let files = [recording(points)];
+        let placed = crate::series::build_all_series(&files, AnalysisConfig::default());
+        let placed = placed.first().unwrap();
+        let track = placed.track_ref().resolve(&files).unwrap();
+        let x_min = at_second(visible_start).timestamp() as f64;
+        let x_max = x_min + (visible_count - 1) as f64;
+        let filter =
+            GlobalFilter::default().with_time_bounds(lower_time_bound.map(at_second), None);
+        let viewport = LineViewport {
+            plot_x: [x_min, x_max],
+            x_min,
+            x_max,
+            time_window: FilterTimeWindow::from(&filter),
+            width: PLOT_WIDTH_PX,
+            cap: 32,
+        };
+        let cache = compute_level_cache(&placed.series, track, viewport);
+        let kind = MetricKind::Velocity;
+        let runs = placed.series.fix_mipmaps_for(kind);
+        assert_eq!(runs.len(), offscreen_runs + 1);
+        let drawn: Vec<_> = viewport
+            .visible_fix_runs(runs, &cache.fixes[&kind])
+            .collect();
+        let [(run, selection)] = drawn.as_slice() else {
+            panic!("one run intersects the viewport");
+        };
+        let samples = run.mipmap.geometry().slice_at(*selection);
+        assert_eq!(samples.len(), viewport.cap);
+        assert_eq!(samples.first().unwrap().x, x_min);
+        assert_eq!(samples.last().unwrap().x, x_max);
+    }
+
+    #[rstest::rstest]
+    #[case::an_equal_bound(0, &[0, 1])]
+    #[case::a_later_bound(1, &[1])]
+    fn a_time_filter_distinguishes_recorded_samples_with_the_same_plot_x(
+        #[case] start_offset_ns: i64,
+        #[case] expected_sources: &[usize],
+    ) {
+        let first = at_second(0);
+        let last = first + TimeDelta::nanoseconds(2);
+        let mut points = gt_test_utils::fixtures::nav_points_from(first, 1, 1);
+        points.extend(gt_test_utils::fixtures::nav_points_from(last, 1, 1));
+        for point in &mut points {
+            point.navigation.used_count = Some(8);
+        }
+        let mut file = recording(points);
+        file.tracks.first_mut().unwrap().channels = vec![gt_test_utils::fixtures::scalar_channel(
+            "accel",
+            None,
+            vec![first, last],
+            vec![1.0, 2.0],
+        )];
+        let files = [file];
+        let track = files.first().unwrap().tracks.first().unwrap();
+        let series = crate::series::build_all_series(&files, AnalysisConfig::default());
+        let series = &series.first().unwrap().series;
+        let start = first + TimeDelta::nanoseconds(start_offset_ns);
+        let filter = GlobalFilter::default().with_time_bounds(Some(start), Some(last));
+        let viewport = LineViewport {
+            plot_x: [FIRST_FIX_SECS as f64; 2],
+            x_min: FIRST_FIX_SECS as f64,
+            x_max: FIRST_FIX_SECS as f64,
+            time_window: FilterTimeWindow::from(&filter),
+            width: PLOT_WIDTH_PX,
+            cap: single_target(PLOT_WIDTH_PX),
+        };
+        let cache = compute_level_cache(series, track, viewport);
+        let gps_count = &series.metrics[&MetricKind::SatsFix].runs[0].mipmap;
+        let channel = &series.channels[0].components[0].runs[0];
+        for (mipmap, selection) in [
+            (
+                &series.fix_mipmaps_for(MetricKind::Velocity)[0].mipmap,
+                cache.fixes[&MetricKind::Velocity][0].selection,
+            ),
+            (gps_count, cache.metrics[&MetricKind::SatsFix][0]),
+            (channel, cache.channels[0][0][0]),
+        ] {
+            let samples = mipmap.geometry().slice_at(selection);
+            assert_eq!(samples.len(), expected_sources.len());
+            for (offset, &expected) in expected_sources.iter().enumerate() {
+                assert_eq!(mipmap.source_at(selection, offset), Some(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn a_window_between_equal_x_samples_has_no_metric_values() {
+        let first = at_second(0);
+        let window_time = first + TimeDelta::nanoseconds(1);
+        let last = first + TimeDelta::nanoseconds(2);
+        let mut points = gt_test_utils::fixtures::nav_points_from(first, 1, 1);
+        points.extend(gt_test_utils::fixtures::nav_points_from(last, 1, 1));
+        let files = [recording(points)];
+        let track = files.first().unwrap().tracks.first().unwrap();
+        let series = crate::series::build_all_series(&files, AnalysisConfig::default());
+        let series = &series.first().unwrap().series;
+        let filter = GlobalFilter::default().with_time_bounds(Some(window_time), Some(window_time));
+        assert!(!series.has_samples_in(
+            track,
+            MetricKind::Velocity,
+            FilterTimeWindow::from(&filter)
+        ));
     }
 
     #[test]
@@ -450,21 +652,20 @@ mod tests {
         for (index, point) in points.iter_mut().enumerate() {
             point.navigation.used_count = (!(500..600).contains(&index)).then_some(8);
         }
-        let placed =
-            crate::series::build_all_series(&[recording(points)], AnalysisConfig::default());
+        let files = [recording(points)];
+        let track = files.first().unwrap().tracks.first().unwrap();
+        let placed = crate::series::build_all_series(&files, AnalysisConfig::default());
         let series = &placed.first().expect("one track").series;
         let base = FIRST_FIX_SECS as f64;
         let viewport = LineViewport {
+            plot_x: [base, base + 1_099.0],
             x_min: base,
             x_max: base + 1_099.0,
-            time_window: FilterTimeWindow {
-                start: None,
-                end: None,
-            },
+            time_window: FilterTimeWindow::default(),
             width: 1.0,
             cap: 2,
         };
-        let cache = compute_level_cache(series, viewport);
+        let cache = compute_level_cache(series, track, viewport);
         let selections = cache
             .metrics
             .get(&MetricKind::SatsFix)
@@ -481,7 +682,7 @@ mod tests {
                 .all(|selection| !selection.is_full_detail())
         );
         for (index, (run, selection)) in runs.iter().zip(selections).enumerate() {
-            let selected = run.slice_at(*selection);
+            let selected = run.mipmap.geometry().slice_at(*selection);
             assert!(!selected.is_empty());
             assert!(selected.iter().all(|sample| {
                 if index == 0 {
@@ -492,23 +693,24 @@ mod tests {
             }));
         }
         let in_gap = LineViewport {
+            plot_x: [base + 500.0, base + 599.0],
             x_min: base + 500.0,
             x_max: base + 599.0,
-            time_window: FilterTimeWindow {
-                start: Some(base + 500.0),
-                end: Some(base + 599.0),
-            },
+            time_window: FilterTimeWindow::from(
+                &GlobalFilter::default()
+                    .with_time_bounds(Some(at_second(500)), Some(at_second(599))),
+            ),
             ..viewport
         };
-        let cache = compute_level_cache(series, in_gap);
+        let cache = compute_level_cache(series, track, in_gap);
         for (run, selection) in runs.iter().zip(
             cache
                 .metrics
                 .get(&MetricKind::SatsFix)
                 .expect("count selections"),
         ) {
-            assert!(run.slice_at(*selection).is_empty());
-            assert!(!in_gap.shows(run));
+            assert!(run.mipmap.geometry().slice_at(*selection).is_empty());
+            assert!(!in_gap.shows_recorded(&run.mipmap));
         }
     }
 

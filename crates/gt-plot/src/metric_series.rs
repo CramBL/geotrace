@@ -1,4 +1,5 @@
-use gt_egui_mipmap::MipMap;
+use chrono::{DateTime, Utc};
+use gt_egui_mipmap::{IndexedMipMap, IndexedSample, LevelSelection};
 use gt_types::time_types::GpsTime;
 use gt_types::{LoadedTrack, NavigationEvidenceSource, SatelliteReportMetadata};
 
@@ -80,9 +81,13 @@ impl TimedMetricSample {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MetricSeries {
-    pub runs: Vec<MipMap>,
-    /// Source references align with each run's finest mipmap level.
-    sources: Vec<Vec<MetricSampleSource>>,
+    pub runs: Vec<MetricRun>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MetricRun {
+    pub mipmap: IndexedMipMap,
+    sources: Vec<MetricSampleSource>,
 }
 
 impl MetricSeries {
@@ -113,23 +118,38 @@ impl MetricSeries {
         if samples.is_empty() {
             return;
         }
-        self.runs.push(MipMap::build(
-            samples
-                .iter()
-                .filter_map(|sample| {
-                    Some([sample.time.as_secs_f64_with_subseconds(), sample.value?])
-                })
-                .collect(),
-        ));
+        let mut indexed = Vec::with_capacity(samples.len());
+        let mut sources = Vec::with_capacity(samples.len());
+        for sample in samples {
+            if let Some(value) = sample.value {
+                indexed.push(IndexedSample {
+                    point: [sample.time.as_secs_f64_with_subseconds(), value],
+                    source_index: sources.len(),
+                });
+                sources.push(sample.source);
+            }
+        }
+        self.runs.push(MetricRun {
+            mipmap: IndexedMipMap::build(indexed, None),
+            sources,
+        });
+    }
+}
+
+impl MetricRun {
+    pub fn sample_time(&self, track: &LoadedTrack, index: usize) -> Option<DateTime<Utc>> {
         self.sources
-            .push(samples.into_iter().map(|sample| sample.source).collect());
+            .get(index)?
+            .normalized_time(track)
+            .map(GpsTime::utc)
     }
 
-    pub fn sample_source(&self, run_index: usize, x: f64) -> Option<MetricSampleSource> {
-        let samples = self.runs.get(run_index)?.finest_level();
-        let index = samples
-            .binary_search_by(|sample| sample.x.total_cmp(&x))
-            .ok()?;
-        self.sources.get(run_index)?.get(index).copied()
+    pub fn sample_source(
+        &self,
+        level: LevelSelection,
+        offset: usize,
+    ) -> Option<MetricSampleSource> {
+        let source = self.mipmap.source_at(level, offset)?;
+        self.sources.get(source).copied()
     }
 }

@@ -35,7 +35,7 @@ use super::chips::{MetricAvailability, MetricVisibility};
 use super::hover::{self, ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel};
 use super::metric_paint::{self, ANOMALY_MARKER_RADIUS, LineStroke};
 use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter};
-use crate::series::TrackSeries;
+use crate::series::{FixMetricRun, TrackSeries};
 
 /// The y range the plot currently shows.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -276,6 +276,7 @@ impl OverlayPainter for OffScaleMarkers {
 /// what egui_plot's hover label states.
 pub(super) fn add_clock_offset_line<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
+    run: &FixMetricRun,
     points: &'a [PlotPoint],
     placement: &ClockOffsetPlacement,
     name: &str,
@@ -284,7 +285,7 @@ pub(super) fn add_clock_offset_line<'a>(
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return;
     };
-    let held_back = held_back_times_within(placement, first.x..=last.x);
+    let held_back = held_back_times_within(placement, &run.fix_range, first.x..=last.x);
     for stretch in stretches_between_held_back_samples(points, held_back) {
         match stretch {
             [_] => plot_ui.points(
@@ -354,34 +355,50 @@ pub(super) fn add_off_scale_clock_offsets(
             ),
         };
 
-    let line = series.clock_delta_ms.finest_level();
     let mut placed: Vec<PlacedMarker<'_>> = Vec::new();
     let mut runs: Vec<DrawnRun> = Vec::new();
     for (cause, samples) in sample_runs {
-        let run = RunPlacement {
-            samples,
-            visible: hover::visible_x_range(
+        let mut add_run = |samples, line| {
+            let run = RunPlacement {
                 samples,
-                |s: &ExcursionSample| s.t,
-                viewport.x_min..=viewport.x_max,
-            ),
-            line,
-            y,
+                visible: hover::visible_x_range(
+                    samples,
+                    |s: &ExcursionSample| s.t,
+                    viewport.x_min..=viewport.x_max,
+                ),
+                line,
+                y,
+            };
+            let markers: Vec<PlacedMarker<'_>> = run
+                .visible_samples()
+                .iter()
+                .map(|&sample| PlacedMarker::new(sample, cause, y))
+                .collect();
+            if !markers.is_empty() {
+                runs.push(DrawnRun {
+                    markers: spaced_markers(&markers, |at| plot_ui.screen_from_plot(at).x),
+                    entry: run.entry(),
+                    exit: run.exit(),
+                });
+                placed.extend(markers);
+            }
         };
-        let markers: Vec<PlacedMarker<'_>> = run
-            .visible_samples()
-            .iter()
-            .map(|&sample| PlacedMarker::new(sample, cause, y))
-            .collect();
-        if markers.is_empty() {
-            continue;
+        if matches!(cause, OffScaleCause::Baseline) {
+            add_run(samples, &[]);
+        } else if let (Some(first), Some(last)) = (samples.first(), samples.last()) {
+            let fixed = &series.clock_delta_ms;
+            let start = fixed.partition_point(|run| run.fix_range.end <= first.index);
+            for run in fixed
+                .iter()
+                .skip(start)
+                .take_while(|run| run.fix_range.start <= last.index)
+            {
+                add_run(
+                    samples_in_fix_range(samples, &run.fix_range),
+                    run.mipmap.geometry().finest_level(),
+                );
+            }
         }
-        runs.push(DrawnRun {
-            markers: spaced_markers(&markers, |at| plot_ui.screen_from_plot(at).x),
-            entry: run.entry(),
-            exit: run.exit(),
-        });
-        placed.extend(markers);
     }
     if placed.is_empty() {
         return;
@@ -551,22 +568,41 @@ fn stretches_between_held_back_samples(
 /// A track whose baseline is off-scale has no line to cut: every one of its
 /// samples is held back, and [`TrackSeries::clock_delta_ms`] has no points at
 /// all.
-fn held_back_times_within(
-    placement: &ClockOffsetPlacement,
+fn held_back_times_within<'a>(
+    placement: &'a ClockOffsetPlacement,
+    fix_range: &'a Range<usize>,
     x_range: RangeInclusive<f64>,
-) -> impl Iterator<Item = f64> + '_ {
+) -> impl Iterator<Item = f64> + 'a {
     let excursions = match placement {
         ClockOffsetPlacement::BaselineOnScale(excursions) => excursions.as_slice(),
         ClockOffsetPlacement::BaselineOffScale(_) => &[],
     };
+    let start =
+        excursions.partition_point(|excursion| excursion.samples.last().index < fix_range.start);
+    let end =
+        excursions.partition_point(|excursion| excursion.samples.first().index < fix_range.end);
+    let excursions = excursions.get(start..end).unwrap_or_default();
     let (x_min, x_max) = (*x_range.start(), *x_range.end());
-    let reaching_in = excursions.partition_point(|excursion| excursion.samples.last().t < x_min);
+    let reaching_in = excursions.partition_point(|excursion| {
+        samples_in_fix_range(&excursion.samples, fix_range)
+            .last()
+            .is_none_or(|sample| sample.t < x_min)
+    });
     excursions
-        .get(reaching_in..)
-        .unwrap_or_default()
         .iter()
-        .take_while(move |excursion| excursion.samples.first().t <= x_max)
-        .flat_map(|excursion| excursion.samples.iter().map(|sample| sample.t))
+        .skip(reaching_in)
+        .map(move |excursion| samples_in_fix_range(&excursion.samples, fix_range))
+        .take_while(move |samples| samples.first().is_some_and(|sample| sample.t <= x_max))
+        .flat_map(|samples| samples.iter().map(|sample| sample.t))
+}
+
+fn samples_in_fix_range<'a>(
+    samples: &'a [ExcursionSample],
+    range: &Range<usize>,
+) -> &'a [ExcursionSample] {
+    let start = samples.partition_point(|sample| sample.index < range.start);
+    let end = samples.partition_point(|sample| sample.index < range.end);
+    samples.get(start..end).unwrap_or_default()
 }
 
 /// Where the plot draws `sample`: at its own offset while the visible range
@@ -1000,13 +1036,26 @@ mod tests {
         );
         let x_range = (T + DRAWN_RANGE_SECONDS.start as f64)..=(T + DRAWN_RANGE_SECONDS.end as f64);
 
-        let times: Vec<f64> = held_back_times_within(&placement, x_range).collect();
+        let times: Vec<f64> = held_back_times_within(&placement, &(0..30), x_range).collect();
 
         let expected: Vec<f64> = expected_seconds
             .iter()
             .map(|&second| T + second as f64)
             .collect();
         assert_eq!(times, expected);
+    }
+
+    #[test]
+    fn a_clock_offset_line_uses_excursion_times_from_its_fix_run() {
+        let mut excursion = excursion_over(&[5, 6, 7, 8]);
+        excursion.samples[2].t = T + 4.0;
+        excursion.samples[3].t = T + 5.0;
+        let placement = ClockOffsetPlacement::BaselineOnScale(vec![excursion]);
+        let window = T..=T + 9.0;
+        let first: Vec<_> = held_back_times_within(&placement, &(0..7), window.clone()).collect();
+        let second: Vec<_> = held_back_times_within(&placement, &(7..10), window).collect();
+        assert_eq!(first, [T + 5.0, T + 6.0]);
+        assert_eq!(second, [T + 4.0, T + 5.0]);
     }
 
     /// A run over the samples at `seconds`, each an hour off a baseline of

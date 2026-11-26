@@ -262,6 +262,7 @@ mod tests {
     /// sample cap of `cap`.
     fn viewport(x_max: f64, width: f32, cap: usize) -> LineViewport {
         LineViewport {
+            plot_x: [0.0, x_max],
             x_min: 0.0,
             x_max,
             time_window: FilterTimeWindow::default(),

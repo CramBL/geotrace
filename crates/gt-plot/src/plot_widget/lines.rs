@@ -99,49 +99,55 @@ pub(super) fn add_series_lines<'a>(
             style::metric_line_color(kind, placed.fi, dark_mode),
             is_hovered,
         );
-        if let Some(metric) = placed.series.metrics.get(&kind) {
-            if let Some(selections) = cache.metrics.get(&kind) {
-                metric.add_run_lines(
-                    plot_ui,
-                    selections,
-                    &MetricLineContext {
-                        hover: MetricHoverContext {
-                            track,
-                            track_ref: placed.track_ref(),
-                            track_label,
-                            kind,
-                        },
-                        name: format!("{prefix}{}", kind.label()),
-                        stroke,
-                        viewport,
-                        pointer,
+        if let (Some(metric), Some(selections)) =
+            (placed.series.metrics.get(&kind), cache.metrics.get(&kind))
+        {
+            metric.add_run_lines(
+                plot_ui,
+                selections,
+                &MetricLineContext {
+                    hover: MetricHoverContext {
+                        track,
+                        track_ref: placed.track_ref(),
+                        track_label,
+                        kind,
                     },
-                    nearest,
-                );
-            }
+                    name: format!("{prefix}{}", kind.label()),
+                    stroke,
+                    viewport,
+                    pointer,
+                },
+                nearest,
+            );
             continue;
         }
-        // Snap error has no mipmap. It draws from the external per-run series
-        // right after this loop.
-        let (Some(mipmap), Some(level)) = (placed.series.mipmap_for(kind), cache.level_for(kind))
-        else {
+        let Some(levels) = cache.fixes.get(&kind) else {
             continue;
         };
         let name = format!("{prefix}{}", kind.label());
-        let points = mipmap.slice_at(level);
-        // The plot holds samples off the clock offset line alone, and cuts
-        // that line where they were.
-        if kind == MetricKind::ClockDeltaMs {
-            clock_offset::add_clock_offset_line(
-                plot_ui,
-                points,
-                &placed.series.clock_offset_placement,
-                &name,
-                stroke,
-            );
-        } else {
-            nearest.offer_native_line(plot_ui, points, pointer);
-            metric_paint::add_metric_run(plot_ui, points, name, stroke, MetricHoverPolicy::Native);
+        for (run, selection) in
+            viewport.visible_fix_runs(placed.series.fix_mipmaps_for(kind), levels)
+        {
+            let points = run.mipmap.geometry().slice_at(selection);
+            if kind == MetricKind::ClockDeltaMs {
+                clock_offset::add_clock_offset_line(
+                    plot_ui,
+                    run,
+                    points,
+                    &placed.series.clock_offset_placement,
+                    &name,
+                    stroke,
+                );
+            } else {
+                nearest.offer_native_line(plot_ui, points, pointer);
+                metric_paint::add_metric_run(
+                    plot_ui,
+                    points,
+                    name.clone(),
+                    stroke,
+                    MetricHoverPolicy::Native,
+                );
+            }
         }
     }
 
@@ -208,7 +214,7 @@ pub(super) fn add_series_lines<'a>(
                 .runs
                 .iter()
                 .zip(run_selections)
-                .map(|(run, selection)| run.slice_at(*selection))
+                .map(|(run, selection)| run.geometry().slice_at(*selection))
                 .filter(|points| points.len() >= 2)
             {
                 nearest.offer_native_line(plot_ui, points, pointer);
@@ -247,11 +253,11 @@ impl MetricSeries {
         context: &MetricLineContext<'_>,
         nearest: &mut NearestHoverLabel,
     ) {
-        for (run_index, (run, selection)) in self.runs.iter().zip(selections).enumerate() {
-            if !context.viewport.shows(run) {
+        for (run, selection) in self.runs.iter().zip(selections) {
+            if !context.viewport.shows_recorded(&run.mipmap) {
                 continue;
             }
-            let points = run.slice_at(*selection);
+            let points = run.mipmap.geometry().slice_at(*selection);
             metric_paint::add_metric_run(
                 plot_ui,
                 points,
@@ -262,7 +268,7 @@ impl MetricSeries {
             let Some(pointer) = context.pointer else {
                 continue;
             };
-            if let Some(candidate) = self.nearest_sample(plot_ui, run_index, points, pointer) {
+            if let Some(candidate) = run.nearest_sample(plot_ui, *selection, pointer) {
                 nearest.offer(candidate.distance_px, || {
                     PlotHoverLabel::Metric(MetricHover::from_sample(&context.hover, &candidate))
                 });

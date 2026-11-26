@@ -1,5 +1,6 @@
 use chrono::{DateTime, TimeDelta, Utc};
 use egui_plot::{Line, PlotItem as _, PlotPoint, PlotPoints};
+use gt_egui_mipmap::LevelSelection;
 use gt_types::{
     BootClockBackwardStep, FixRef, LoadedTrack, MetricKind, PointIdx, SystemBootComparison,
     TrackRef,
@@ -7,7 +8,7 @@ use gt_types::{
 
 use super::chips::MetricKindUi;
 use super::hover::HOVER_RADIUS_PX;
-use crate::metric_series::{MetricSampleSource, MetricSeries};
+use crate::metric_series::{MetricRun, MetricSampleSource};
 
 pub(super) struct MetricHoverContext<'a> {
     pub(super) track: &'a LoadedTrack,
@@ -139,14 +140,14 @@ impl SystemBootMetricHover {
     }
 }
 
-impl MetricSeries {
+impl MetricRun {
     pub(super) fn nearest_sample(
         &self,
         plot_ui: &egui_plot::PlotUi<'_>,
-        run_index: usize,
-        points: &[PlotPoint],
+        selection: LevelSelection,
         pointer: egui::Pos2,
     ) -> Option<MetricHoverCandidate> {
+        let points = self.mipmap.geometry().slice_at(selection);
         let line = Line::new("", PlotPoints::Borrowed(points));
         let closest = line
             .find_closest(pointer, plot_ui.transform())
@@ -155,7 +156,7 @@ impl MetricSeries {
         Some(MetricHoverCandidate {
             distance_px: closest.dist_sq.sqrt(),
             point,
-            source: self.sample_source(run_index, point.x)?,
+            source: self.sample_source(selection, closest.index)?,
         })
     }
 }

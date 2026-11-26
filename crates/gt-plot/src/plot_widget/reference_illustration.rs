@@ -146,6 +146,7 @@ fn generate_tec_reference_plot() {
                                     highlighted: false,
                                 },
                                 LineViewport {
+                                    plot_x: [x_min, x_max],
                                     x_min,
                                     x_max,
                                     time_window: FilterTimeWindow::default(),
