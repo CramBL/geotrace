@@ -58,6 +58,25 @@ impl TestEndpoint {
 }
 
 #[tokio::test]
+async fn invalid_view_arguments_stop_at_the_bridge() {
+    let endpoint = TestEndpoint::new().unwrap();
+    let (_server, mut wakes) = endpoint.start();
+    for request in [
+        json!({"method":"set_session_view","base_layer":"terrain"}),
+        json!({"method":"set_session_view","display_categories":[{"category":"terrain","visible":true}]}),
+        json!({"method":"set_session_view","time_filter":{"action":"clear","end":null}}),
+        json!({"method":"set_session_view","time_filter":{"action":"set","end":"2026-02-01T14:00:00+00:00"}}),
+        json!({"method":"set_session_view","time_filter":{"action":"set","end":"2026-02-01T14:00:00.1234567891Z"}}),
+    ] {
+        let payload = serde_json::to_vec(&request).unwrap();
+        let mut stream = endpoint.send_payload(&payload).await.unwrap();
+        let reply: Reply = framing::read(&mut stream, MAX_REPLY_BYTES).await.unwrap();
+        assert_eq!(reply, Reply::from(ErrorCode::InvalidRequest));
+        assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+    }
+}
+
+#[tokio::test]
 async fn opening_a_panel_rejects_fields_from_other_variants_before_dispatch() {
     let endpoint = TestEndpoint::new().unwrap();
     let (_server, mut wakes) = endpoint.start();

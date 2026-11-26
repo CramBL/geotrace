@@ -33,6 +33,7 @@ mod processing;
 mod recordings;
 mod settings;
 mod state;
+mod view;
 mod visibility;
 
 #[derive(Clone, Copy)]

@@ -15,10 +15,10 @@ use gt_session_bridge::{
     QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest,
     QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
     QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget, Recording,
-    RecordingReference, Recordings, Reply, Request, SessionPanel, SetSetting, SetTrackVisibility,
-    SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
-    SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference, TrackVisibilityAction,
-    TrackVisibilityResult,
+    RecordingReference, Recordings, Reply, Request, SessionPanel, SessionState, SetSetting,
+    SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection,
+    SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
+    TrackVisibilityAction, TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -80,6 +80,38 @@ async fn open_panel_validates_panel_arguments_before_requesting_the_desktop() {
         let result = client.receive().await;
         assert_eq!(result.pointer("/result/isError"), Some(&json!(true)));
     }
+    drop(client);
+    worker.await.unwrap();
+}
+
+#[tokio::test]
+async fn set_session_view_sends_the_time_bound_at_nanosecond_precision() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|request| {
+        let Request::SetSessionView(change) = request else {
+            panic!("expected a view update");
+        };
+        let mut state: SessionState =
+            serde_json::from_value(self::session_state_fixture()).unwrap();
+        state.time_filter = change.time_filter.unwrap().window().unwrap().into();
+        Ok(Reply::SessionState { state })
+    }));
+    client.initialize().await;
+    let end = "2026-02-01T14:00:00.123456789Z";
+    client
+        .send_tool(
+            2,
+            "set_session_view",
+            json!({
+                "time_filter": {"action": "set", "end": end}
+            }),
+        )
+        .await;
+    let result = client.receive().await;
+    assert_eq!(result.pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(
+        result.pointer("/result/structuredContent/time_filter"),
+        Some(&json!({"kind":"bounds", "start":null, "end":end}))
+    );
     drop(client);
     worker.await.unwrap();
 }
@@ -278,6 +310,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "open_query",
             "open_setting",
             "run_query",
+            "set_session_view",
             "set_setting",
             "set_track_visibility",
             "show_on_map",
@@ -296,6 +329,19 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     assert_eq!(
         client.receive().await.pointer("/result/structuredContent"),
         Some(&self::session_state_fixture())
+    );
+    let view_schema = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("set_session_view")))
+        .and_then(|tool| tool.get("inputSchema"))
+        .unwrap();
+    let categories = view_schema
+        .pointer("/$defs/DisplayCategory/oneOf")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert_eq!(
+        view_schema.pointer("/properties/display_categories/maxItems"),
+        Some(&json!(categories.len()))
     );
     let visibility_tool = tools
         .iter()

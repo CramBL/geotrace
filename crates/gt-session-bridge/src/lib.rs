@@ -46,6 +46,7 @@ pub use crate::session_state::{
     OpenPanel, SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel, SessionQueryPhase,
     SessionQueryState, SessionState, SessionTimeFilter,
 };
+pub use crate::session_view::{DisplayCategoryChange, SetSessionView, TimeFilterChange};
 pub use crate::settings::{
     AnalysisSettingKey, ProcessingSettingKey, SetSetting, SettingApply, SettingInfo, SettingInput,
     SettingKey, SettingSelection, SettingUnit, SettingValue,
@@ -64,6 +65,7 @@ mod query_results;
 mod query_validation;
 mod recording_control;
 mod session_state;
+mod session_view;
 mod settings;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;

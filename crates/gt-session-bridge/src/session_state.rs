@@ -112,6 +112,7 @@ pub struct SessionMapState {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SessionMapLayer {
     OpenStreetMap,

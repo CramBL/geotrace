@@ -7,6 +7,7 @@ Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-clie
 | Tool | Use |
 |---|---|
 | `get_session_state` | Read a summary of the current desktop session. |
+| `set_session_view` | Change map layers, category visibility, or the global time filter. |
 | `open_panel` | Open or raise a desktop panel. |
 | `list_recordings` | List loaded recordings and get their references. |
 | `manage_recordings` | Open local recordings or logs, or unload recordings from this session. |
@@ -64,6 +65,33 @@ GeoTrace brings a floating panel to the front after layout.
 For Plot, it makes the docked pane visible.
 Opening Query preserves its draft and results.
 Opening Settings keeps its current page.
+
+Use `set_session_view` to update the desktop view and return the same shape as `get_session_state`.
+Omitted fields retain their current values.
+Set `base_layer` to `open_street_map` or `satellite`.
+The satellite layer requires a Mapbox token configured in Settings.
+Each entry in `display_categories` sets one map category's visibility.
+Specify each category at most once, using the names in the tool schema.
+`map.visible_categories` lists the categories currently enabled.
+Base layers and category visibility affect what the map draws.
+Track checkboxes and query eligibility stay the same when either of those changes.
+
+```json
+{
+  "base_layer": "open_street_map",
+  "display_categories": [{"category":"satellite_labels","visible":false}],
+  "time_filter": {"action":"set","start":"2026-02-01T14:00:00.123456789Z"}
+}
+```
+
+Use `time_filter` with action `set` and at least one of `start` and `end`.
+The inclusive bounds use RFC 3339 UTC timestamps ending in `Z` and accept up to nine fractional digits.
+Omit an endpoint to leave that side unbounded.
+Use `{"time_filter":{"action":"clear"}}` to clear the time constraint.
+Other global filters stay in effect.
+GeoTrace rejects the whole update if any field is invalid.
+Changing the time constraint can make a completed query stale.
+Use `get_query_status` to check its freshness.
 
 ## Recordings
 

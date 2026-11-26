@@ -14,6 +14,9 @@ ignored-paths = ["tests/compile_fail/*.rs"]
 [lib]
 doctest = false
 
+[features]
+schema = ["dep:schemars"]
+
 [dependencies]
 chrono.workspace = true
 gt-filter = { path = "../gt-filter" }
@@ -21,6 +24,7 @@ gt-fmt = { path = "../gt-fmt" }
 gt-logfile = { path = "../gt-logfile" }
 gt-types = { path = "../gt-types" }
 rustc-hash.workspace = true
+schemars = { version = "1", optional = true }
 serde.workspace = true
 smallvec.workspace = true
 strum.workspace = true

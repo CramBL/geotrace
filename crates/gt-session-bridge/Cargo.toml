@@ -11,7 +11,7 @@ authors.workspace = true
 doctest = false
 
 [features]
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "gt-ui-types/schema"]
 test-util = ["dep:tempfile"]
 
 [dependencies]

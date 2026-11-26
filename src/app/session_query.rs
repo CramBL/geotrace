@@ -198,6 +198,7 @@ impl App {
                 Ok(Reply::SettingOpenQueued)
             }
             Request::RunQuery(args) => self.submit_session_query(session, args.text),
+            Request::SetSessionView(args) => self.set_session_view(session, args),
             Request::SetSetting(args) => self
                 .set_session_setting(args)
                 .map(|setting| Reply::Setting { setting }),
