@@ -1,7 +1,9 @@
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, Inspection, InspectionRequest, QueryJobId, QueryJobState,
-    QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest,
+    QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest, TrackTreeState,
 };
+use gt_side_panel::{CheckState, NodeKey};
+use gt_types::TrackRef;
 use uuid::Uuid;
 
 use super::App;
@@ -214,11 +216,18 @@ impl App {
         request: InspectionRequest,
     ) -> Result<Reply, ErrorCode> {
         let shared = self.shared.borrow();
+        let track_tree = |track: TrackRef| {
+            Some(TrackTreeState {
+                enabled: shared.tree.track_node(track)?.check == CheckState::On,
+                selected: shared.tree.selection.contains(&NodeKey::Track(track)),
+            })
+        };
         Inspection::new(
             shared.loaded_files.view(),
             &shared.recording_name_template,
             session,
         )
+        .with_track_tree(&track_tree)
         .execute(request)
     }
 }

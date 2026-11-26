@@ -121,6 +121,9 @@ pub struct GetRecording {
     pub recording: RecordingReference,
     /// Continue after the track reference from the previous page.
     pub after: Option<TrackReference>,
+    /// First one-based stored track number. Defaults to one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_track_start: Option<NonZeroUsize>,
     pub limit: Option<NonZeroUsize>,
 }
 

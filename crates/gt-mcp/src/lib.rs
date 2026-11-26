@@ -139,7 +139,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Inspect a loaded recording and its track references. Use next_after as after for the next page.",
+        description = "Inspect a loaded recording, its track tree and History rows. Pass next_after as after and stored_tracks.next_start as stored_track_start.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn get_recording(&self, Parameters(args): Parameters<GetRecording>) -> CallToolResult {
@@ -155,7 +155,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Read a loaded track's time range, counts, distance and map bounds.",
+        description = "Read a loaded track's time range, counts, geometry, track tree state and History membership.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn get_track(&self, Parameters(args): Parameters<GetTrack>) -> CallToolResult {
