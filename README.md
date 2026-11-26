@@ -290,9 +290,12 @@ Use `get_recording` to obtain fresh track references and rerun queries against t
 History keeps its stored track layout.
 
 Use `list_history_recordings` to discover stored recordings, including recordings that are closed in the app.
+GeoTrace lists recordings by the start of their navigation time range, newest first.
+Recordings with equal start times can appear in either order.
+Set `limit` to 1 to get the first matching recording.
 Filter by UTC dates with `dates.from` and `dates.through`, both inclusive.
 A recording matches when its navigation time range overlaps the date filter.
-Recordings without navigation timestamps appear in unfiltered pages.
+Recordings without a time range appear at the end of the unfiltered listing.
 The bounds in `time_range` are microseconds since the UTC epoch.
 Pass `next_cursor` as `cursor` with the same dates to continue, or start again after History refreshes or the app restarts.
 Recording IDs remain stable across app restarts with the same History database contents and path.
