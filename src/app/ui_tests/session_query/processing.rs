@@ -1,5 +1,3 @@
-use std::time::Duration as StdDuration;
-
 use chrono::Duration;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -503,12 +501,7 @@ fn processing_visibility_persists_through_shutdown_without_painting(
         app.begin_shutdown();
         admitted
     };
-    assert!(
-        harness
-            .state()
-            .pending_writes
-            .wait_until_idle_for(StdDuration::from_secs(5))
-    );
+    harness::finish_shutdown_without_painting(&mut harness);
     drop(harness);
     let after = read_recording();
     assert_eq!(after.track_rows(), before.track_rows());

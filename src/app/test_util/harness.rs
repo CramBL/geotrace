@@ -3,6 +3,8 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use egui::accesskit::Role;
 use egui_kittest::Harness;
@@ -239,7 +241,7 @@ pub fn storage_opened_in(
     }
 }
 
-pub fn step_minimized_logic(harness: &mut Harness<'_, App>) {
+pub fn step_minimized_logic(harness: &mut Harness<'_, App>) -> egui::LogicOutput {
     let ctx = harness.ctx.clone();
     let mut input = egui::RawInput {
         viewports: harness.input_mut().viewports.clone(),
@@ -251,9 +253,27 @@ pub fn step_minimized_logic(harness: &mut Harness<'_, App>) {
         .entry(egui::ViewportId::ROOT)
         .or_default()
         .minimized = Some(true);
-    let _output = ctx.run_logic(&input, |ctx| {
+    ctx.run_logic(&input, |ctx| {
         eframe::App::logic(harness.state_mut(), ctx, &mut eframe::Frame::_new_kittest());
-    });
+    })
+}
+
+pub fn finish_shutdown_without_painting(harness: &mut Harness<'_, App>) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let close_commands = loop {
+        let output = self::step_minimized_logic(harness);
+        if harness.state().shutdown.close_allowed() {
+            break output.viewport_commands;
+        }
+        assert!(Instant::now() < deadline, "Background work did not finish");
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert!(
+        close_commands
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|commands| { commands.contains(&egui::ViewportCommand::Close) })
+    );
+    assert!(harness.state().pending_writes.is_idle());
 }
 
 /// [`transient_app`] started with the files a command line named, on the data

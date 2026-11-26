@@ -62,6 +62,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.begin_shutdown_if_requested(ctx);
         self.apply_finished_background_work(ctx);
+        self.drive_shutdown(ctx);
         self.dispatch_session_request(ctx);
         self.drive_settings_autosave(ctx);
     }
@@ -73,6 +74,9 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if self.shutdown_ui(ui) == FrameContents::ShutdownWindow {
             return;
+        }
+        if self.shutdown.has_begun() {
+            ui.disable();
         }
 
         // Kick off the one-shot startup update check (no-op after the first
@@ -89,8 +93,10 @@ impl eframe::App for App {
         self.wait_for_the_data_directory(ui);
         self.show_interrupted_delete_prompts(ui);
         self.retry_marking_the_data_directory_in_the_background(ui.ctx());
-        self.load_files_from_dialog_drops_and_paste(ui);
-        self.unload_selection_on_delete_key(ui);
+        if !self.shutdown.has_begun() {
+            self.load_files_from_dialog_drops_and_paste(ui);
+            self.unload_selection_on_delete_key(ui);
+        }
         self.show_top_menu_bar(ui);
         self.forward_legend_hover_to_map_highlight();
         // `App::ui` copies the names out of the cache. The panels and panes
@@ -544,6 +550,9 @@ impl App {
                 resizable: true,
             }
             .show_ui(ui.ctx(), &mut is_open, Some(&mut pending_rect), |ui| {
+                if self.shutdown.has_begun() {
+                    ui.disable();
+                }
                 let mut refmut = self.shared.borrow_mut();
                 let s = &mut *refmut;
                 let loaded_files = s.loaded_files.view();

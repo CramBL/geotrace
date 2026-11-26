@@ -119,7 +119,12 @@ fn stored_layout(loaded: &LoadedFiles) -> StoredLayoutRevision {
 fn pending_hidden_tracks(tree: &mut TreeState) -> Vec<(DatabaseRef, BTreeSet<usize>)> {
     tree.take_observed_hidden_tracks_to_store()
         .into_iter()
-        .map(|(layout, tracks)| (layout.recording().clone(), tracks))
+        .map(|write| {
+            if let Some(receipt) = write.receipt {
+                receipt.settle(false);
+            }
+            (write.layout.recording().clone(), write.hidden)
+        })
         .collect()
 }
 
@@ -625,8 +630,21 @@ fn resegmenting_a_recording_stores_it_without_a_hidden_track() {
     assert_eq!(tree.hidden_track_numbers(&db_ref()), Some(&BTreeSet::new()));
 }
 
-#[test]
-fn resegmenting_an_expired_layout_preserves_visibility_for_the_current_layout() {
+enum DisplacedVisibility {
+    AwaitingBaseline,
+    ExpiredBeforeSubmission,
+    Queued { layout_expired: bool },
+}
+
+#[rstest]
+#[case::observed_clear(DisplacedVisibility::ExpiredBeforeSubmission, true)]
+#[case::checkbox_awaiting_a_baseline(DisplacedVisibility::AwaitingBaseline, true)]
+#[case::queued_write_expires(DisplacedVisibility::Queued { layout_expired: true }, true)]
+#[case::queued_write_completes(DisplacedVisibility::Queued { layout_expired: false }, false)]
+fn a_replacement_layout_preserves_its_visibility_and_retires_the_old_store(
+    #[case] visibility: DisplacedVisibility,
+    #[case] expects_unresolved_store: bool,
+) {
     let recording = db_ref();
     let fixture = StoredTrackTableFixture::new(
         &recording,
@@ -637,41 +655,73 @@ fn resegmenting_an_expired_layout_preserves_visibility_for_the_current_layout() 
         }],
     );
     let database = ReadOnlyDatabase::open_existing_read_only(&fixture.path()).unwrap();
-    let (expired, current) = {
-        let history_access = HistoryAccess::lock();
-        let expired = history_access
-            .read_track_snapshot(&database, &recording)
-            .unwrap();
-        history_access
-            .invalidate_track_snapshots(&database, &recording)
-            .unwrap();
-        let current = history_access
-            .read_track_snapshot(&database, &recording)
-            .unwrap();
-        (expired, current)
-    };
-    assert!(!expired.is_current());
-    assert!(current.is_current());
-
+    let predecessor = HistoryAccess::lock()
+        .read_track_snapshot(&database, &recording)
+        .unwrap();
+    let expired_layout = predecessor.layout().clone();
     let mut loaded = LoadedFiles::new();
     let history = FileHistory::recording(
         recording.identity.clone(),
         RecordingMeta::default(),
-        Some(recording),
+        Some(recording.clone()),
     )
-    .with_track_snapshot(Some(expired));
+    .with_track_snapshot(Some(predecessor));
     loaded.push(make_loaded_file("ride.gtd".to_owned(), &[1]), history);
     let mut tree = TreeState::new();
     tree.sync_from_loaded_files(loaded.view());
+    assert!(tree.discard_unresolved_visibility_writes().is_empty());
+    if matches!(visibility, DisplacedVisibility::AwaitingBaseline) {
+        tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+    } else {
+        tree.apply_stored_hidden_tracks(expired_layout.clone(), BTreeSet::from([1]));
+    }
+    let queued = if let DisplacedVisibility::Queued { layout_expired } = visibility {
+        tree.reset_for_resegmented_files(loaded.view());
+        let [write] = tree
+            .take_observed_hidden_tracks_to_store()
+            .try_into()
+            .unwrap();
+        Some((write.receipt.unwrap(), layout_expired))
+    } else {
+        None
+    };
+
+    let current = {
+        let history_access = HistoryAccess::lock();
+        history_access
+            .invalidate_track_snapshots(&database, &recording)
+            .unwrap();
+        history_access
+            .read_track_snapshot(&database, &recording)
+            .unwrap()
+    };
+    assert!(!expired_layout.is_current());
+    assert!(current.is_current());
+    if matches!(visibility, DisplacedVisibility::ExpiredBeforeSubmission) {
+        tree.reset_for_resegmented_files(loaded.view());
+    }
+    assert!(tree.take_observed_hidden_tracks_to_store().is_empty());
+
     tree.apply_stored_hidden_tracks(current.layout().clone(), BTreeSet::from([1]));
-
+    if let Some((receipt, layout_expired)) = queued {
+        receipt.settle(layout_expired);
+    }
+    let unresolved = tree.discard_unresolved_visibility_writes();
+    if expects_unresolved_store {
+        let [displaced] = unresolved.as_slice() else {
+            panic!("Expected one displaced visibility store");
+        };
+        assert!(displaced.same_observation(&expired_layout));
+    } else {
+        assert!(unresolved.is_empty());
+    }
     tree.reset_for_resegmented_files(loaded.view());
-
     assert_eq!(
         tree.hidden_track_numbers_for_layout(current.layout()),
         Some(&BTreeSet::from([1]))
     );
     assert!(tree.take_observed_hidden_tracks_to_store().is_empty());
+    assert!(tree.discard_unresolved_visibility_writes().is_empty());
 }
 
 #[test]

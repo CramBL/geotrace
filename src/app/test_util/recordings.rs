@@ -280,7 +280,11 @@ pub fn next_visibility_response(harness: &mut Harness<'_, App>) -> Response {
     loop {
         let mut visibility = None;
         for response in harness.state().history.poll() {
-            if matches!(response, Response::RecordingUiStateLoaded(_)) {
+            if matches!(
+                response,
+                Response::RecordingUiStateLoaded(_)
+                    | Response::RecordingUiStateVersionUnsupported { .. }
+            ) {
                 visibility = Some(response);
             } else {
                 harness.state_mut().handle_history_response(response);

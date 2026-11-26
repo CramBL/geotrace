@@ -286,10 +286,11 @@ fn a_history_open_uses_the_current_stored_settings(#[case] decision: HistoryDeci
         };
         assert_eq!(old_state, &hidden);
         assert!(!old_layout.is_current());
-        harness
-            .state()
-            .history
-            .store_recording_ui_state(old_layout.clone(), old_state.clone());
+        harness.state().history.store_recording_ui_state(
+            old_layout.clone(),
+            old_state.clone(),
+            None,
+        );
         harness
             .state_mut()
             .handle_history_response(old_visibility_read);

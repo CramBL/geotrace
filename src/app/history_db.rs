@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 
 use egui::Context;
@@ -25,6 +25,7 @@ use gt_log_view::{
     LogSaveReceipt, LogSaveRequest,
 };
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
+use gt_side_panel::VisibilityStoreReceipt;
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryAccess, HistoryDatabase, HistoryEntries,
     HistoryOpenSelection, HistoryRenameOutcome, IdentityRename, LogAttachmentEntry,
@@ -32,7 +33,7 @@ use gt_store::{
     LogContentHash, LogToAttach, PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _,
     ReadOnlyRecordings, RecordingUiState, Recordings, RecordingsHandle, StoredLayoutRevision,
     StoredLogSettings, StoredRecording, StoredTrackSnapshot, StoredTrackSnapshotUpdate,
-    StoredTrackTable, TrackRange, TrackState, UiStateVersionReporter,
+    StoredTrackTable, TrackRange, TrackState, UiStateVersionReporter, UiStateVersionTooNew,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -177,10 +178,17 @@ pub enum DbOp {
 /// A unit of work for the worker thread.
 enum Request {
     Read(ReadRequest),
+    ShutdownBarrier(HistoryShutdownBarrier),
     Write {
         request: WriteRequest,
         admission: Option<PendingWriteGuard>,
     },
+}
+
+#[derive(Clone, Copy)]
+pub enum HistoryShutdownBarrier {
+    ExistingRequests,
+    VisibilityReads,
 }
 
 /// A request served from the read methods, which [`RecordingsHandle::read`]
@@ -292,8 +300,104 @@ enum WriteRequest {
 }
 
 enum RecordingUiStateTarget {
-    Observed(StoredLayoutRevision),
+    Observed {
+        layout: StoredLayoutRevision,
+        admission: VisibilityWriteAdmission,
+        receipt: Option<VisibilityStoreReceipt>,
+    },
     SettingsFile(DatabaseRef),
+}
+
+#[derive(Debug)]
+pub enum RecordingUiStateError {
+    Database(DbError),
+    NewerVersion(UiStateVersionTooNew),
+}
+
+impl RecordingUiStateError {
+    pub(super) fn report_newer_visibility_write_failure(&self) {
+        if let Self::NewerVersion(version) = self {
+            log::error!(
+                "Could not save track visibility for {}: UI state version {} is newer than this build",
+                version.db_ref,
+                version.found,
+            );
+        }
+    }
+}
+
+impl RecordingUiStateTarget {
+    fn store(
+        self,
+        db: &mut Recordings,
+        ui_state: &RecordingUiState,
+        ui_state_versions: &UiStateVersionReporter,
+    ) -> Response {
+        let access = HistoryAccess::lock();
+        let result = match self {
+            Self::Observed {
+                layout,
+                admission,
+                receipt,
+            } => {
+                let write = access
+                    .verify_layout_revision(db, &layout)
+                    .map_err(RecordingUiStateError::Database)
+                    .and_then(|()| {
+                        self::with_ui_state_version_check(ui_state_versions, |versions| {
+                            db.set_recording_ui_state(layout.recording(), ui_state, versions)
+                        })
+                    });
+                if let Err(error) = &write
+                    && receipt.is_some()
+                {
+                    error.report_newer_visibility_write_failure();
+                }
+                let expired = matches!(
+                    write,
+                    Err(RecordingUiStateError::Database(
+                        DbError::StoredTrackLayoutChanged
+                    ))
+                );
+                let during_shutdown = matches!(admission, VisibilityWriteAdmission::Shutdown);
+                if expired && during_shutdown {
+                    log::error!(
+                        "Could not save track visibility for {}: the stored layout changed",
+                        layout.recording()
+                    );
+                }
+                if let Some(receipt) = receipt {
+                    receipt.settle(expired && !during_shutdown);
+                }
+                write
+            }
+            Self::SettingsFile(recording) => {
+                self::with_ui_state_version_check(ui_state_versions, |versions| {
+                    db.set_recording_ui_state(&recording, ui_state, versions)
+                })
+            }
+        };
+        if let Err(RecordingUiStateError::Database(error)) = &result
+            && !matches!(error, DbError::StoredTrackLayoutChanged)
+        {
+            log::warn!("Storing the display settings of a recording failed: {error}");
+        }
+        Response::RecordingUiStateStored(result)
+    }
+}
+
+// Both backends report newer UI state separately from their operation result.
+fn with_ui_state_version_check<T>(
+    session_versions: &UiStateVersionReporter,
+    operation: impl FnOnce(&UiStateVersionReporter) -> Result<T, DbError>,
+) -> Result<T, RecordingUiStateError> {
+    let versions = UiStateVersionReporter::default();
+    let value = operation(&versions).map_err(RecordingUiStateError::Database)?;
+    if let Some(version) = versions.versions_too_new().into_iter().next() {
+        session_versions.report_too_new(&version.db_ref, version.found);
+        return Err(RecordingUiStateError::NewerVersion(version));
+    }
+    Ok(value)
 }
 
 impl WriteRequest {
@@ -350,7 +454,7 @@ pub struct ExistingLogAttachment {
 pub struct OpenedRecording {
     pub stored: StoredRecording,
     pub track_snapshot: StoredTrackSnapshot,
-    pub ui_state: Option<Result<RecordingUiState, DbError>>,
+    pub ui_state: Option<Result<RecordingUiState, RecordingUiStateError>>,
     pub matches_reuse_payload: bool,
 }
 
@@ -416,11 +520,16 @@ pub enum Response {
     RecordingUiStateLoaded(Result<(StoredLayoutRevision, RecordingUiState), DbError>),
     /// Outcome of a UI state store. The app logs a failure: the hidden tracks
     /// the session shows stay as they are.
-    RecordingUiStateStored(Result<(), DbError>),
+    RecordingUiStateStored(Result<(), RecordingUiStateError>),
+    RecordingUiStateVersionUnsupported {
+        layout: StoredLayoutRevision,
+        version: UiStateVersionTooNew,
+    },
     /// Which of the recordings that arrived from disk the database already
     /// holds.
     RecordingsFromDiskScreened(ScreenedRecordings),
     SessionRecordingRestored(Option<Box<SessionRestoration>>),
+    ShutdownBarrier(HistoryShutdownBarrier),
     /// A recording's stored snap runs, `None` when it has no stored runs.
     SnapRunsLoaded {
         db_ref: DatabaseRef,
@@ -449,6 +558,17 @@ impl Response {
             Self::AutoPruned(Ok(AutoPruneOutcome::DeleteAttempt(_))) | Self::Mutated { .. }
         )
     }
+}
+
+pub(super) struct HistoryResponses {
+    pub completed: Vec<Response>,
+    pub disconnected: bool,
+}
+
+#[derive(Clone, Copy)]
+enum VisibilityWriteAdmission {
+    Normal,
+    Shutdown,
 }
 
 /// Owns the history-database worker thread and the request and response
@@ -760,27 +880,28 @@ impl HistoryWorker {
         &self,
         observation: StoredLayoutRevision,
         ui_state: RecordingUiState,
+        receipt: Option<VisibilityStoreReceipt>,
     ) {
-        if !self.available() {
-            return;
-        }
-        let request = WriteRequest::StoreRecordingUiState {
-            target: RecordingUiStateTarget::Observed(observation),
+        self.enqueue_recording_ui_state(
+            observation,
             ui_state,
-        };
-        let label = request.database_write_label();
-        let admission = self
-            .writable_registry
-            .as_ref()
-            .ok_or(WriteRejection::ReadOnlySession)
-            .and_then(|registry| registry.try_begin(label, WriteKind::RecordingDatabase));
-        match admission {
-            Ok(write) => self.send(Request::Write {
-                request,
-                admission: Some(write),
-            }),
-            Err(rejection) => log::debug!("Did not run {label:?}: {rejection}"),
-        }
+            receipt,
+            VisibilityWriteAdmission::Normal,
+        );
+    }
+
+    pub(super) fn store_reconciled_ui_state_during_shutdown(
+        &self,
+        observation: StoredLayoutRevision,
+        ui_state: RecordingUiState,
+        receipt: Option<VisibilityStoreReceipt>,
+    ) {
+        self.enqueue_recording_ui_state(
+            observation,
+            ui_state,
+            receipt,
+            VisibilityWriteAdmission::Shutdown,
+        );
     }
 
     pub fn migrate_recording_ui_state(&self, recording: DatabaseRef, ui_state: RecordingUiState) {
@@ -859,16 +980,39 @@ impl HistoryWorker {
 
     /// Drain every response that has arrived since the last call.
     pub fn poll(&self) -> Vec<Response> {
-        let mut out = Vec::new();
-        while let Ok(resp) = self.resp_rx.try_recv() {
-            #[cfg(test)]
-            if matches!(resp, Response::SessionRecordingRestored(_)) {
-                self.session_restore_count
-                    .set(self.session_restore_count.get().saturating_sub(1));
+        self.poll_responses().completed
+    }
+
+    pub(super) fn poll_responses(&self) -> HistoryResponses {
+        let mut completed = Vec::new();
+        loop {
+            match self.resp_rx.try_recv() {
+                Ok(response) => {
+                    #[cfg(test)]
+                    if matches!(response, Response::SessionRecordingRestored(_)) {
+                        self.session_restore_count
+                            .set(self.session_restore_count.get().saturating_sub(1));
+                    }
+                    completed.push(response);
+                }
+                Err(error) => {
+                    return HistoryResponses {
+                        completed,
+                        disconnected: error == TryRecvError::Disconnected,
+                    };
+                }
             }
-            out.push(resp);
         }
-        out
+    }
+
+    pub(super) fn has_writable_database(&self) -> bool {
+        self.available() && self.writable_registry.is_some()
+    }
+
+    pub(super) fn send_shutdown_barrier(&self, barrier: HistoryShutdownBarrier) -> bool {
+        self.req_tx
+            .as_ref()
+            .is_some_and(|tx| tx.send(Request::ShutdownBarrier(barrier)).is_ok())
     }
 
     /// End the worker and wait for the request it is on to finish. A worker
@@ -908,6 +1052,65 @@ impl HistoryWorker {
         self.req_tx = None;
         if let Some(handle) = self.handle.take() {
             handle.join().ok();
+        }
+    }
+
+    fn enqueue_recording_ui_state(
+        &self,
+        observation: StoredLayoutRevision,
+        ui_state: RecordingUiState,
+        receipt: Option<VisibilityStoreReceipt>,
+        admission: VisibilityWriteAdmission,
+    ) {
+        let Some(sender) = &self.req_tx else {
+            if let Some(receipt) = receipt {
+                receipt.settle(false);
+            }
+            return;
+        };
+        let request = WriteRequest::StoreRecordingUiState {
+            target: RecordingUiStateTarget::Observed {
+                layout: observation,
+                admission,
+                receipt: receipt.clone(),
+            },
+            ui_state,
+        };
+        let label = request.database_write_label();
+        let write = self
+            .writable_registry
+            .as_ref()
+            .ok_or(WriteRejection::ReadOnlySession)
+            .and_then(|registry| match admission {
+                VisibilityWriteAdmission::Normal => {
+                    registry.try_begin(label, WriteKind::RecordingDatabase)
+                }
+                VisibilityWriteAdmission::Shutdown => registry
+                    .try_begin_shutdown_write(label, WriteKind::RecordingDatabase)
+                    .ok_or(WriteRejection::ReadOnlySession),
+            });
+        let queued = match write {
+            Ok(write) => {
+                if sender
+                    .send(Request::Write {
+                        request,
+                        admission: Some(write),
+                    })
+                    .is_err()
+                {
+                    log::error!("Could not run {label:?}: the History worker stopped");
+                    false
+                } else {
+                    true
+                }
+            }
+            Err(rejection) => {
+                log::debug!("Did not run {label:?}: {rejection}");
+                false
+            }
+        };
+        if !queued && let Some(receipt) = receipt {
+            receipt.settle(false);
         }
     }
 
@@ -960,7 +1163,8 @@ fn worker_loop(
                     ui_state_versions,
                 )
             }
-            Request::Read(_) | Request::Write { .. } => continue,
+            Request::ShutdownBarrier(barrier) if ui_connected => Response::ShutdownBarrier(barrier),
+            Request::Read(_) | Request::ShutdownBarrier(_) | Request::Write { .. } => continue,
         };
         if resp_tx.send(resp).is_ok() {
             ctx.request_repaint();
@@ -1028,7 +1232,11 @@ fn handle_read_request(
                     }
                 }
                 let ui_state = (checked.is_none() || matches!(history, RecordingsHandle::Owner(_)))
-                    .then(|| db.recording_ui_state(&db_ref, ui_state_versions));
+                    .then(|| {
+                        self::with_ui_state_version_check(ui_state_versions, |versions| {
+                            db.recording_ui_state(&db_ref, versions)
+                        })
+                    });
                 drop(access);
                 let matches_reuse_payload = checked
                     .and_then(|read| read.reuse_bytes)
@@ -1069,13 +1277,21 @@ fn handle_read_request(
         }
         ReadRequest::LoadRecordingUiState(db_ref) => {
             let access = HistoryAccess::lock();
-            let observed = access
-                .read_track_snapshot(db, &db_ref)
-                .and_then(|observation| {
-                    db.recording_ui_state(&db_ref, ui_state_versions)
-                        .map(|ui_state| (observation.layout().clone(), ui_state))
-                });
-            Response::RecordingUiStateLoaded(observed)
+            let layout = match access.read_track_snapshot(db, &db_ref) {
+                Ok(observation) => observation.layout().clone(),
+                Err(error) => return Response::RecordingUiStateLoaded(Err(error)),
+            };
+            match self::with_ui_state_version_check(ui_state_versions, |versions| {
+                db.recording_ui_state(&db_ref, versions)
+            }) {
+                Ok(state) => Response::RecordingUiStateLoaded(Ok((layout, state))),
+                Err(RecordingUiStateError::Database(error)) => {
+                    Response::RecordingUiStateLoaded(Err(error))
+                }
+                Err(RecordingUiStateError::NewerVersion(version)) => {
+                    Response::RecordingUiStateVersionUnsupported { layout, version }
+                }
+            }
         }
         ReadRequest::LoadAttachedLogs(db_ref) => {
             let attachments = self::read_attached_logs(db, &db_ref);
@@ -1227,29 +1443,7 @@ fn handle_write_request(
             Response::SnapRunsStored(db.set_snap_blob(&db_ref, &blob))
         }
         WriteRequest::StoreRecordingUiState { target, ui_state } => {
-            let access = HistoryAccess::lock();
-            let result = match &target {
-                RecordingUiStateTarget::Observed(observation) if !observation.is_current() => {
-                    Ok(())
-                }
-                RecordingUiStateTarget::Observed(observation) => {
-                    let recording = observation.recording();
-                    match access.verify_layout_revision(db, observation) {
-                        Ok(()) => {
-                            db.set_recording_ui_state(recording, &ui_state, ui_state_versions)
-                        }
-                        Err(DbError::StoredTrackLayoutChanged) => Ok(()),
-                        Err(error) => Err(error),
-                    }
-                }
-                RecordingUiStateTarget::SettingsFile(recording) => {
-                    db.set_recording_ui_state(recording, &ui_state, ui_state_versions)
-                }
-            };
-            if let Err(error) = &result {
-                log::warn!("Storing the display settings of a recording failed: {error}");
-            }
-            Response::RecordingUiStateStored(result)
+            target.store(db, &ui_state, ui_state_versions)
         }
         WriteRequest::SaveLog(save) => {
             let result = RecordingLogSave {
@@ -1820,7 +2014,7 @@ mod tests {
 
         let hidden = RecordingUiState::with_hidden_track_numbers([2]);
         let snapshot = recordings::worker_track_snapshot(&worker, &second);
-        worker.store_recording_ui_state(snapshot.layout().clone(), hidden.clone());
+        worker.store_recording_ui_state(snapshot.layout().clone(), hidden.clone(), None);
         assert!(matches!(
             recordings::next_response(&worker),
             Response::RecordingUiStateStored(Ok(()))

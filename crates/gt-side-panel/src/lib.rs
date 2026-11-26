@@ -10,6 +10,7 @@ pub use render::{
 pub use tree::{
     CheckState, FileNode, NodeKey, ShelveConfirmState, TrackNode, TreeState, VisibleTracksInFile,
 };
+pub use visibility_store::{ObservedVisibilityWrite, VisibilityStoreReceipt};
 
 pub mod filter;
 mod render;
@@ -17,4 +18,5 @@ mod render;
 pub mod test_util;
 mod track_columns;
 pub mod tree;
+mod visibility_store;
 pub mod widgets;

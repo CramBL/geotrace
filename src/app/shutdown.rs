@@ -7,10 +7,15 @@
 use std::time::{Duration, Instant};
 use std::{mem, process};
 
-use egui::{CentralPanel, Label, Panel, ProgressBar, RichText, ScrollArea, Sides};
+use egui::{Button, CentralPanel, Label, Panel, ProgressBar, RichText, ScrollArea, Sides};
 use egui_phosphor::regular::CHECK as ICON_CHECK;
-use gt_pending_writes::{PendingWriteStatus, PendingWrites, PendingWritesSnapshot, WriteKind};
+use gt_pending_writes::{
+    PendingWriteGuard, PendingWriteStatus, PendingWrites, PendingWritesSnapshot, WriteKind,
+};
 
+use super::history_db::{
+    HistoryResponses, HistoryShutdownBarrier, HistoryWorker, RecordingUiStateError, Response,
+};
 use super::modals::{
     self, CountdownToTheClose, ForceQuitChoice, ForceQuitPromptContents, PointerOverTheDialog,
 };
@@ -34,7 +39,7 @@ pub(in crate::app) enum FrameContents {
 }
 
 /// How far the app has got in closing.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(in crate::app) struct ShutdownState {
     begun_at: Option<Instant>,
     /// Set on the frame the shutdown window first appears, and never unset:
@@ -44,6 +49,7 @@ pub(in crate::app) struct ShutdownState {
     /// intercept.
     close_allowed: bool,
     force_quit_prompt: ForceQuitPrompt,
+    history_drain: Option<HistoryShutdown>,
 }
 
 impl ShutdownState {
@@ -99,6 +105,83 @@ impl ShutdownState {
     pub(in crate::app) fn elapsed_since_begin(&self, now: Instant) -> Option<Duration> {
         self.begun_at
             .map(|begun_at| now.saturating_duration_since(begun_at))
+    }
+}
+
+struct HistoryShutdown {
+    worker: HistoryWorker,
+    write: PendingWriteGuard,
+}
+
+enum HistoryShutdownProgress {
+    Draining,
+    Failed,
+    ReadyToJoin,
+}
+
+impl HistoryShutdown {
+    fn reconcile_responses(&self, app: &mut App) -> HistoryShutdownProgress {
+        let HistoryResponses {
+            completed,
+            disconnected,
+        } = self.worker.poll_responses();
+        for response in completed {
+            match response {
+                Response::Mutated { op, result } => {
+                    if let Some(layouts) = app.apply_mutation_outcome(&op, &result) {
+                        for layout in layouts {
+                            self.worker
+                                .load_recording_ui_state(layout.recording().clone());
+                        }
+                    }
+                }
+                Response::RecordingUiStateLoaded(result) => match result {
+                    Ok((layout, ui_state)) => {
+                        app.apply_the_ui_state_stored_with_a_recording(layout, Ok(ui_state));
+                    }
+                    Err(error) => {
+                        log::warn!("Reading the display settings of a recording failed: {error}")
+                    }
+                },
+                Response::RecordingUiStateVersionUnsupported { layout, version } => {
+                    app.apply_the_ui_state_stored_with_a_recording(
+                        layout,
+                        Err(RecordingUiStateError::NewerVersion(version)),
+                    );
+                }
+                Response::ShutdownBarrier(HistoryShutdownBarrier::ExistingRequests) => {
+                    // The visibility barrier follows the reads requested while adopting mutations.
+                    self.write.set_stage("Reading saved track visibility");
+                    if !self
+                        .worker
+                        .send_shutdown_barrier(HistoryShutdownBarrier::VisibilityReads)
+                    {
+                        log::error!(
+                            "The History worker stopped before the remaining track visibility could be read"
+                        );
+                        return HistoryShutdownProgress::Failed;
+                    }
+                }
+                Response::ShutdownBarrier(HistoryShutdownBarrier::VisibilityReads) => {
+                    return HistoryShutdownProgress::ReadyToJoin;
+                }
+                _ => {}
+            }
+        }
+        if disconnected {
+            log::error!(
+                "The History worker stopped before track visibility reconciliation finished"
+            );
+            return HistoryShutdownProgress::Failed;
+        }
+        HistoryShutdownProgress::Draining
+    }
+
+    fn store_visibility(&self, app: &App) {
+        for (layout, ui_state, receipt) in app.take_recording_ui_state_writes() {
+            self.worker
+                .store_reconciled_ui_state_during_shutdown(layout, ui_state, receipt);
+        }
     }
 }
 
@@ -195,14 +278,20 @@ impl App {
         }
         if ctx.input(|i| i.viewport().close_requested()) && !self.shutdown.close_allowed() {
             self.begin_shutdown();
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
     }
 
-    pub(super) fn shutdown_ui(&mut self, ui: &mut egui::Ui) -> FrameContents {
-        if ui.ctx().input(|i| i.viewport().close_requested()) && !self.shutdown.close_allowed() {
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+    pub(super) fn drive_shutdown(&mut self, ctx: &egui::Context) {
+        if !self.shutdown.has_begun() || self.shutdown.close_allowed() {
+            return;
         }
+        self.poll_history_shutdown();
+        self.close_window_when_writes_finish(ctx);
+        ctx.request_repaint_after(SHUTDOWN_REPAINT_INTERVAL);
+    }
+
+    pub(super) fn shutdown_ui(&mut self, ui: &mut egui::Ui) -> FrameContents {
         if !self.shutdown.has_begun() {
             return FrameContents::NormalUi;
         }
@@ -226,14 +315,7 @@ impl App {
                 self.exit_leaving_writes_unfinished("Force quit");
             }
         }
-        if self
-            .shutdown
-            .close_may_proceed(self.pending_writes.is_idle())
-        {
-            self.shutdown.allow_close();
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        ui.ctx().request_repaint_after(SHUTDOWN_REPAINT_INTERVAL);
+        self.close_window_when_writes_finish(ui.ctx());
         contents
     }
 
@@ -255,11 +337,13 @@ impl App {
                     );
                 },
                 |ui| {
+                    let history_can_finish_in_background = self.shutdown.history_drain.is_none();
                     if ui
-                        .button("Run in background")
+                        .add_enabled(history_can_finish_in_background, Button::new("Run in background"))
                         .on_hover_text(
                             "Closes the window: GeoTrace keeps finishing the work above and exits when it is done",
                         )
+                        .on_disabled_hover_text("Wait for GeoTrace to apply the remaining History changes")
                         .clicked()
                     {
                         self.shutdown.allow_close();
@@ -330,11 +414,14 @@ impl App {
         }
         self.session_bridge = None;
         self.session_query = Default::default();
+        let history_write = self
+            .pending_writes
+            .try_begin_shutdown_write(HISTORY_SHUTDOWN_LABEL, WriteKind::RecordingDatabase);
         self.store_the_hidden_tracks_the_user_changed();
         self.pending_writes.begin_shutdown();
+        self.start_history_shutdown(history_write);
         self.snap.stop_starting_runs();
         self.flush_settings_during_shutdown();
-        self.shut_down_history_worker_off_the_gui_thread();
         self.shutdown.begin(Instant::now());
         self.instance_lock.mark_shutting_down(&self.pending_writes);
     }
@@ -345,12 +432,55 @@ impl App {
             || self.ctx.input(|input| input.viewport().close_requested())
     }
 
-    /// Hands the app's worker to a thread of its own, which joins its
-    /// `history-db` thread while the GUI thread carries on painting. The app
-    /// is left with a disabled worker, which has nothing to join.
-    fn shut_down_history_worker_off_the_gui_thread(&mut self) {
+    fn close_window_when_writes_finish(&mut self, ctx: &egui::Context) {
+        if self
+            .shutdown
+            .close_may_proceed(self.pending_writes.is_idle())
+        {
+            self.shutdown.allow_close();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn poll_history_shutdown(&mut self) {
+        let Some(drain) = self.shutdown.history_drain.take() else {
+            return;
+        };
+        let progress = drain.reconcile_responses(self);
+        if matches!(progress, HistoryShutdownProgress::Draining) {
+            self.shutdown.history_drain = Some(drain);
+            return;
+        }
+        if matches!(progress, HistoryShutdownProgress::ReadyToJoin) {
+            drain.store_visibility(self);
+        }
+        self.report_unresolved_visibility_writes();
+        drain.write.set_stage("Closing the recording database");
+        drain
+            .worker
+            .shutdown_on_a_thread_of_its_own(Some(drain.write));
+    }
+
+    fn start_history_shutdown(&mut self, write: Option<PendingWriteGuard>) {
         let history = mem::replace(&mut self.history, history_db::HistoryWorker::disabled());
-        self.end_history_worker_off_the_gui_thread(history);
+        match write {
+            Some(write) if history.has_writable_database() => {
+                if history.send_shutdown_barrier(HistoryShutdownBarrier::ExistingRequests) {
+                    write.set_stage("Applying completed History changes");
+                    self.shutdown.history_drain = Some(HistoryShutdown {
+                        worker: history,
+                        write,
+                    });
+                } else {
+                    log::error!(
+                        "The History worker stopped before shutdown could reconcile track visibility"
+                    );
+                    self.report_unresolved_visibility_writes();
+                    history.shutdown_on_a_thread_of_its_own(Some(write));
+                }
+            }
+            write => history.shutdown_on_a_thread_of_its_own(write),
+        }
     }
 
     /// Closes `history`'s database on a thread of its own, which the close
