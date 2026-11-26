@@ -311,6 +311,11 @@ impl QueryWindow {
         self.tab = QueryTab::Results;
     }
 
+    pub(super) fn invalidate_editor_assistance(&mut self) {
+        self.autocomplete = Autocomplete::default();
+        self.hover_doc_span = None;
+    }
+
     pub(super) fn show(
         &mut self,
         ctx: &egui::Context,

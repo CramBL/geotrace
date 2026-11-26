@@ -47,7 +47,7 @@ pub use session::retained::{
 };
 pub use session::{
     CheckRefresh, CheckedQueryText, MIXED_CHANNEL_MESSAGE, QueryProgress, QuerySession,
-    QueryTextCheck,
+    QueryTextCheck, RunCompletion,
 };
 
 mod check;

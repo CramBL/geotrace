@@ -70,6 +70,13 @@ pub struct QueryProgress {
     pub track_total: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunCompletion {
+    Cancelled,
+    Completed,
+    Unmatched,
+}
+
 /// A run in flight somewhere else: what it takes to watch, cancel, and later
 /// receive it. The caller transports the outcome back.
 struct InFlightRun {
@@ -143,6 +150,21 @@ impl QuerySession {
     /// example. Never runs - running stays an explicit step.
     pub fn set_text(&mut self, text: String) {
         self.text = text;
+    }
+
+    pub fn install_checked_text(
+        &mut self,
+        CheckedQueryText {
+            text,
+            schema,
+            chunks,
+        }: CheckedQueryText,
+    ) {
+        self.checked_text = text.clone();
+        self.text = text;
+        self.checked_schema = schema;
+        self.checked_dependencies = RunDependencies::of(&chunks);
+        self.chunks = chunks;
     }
 
     /// Re-check the text against `schema` when either changed since the last
@@ -222,15 +244,18 @@ impl QuerySession {
 
     /// Take in the outcome of the run in flight: its results become the current
     /// ones, or - when it was cancelled - the previous results stay untouched.
-    pub fn finish_run(&mut self, outcome: RunOutcome) {
+    pub fn finish_run(&mut self, outcome: RunOutcome) -> RunCompletion {
         let Some(in_flight) = self
             .in_flight
             .take_if(|run| outcome.belongs_to(&run.handle))
         else {
-            return;
+            return RunCompletion::Unmatched;
         };
+        if in_flight.handle.cancelled() {
+            return RunCompletion::Cancelled;
+        }
         let Some((product, track_data)) = outcome.into_product() else {
-            return;
+            return RunCompletion::Cancelled;
         };
         let mut results = match product {
             RunProduct::Points(run) => RunResults::Points(PointsResults::project(run, track_data)),
@@ -242,6 +267,7 @@ impl QuerySession {
             results,
             fingerprint: in_flight.fingerprint,
         });
+        RunCompletion::Completed
     }
 
     /// Forget the run in flight without results, for a driver that lost it.
@@ -306,8 +332,12 @@ impl QuerySession {
     /// Drop the last run's results so the map returns to normal, abandoning any
     /// run still in flight.
     pub fn clear_results(&mut self) {
-        self.completed = None;
+        self.clear_completed_results();
         self.in_flight = None;
+    }
+
+    pub fn clear_completed_results(&mut self) {
+        self.completed = None;
     }
 }
 
@@ -318,21 +348,10 @@ impl Default for QuerySession {
 }
 
 impl From<CheckedQueryText> for QuerySession {
-    fn from(
-        CheckedQueryText {
-            text,
-            schema,
-            chunks,
-        }: CheckedQueryText,
-    ) -> Self {
-        Self {
-            checked_text: text.clone(),
-            text,
-            checked_schema: schema,
-            checked_dependencies: RunDependencies::of(&chunks),
-            chunks,
-            ..Self::new()
-        }
+    fn from(checked: CheckedQueryText) -> Self {
+        let mut session = Self::new();
+        session.install_checked_text(checked);
+        session
     }
 }
 

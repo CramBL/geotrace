@@ -10,6 +10,7 @@ use gt_store::{SolarStore, Store};
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use rstest::rstest;
 
+use crate::app::settings_autosave::SettingsAutosaver;
 use crate::app::snap::{SnapActivity, SnapPriority, SnapScheduler};
 use crate::app::solar::TEST_KP_WORKER_NAME_PREFIX;
 use crate::app::test_util;
@@ -25,8 +26,15 @@ enum QueryInput {
 #[test]
 fn velocity_results_remain_current_after_snap_completion_while_minimized() {
     let mut harness = ui_tests::app_with_a_recording();
-    let job = session::start_query(&mut harness, "points | table velocity");
+    let text = "points | table velocity";
+    let app = harness.state_mut();
+    app.config = SettingsAutosaver::new(app.collect_snapshot());
+    assert_eq!(app.config.time_until_flush(), None);
+    let job = session::start_query(&mut harness, text);
+    assert!(harness.state().config.time_until_flush().is_some());
     self::poll_minimized_until_query_finishes(&mut harness);
+    assert!(harness.state().query_window.open);
+    assert_eq!(harness.state().query_window.history()[0].text, text);
     let page = session::first_query_match_request(job);
     let before = session::results(&mut harness, page);
     let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
@@ -127,7 +135,7 @@ fn a_minimized_app_uses_new_query_inputs(
 
 fn poll_minimized_until_query_finishes(harness: &mut Harness<'_, App>) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while harness.state().session_query.is_active() {
+    while harness.state().editor_query.is_active() {
         test_util::harness::step_minimized_logic(harness);
         assert!(Instant::now() < deadline, "timed out waiting for query");
         std::thread::sleep(Duration::from_millis(5));

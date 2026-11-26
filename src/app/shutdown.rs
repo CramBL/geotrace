@@ -413,7 +413,7 @@ impl App {
             return;
         }
         self.session_bridge = None;
-        self.session_query = Default::default();
+        self.editor_query.cancel();
         let history_write = self
             .pending_writes
             .try_begin_shutdown_write(HISTORY_SHUTDOWN_LABEL, WriteKind::RecordingDatabase);

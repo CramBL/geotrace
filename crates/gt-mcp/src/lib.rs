@@ -244,7 +244,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Start a background query using the current filter and enabled tracks. A busy response includes the active job ID. Poll the job with get_query_status.",
+        description = "Run a query in the desktop Query window using the current filter and enabled tracks. Poll the returned job with get_query_status. A busy response identifies the active job.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn run_query(&self, Parameters(args): Parameters<QueryText>) -> CallToolResult {

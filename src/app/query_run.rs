@@ -3,11 +3,14 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingData};
 use gt_query_run::{
-    JammingValues, QuerySession, RunDependencies, RunInputs, RunOutcome, SnapErrorValues,
+    CheckedQueryText, JammingValues, QuerySession, RunCompletion, RunDependencies, RunInputs,
+    RunOutcome, SnapErrorValues,
 };
+use gt_session_bridge::{ErrorCode, QueryJobId};
 use gt_side_panel::TreeState;
 use gt_types::Generation;
 use gt_ui_types::{GeomagneticSeries, JammingSeries, TecSeries, TrackDataVisibility};
+use uuid::Uuid;
 
 use super::snap_state::SnapErrorCache;
 use super::track_day_values::ArchivedTrackValues;
@@ -16,20 +19,106 @@ use super::{App, background_thread};
 #[derive(Default)]
 pub(super) struct BackgroundQuery {
     session: QuerySession,
+    operation: Option<QueryOperation>,
     worker: Option<Receiver<RunOutcome>>,
     last_freshness_check: Option<QueryInputsRevision>,
 }
 
+#[derive(Clone, Copy)]
+struct QueryOperation {
+    id: Uuid,
+    scope: Option<Uuid>,
+    phase: QueryPhase,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum QueryPhase {
+    Cancelled,
+    Cancelling,
+    Completed,
+    Failed,
+    Preparing(Generation<RecordingData>),
+    Running,
+    Stale,
+}
+
+impl QueryPhase {
+    fn is_active(self) -> bool {
+        matches!(self, Self::Preparing(_) | Self::Running | Self::Cancelling)
+    }
+}
+
 impl BackgroundQuery {
-    pub(super) fn with_session(session: QuerySession) -> Self {
-        Self {
-            session,
-            worker: None,
-            last_freshness_check: None,
+    pub(super) fn active_job(&mut self, scope: Uuid) -> Result<Option<QueryJobId>, ErrorCode> {
+        let Some(operation) = self
+            .operation
+            .as_mut()
+            .filter(|operation| operation.phase.is_active())
+        else {
+            return Ok(None);
+        };
+        if *operation.scope.get_or_insert(scope) != scope {
+            return Err(ErrorCode::StaleSession);
         }
+        Ok(Some(QueryJobId {
+            session: scope,
+            id: operation.id,
+        }))
     }
 
-    pub(super) fn start(&mut self, ctx: &egui::Context, inputs: RunInputs<'_>) -> bool {
+    pub(super) fn phase_for_job(
+        &self,
+        scope: Uuid,
+        job: QueryJobId,
+    ) -> Result<QueryPhase, ErrorCode> {
+        if job.session != scope {
+            return Err(ErrorCode::StaleSession);
+        }
+        self.operation
+            .filter(|operation| operation.scope == Some(scope) && operation.id == job.id)
+            .map(|operation| operation.phase)
+            .ok_or(ErrorCode::QueryJobNotFound)
+    }
+
+    pub(super) fn has_current_results(&self, job: QueryJobId, files: LoadedFilesView<'_>) -> bool {
+        self.phase_for_job(job.session, job) == Ok(QueryPhase::Completed)
+            && self.session.retained_results(files).is_ok()
+    }
+
+    pub(super) fn is_active(&self) -> bool {
+        self.operation
+            .is_some_and(|operation| operation.phase.is_active())
+    }
+
+    pub(super) fn queue(
+        &mut self,
+        scope: Uuid,
+        checked: CheckedQueryText,
+        generation: Generation<RecordingData>,
+    ) -> QueryJobId {
+        self.session.install_checked_text(checked);
+        let id = Uuid::new_v4();
+        self.operation = Some(QueryOperation {
+            id,
+            scope: Some(scope),
+            phase: QueryPhase::Preparing(generation),
+        });
+        QueryJobId { session: scope, id }
+    }
+
+    pub(super) fn start_editor(&mut self, ctx: &egui::Context, inputs: RunInputs<'_>) -> bool {
+        if self.is_active() || !self.start(ctx, inputs) {
+            return false;
+        }
+        self.operation = Some(QueryOperation {
+            id: Uuid::new_v4(),
+            scope: None,
+            phase: QueryPhase::Running,
+        });
+        true
+    }
+
+    fn start(&mut self, ctx: &egui::Context, inputs: RunInputs<'_>) -> bool {
         let Some(prepared) = self.session.start_run(inputs) else {
             return false;
         };
@@ -43,8 +132,7 @@ impl BackgroundQuery {
         true
     }
 
-    pub(super) fn update(&mut self, inputs: CapturedQueryInputs<'_>) -> bool {
-        let received = self.receive_outcome();
+    pub(super) fn refresh(&mut self, inputs: CapturedQueryInputs<'_>) {
         if let Some(dependencies) = self.session.result_dependencies()
             && self
                 .last_freshness_check
@@ -53,35 +141,62 @@ impl BackgroundQuery {
             self.session.refresh_staleness(inputs.run);
             self.last_freshness_check = Some(inputs.revision);
         }
-        received
+    }
+
+    pub(super) fn cancel(&mut self) {
+        if let Some(operation) = &mut self.operation {
+            operation.phase = match operation.phase {
+                QueryPhase::Preparing(_) => QueryPhase::Cancelled,
+                QueryPhase::Running => {
+                    self.session.cancel_run();
+                    QueryPhase::Cancelling
+                }
+                phase => phase,
+            };
+        }
     }
 
     pub(super) fn clear_results(&mut self) {
-        self.session.cancel_run();
-        self.worker = None;
-        self.session.clear_results();
+        self.cancel();
+        if self
+            .operation
+            .is_some_and(|operation| !operation.phase.is_active())
+        {
+            self.operation = None;
+        }
+        self.session.clear_completed_results();
         self.last_freshness_check = None;
     }
 
-    pub(super) fn receive_outcome(&mut self) -> bool {
+    fn poll(&mut self) -> bool {
         let Some(worker) = &self.worker else {
             return false;
         };
-        match worker.try_recv() {
-            Ok(outcome) => {
-                self.worker = None;
-                self.session.finish_run(outcome);
-                self.last_freshness_check = None;
-                true
-            }
-            Err(TryRecvError::Empty) => false,
+        let phase = match worker.try_recv() {
+            Ok(outcome) => match self.session.finish_run(outcome) {
+                RunCompletion::Completed => QueryPhase::Completed,
+                RunCompletion::Cancelled => QueryPhase::Cancelled,
+                RunCompletion::Unmatched => {
+                    log::error!("Query worker returned an outcome for a different run");
+                    self.session.abandon_run();
+                    QueryPhase::Failed
+                }
+            },
+            Err(TryRecvError::Empty) => return false,
             Err(TryRecvError::Disconnected) => {
                 log::error!("Query worker disconnected before sending an outcome");
-                self.worker = None;
                 self.session.abandon_run();
-                false
+                QueryPhase::Failed
             }
+        };
+        self.worker = None;
+        if let Some(operation) = &mut self.operation {
+            operation.phase = phase;
         }
+        if phase == QueryPhase::Completed {
+            self.last_freshness_check = None;
+        }
+        matches!(phase, QueryPhase::Completed | QueryPhase::Cancelled)
     }
 
     pub(super) fn session(&self) -> &QuerySession {
@@ -96,6 +211,60 @@ impl BackgroundQuery {
 impl Drop for BackgroundQuery {
     fn drop(&mut self) {
         self.session.cancel_run();
+    }
+}
+
+impl App {
+    pub(super) fn receive_query_completion(&mut self) {
+        if self.editor_query.poll() {
+            self.query_window.select_results_tab();
+        }
+    }
+
+    pub(super) fn prepare_session_query(&mut self, ctx: &egui::Context) {
+        let Some(QueryOperation {
+            phase: QueryPhase::Preparing(generation),
+            ..
+        }) = self.editor_query.operation
+        else {
+            return;
+        };
+        let phase = if self.shared.borrow().loaded_files.data_generation() == generation {
+            let series = QuerySeries::capture_for_query(
+                self,
+                self.editor_query.session.checked_dependencies(),
+            );
+            let shared = self.shared.borrow();
+            let inputs = series.inputs(shared.loaded_files.view(), &shared.tree, &shared.filter);
+            if inputs.is_some_and(|inputs| self.editor_query.start(ctx, inputs.run_inputs())) {
+                QueryPhase::Running
+            } else {
+                QueryPhase::Failed
+            }
+        } else {
+            QueryPhase::Stale
+        };
+        if let Some(operation) = &mut self.editor_query.operation {
+            operation.phase = phase;
+        }
+    }
+
+    pub(super) fn refresh_query_results(&mut self) -> Result<(), ErrorCode> {
+        let dependencies = {
+            let shared = self.shared.borrow();
+            let session = self.editor_query.session();
+            session.displayed_results(shared.loaded_files.view())?;
+            session
+                .result_dependencies()
+                .ok_or(ErrorCode::QueryResultsUnavailable)?
+        };
+        let series = QuerySeries::capture_for_query(self, dependencies);
+        let shared = self.shared.borrow();
+        let inputs = series
+            .inputs(shared.loaded_files.view(), &shared.tree, &shared.filter)
+            .ok_or(ErrorCode::StaleQueryResults)?;
+        self.editor_query.refresh(inputs);
+        Ok(())
     }
 }
 
@@ -232,5 +401,113 @@ impl QuerySeries {
                 filter: *filter,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use egui::accesskit::Role;
+    use egui_kittest::{Harness, kittest::Queryable as _};
+    use gt_session_bridge::{ErrorCode, QueryJobState, Request};
+    use gt_test_utils::recording_fixtures;
+    use rstest::rstest;
+
+    use super::{QueryPhase, QuerySeries};
+    use crate::app::test_util::harness::{self, TestDroppedFile};
+    use crate::app::test_util::session;
+
+    #[derive(Clone, Copy)]
+    enum RunEnd {
+        Cancel,
+        Clear,
+        Disconnect,
+    }
+
+    #[rstest]
+    #[case::cancel(RunEnd::Cancel, QueryJobState::Cancelled)]
+    #[case::clear(RunEnd::Clear, QueryJobState::Cancelled)]
+    #[case::disconnect(RunEnd::Disconnect, QueryJobState::Failed)]
+    fn a_query_job_without_new_results_cannot_page_the_previous_run(
+        #[case] end: RunEnd,
+        #[case] status: QueryJobState,
+    ) {
+        let mut harness = Harness::builder().build_eframe(harness::transient_app);
+        harness::drop_file_and_wait_for_load(
+            &mut harness,
+            TestDroppedFile::bytes(recording_fixtures::minimal_gtd_bytes(), "test.gtd"),
+        );
+        let previous = session::start_query(&mut harness, "points | draw");
+        assert!(matches!(
+            session::wait_for_query_to_stop(&mut harness, previous),
+            QueryJobState::Completed { .. }
+        ));
+        let job = session::start_query(&mut harness, "points | where velocity > 999 km/h");
+        let app = harness.state_mut();
+        let past_matches = app.editor_query.session.matches().unwrap().clone();
+        let series = QuerySeries::capture(app);
+        let prepared = {
+            let shared = app.shared.borrow();
+            let inputs = series
+                .inputs(shared.loaded_files.view(), &shared.tree, &shared.filter)
+                .unwrap();
+            app.editor_query
+                .session
+                .start_run(inputs.run_inputs())
+                .unwrap()
+        };
+        let handle = prepared.handle();
+        let outcome = prepared.execute();
+        let (send, receive) = mpsc::channel();
+        app.editor_query.operation.as_mut().unwrap().phase = QueryPhase::Running;
+        app.editor_query.worker = Some(receive);
+
+        match end {
+            RunEnd::Cancel => {
+                harness.run_steps(2);
+                harness
+                    .get_by_role_and_label(Role::Button, "Cancel")
+                    .click();
+                harness.step();
+                assert_eq!(
+                    session::query_status(&mut harness, job),
+                    QueryJobState::Cancelling
+                );
+                assert!(handle.cancelled());
+                send.send(outcome).unwrap();
+            }
+            RunEnd::Clear => {
+                harness.state_mut().editor_query.clear_results();
+                assert_eq!(
+                    session::query_status(&mut harness, job),
+                    QueryJobState::Cancelling
+                );
+                assert!(handle.cancelled());
+                send.send(outcome).unwrap();
+            }
+            RunEnd::Disconnect => drop(send),
+        }
+        harness::step_minimized_logic(&mut harness);
+        assert_eq!(session::query_status(&mut harness, job), status);
+        let shown = harness.state().editor_query.session.matches();
+        assert_eq!(
+            shown,
+            (!matches!(end, RunEnd::Clear)).then_some(&past_matches)
+        );
+        assert_eq!(
+            session::execute(
+                &mut harness,
+                Request::GetQueryResults(session::first_query_match_request(job))
+            ),
+            ErrorCode::QueryResultsUnavailable.into()
+        );
+        assert_eq!(
+            session::execute(
+                &mut harness,
+                Request::GetQueryResults(session::first_query_match_request(previous))
+            ),
+            ErrorCode::QueryJobNotFound.into()
+        );
     }
 }

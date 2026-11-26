@@ -10,7 +10,7 @@ use gt_session_bridge::{
     ChannelEntry, ErrorCode, GetQueryResults, NumericObservation, QueryJobId, QueryJobRequest,
     QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest,
     QueryResultPage, QueryResultSource, QueryResultTime, QueryText, QueryValidation, RangeTarget,
-    Reply, Request, ShowOnMap, ShowOnPlot,
+    Reply, Request, SessionRequest, ShowOnMap, ShowOnPlot,
 };
 use gt_test_utils::fixtures;
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
@@ -135,7 +135,6 @@ fn a_session_draft_opens_the_query_editor_with_diagnostics_and_previous_results(
     assert_eq!(query.text(), draft);
     assert_eq!(query.matches(), Some(&previous));
     assert_eq!(app.query_window.history_revision(), history_revision);
-    assert!(app.session_query.retained_reply().is_none());
 }
 
 #[test]
@@ -178,9 +177,7 @@ fn an_editor_run_finishes_after_a_session_draft_replaces_the_text() {
 #[test]
 fn editor_and_session_results_refresh_when_enabled_tracks_change() {
     let mut harness = ui_tests::harness_with_three_files_loaded();
-    harness.state_mut().query_window.open = true;
     let text = "points | where velocity > 1 km/h | draw";
-    ui_tests::run_query(&mut harness, text);
     let job = session::start_query(&mut harness, text);
     let completed = session::wait_for_query_to_stop(&mut harness, job);
     assert!(matches!(completed, QueryJobState::Completed { .. }));
@@ -214,15 +211,7 @@ fn editor_and_session_results_refresh_when_enabled_tracks_change() {
             .unwrap()
             .stale
     );
-    assert_eq!(
-        harness.state().session_query.retained_reply(),
-        Some(Reply::QueryJob {
-            job: QueryJobStatus {
-                job,
-                state: completed.clone(),
-            },
-        }),
-    );
+    assert_eq!(session::query_status(&mut harness, job), completed);
 
     for expected_stale in [true, false] {
         harness
@@ -247,40 +236,90 @@ fn editor_and_session_results_refresh_when_enabled_tracks_change() {
         } else {
             completed.clone()
         };
-        assert_eq!(
-            harness.state().session_query.retained_reply(),
-            Some(Reply::QueryJob {
-                job: QueryJobStatus { job, state },
-            }),
-        );
+        assert_eq!(session::query_status(&mut harness, job), state);
     }
 }
 
 #[test]
-fn session_query_uses_current_filter_and_visibility_without_changing_the_editor() {
+fn session_query_replaces_an_older_draft_and_shows_its_results() {
     let mut harness = ui_tests::app_with_query_window_open();
     let editor_text = "points | where eph < 20 m";
     ui_tests::run_query(&mut harness, editor_text);
-    let editor_matches = harness
+    let editor_run = harness
         .state()
         .editor_query
         .session()
         .matches()
         .unwrap()
-        .clone();
+        .run;
     let history_revision = harness.state().query_window.history_revision();
 
-    let first = session::start_query(&mut harness, "points | where velocity > 1 km/h | hide");
+    harness.state_mut().query_window.open = false;
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::OpenQuery(QueryText {
+                text: "points | where eph > 40 m".to_owned(),
+            }),
+        ),
+        Reply::QueryDraftQueued,
+    );
+    let text = "points | where velocity > 1 km/h | draw";
+    let first = session::start_query(&mut harness, text);
+    test_util::harness::step_minimized_logic(&mut harness);
+    assert_eq!(harness.state().editor_query.session().text(), text);
     assert_eq!(
         session::wait_for_query_to_stop(&mut harness, first),
         session::completed_single_track_query(1)
     );
     let app = harness.state();
     let query = app.editor_query.session();
-    assert_eq!(query.text(), editor_text);
-    assert_eq!(query.matches(), Some(&editor_matches));
-    assert_eq!(app.query_window.history_revision(), history_revision);
+    assert_eq!(query.text(), text);
+    assert_eq!(query.matches().unwrap().run, editor_run + 1);
+    assert_eq!(app.query_window.history_revision(), history_revision + 1);
+    assert_eq!(app.query_window.history()[0].text, text);
+    harness.get_by_role_and_label(Role::Window, "Query");
+    harness.get_by_label_contains("Match 1");
 
+    let page = session::first_query_match_request(first);
+    let before_edit = session::results(&mut harness, page);
+    assert!(matches!(
+        session::execute(
+            &mut harness,
+            Request::RunQuery(QueryText {
+                text: "points | where speed > 1".to_owned()
+            }),
+        ),
+        Reply::QueryCheck {
+            validation: QueryValidation::Invalid { .. }
+        }
+    ));
+    assert_eq!(harness.state().editor_query.session().text(), text);
+    assert_eq!(session::results(&mut harness, page).page, before_edit.page);
+    let draft = "points | where velocity > 999 km/h";
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::OpenQuery(QueryText {
+                text: draft.to_owned()
+            })
+        ),
+        Reply::QueryDraftQueued,
+    );
+    harness.run_steps(3);
+    assert_eq!(harness.state().editor_query.session().text(), draft);
+    assert_eq!(session::results(&mut harness, page).page, before_edit.page);
+}
+
+#[test]
+fn session_query_uses_current_filter_and_visibility() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let text = "points | where velocity > 1 km/h";
+    let first = session::start_query(&mut harness, text);
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, first),
+        session::completed_single_track_query(1)
+    );
     harness
         .state_mut()
         .shared
@@ -291,7 +330,7 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
         session::query_status(&mut harness, first),
         QueryJobState::Stale
     );
-    let filtered = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    let filtered = session::start_query(&mut harness, text);
     assert_eq!(
         session::wait_for_query_to_stop(&mut harness, filtered),
         session::completed_single_track_query(0)
@@ -302,7 +341,7 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
         shared.filter.set_time_bounds(None, None);
         shared.tree.set_all_enabled(false);
     }
-    let hidden = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    let hidden = session::start_query(&mut harness, text);
     assert_eq!(
         session::wait_for_query_to_stop(&mut harness, hidden),
         session::completed_single_track_query(0)
@@ -310,6 +349,60 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
     let old = Request::GetQueryStatus(QueryJobRequest { job: filtered });
     assert_eq!(
         session::execute(&mut harness, old),
+        ErrorCode::QueryJobNotFound.into()
+    );
+}
+
+#[test]
+fn mcp_reads_a_desktop_query_until_the_editor_runs_again() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    let text = "points | where velocity > 1 km/h";
+    harness
+        .state_mut()
+        .editor_query
+        .session_mut()
+        .set_text(text.to_owned());
+    harness.run_steps(3);
+    let max_passes = harness.ctx.options(|options| options.max_passes);
+    harness
+        .ctx
+        .options_mut(|options| options.max_passes = NonZeroUsize::MIN);
+    harness.get_by_role_and_label(Role::Button, "Run").click();
+    harness.step();
+
+    let request = Request::RunQuery(QueryText {
+        text: "points | draw".to_owned(),
+    });
+    let Reply::QueryJob { job: active } = session::execute(&mut harness, request.clone()) else {
+        panic!("expected the active desktop job");
+    };
+    assert_eq!(active.state, QueryJobState::Busy);
+    assert_eq!(harness.state().editor_query.session().text(), text);
+    assert_eq!(
+        harness.state_mut().execute_session_request(SessionRequest {
+            request,
+            session: Uuid::from_u128(2),
+        }),
+        Err(ErrorCode::StaleSession)
+    );
+    harness
+        .ctx
+        .options_mut(|options| options.max_passes = max_passes);
+    let completed = session::completed_single_track_query(1);
+    assert_eq!(
+        session::wait_for_query_to_stop(&mut harness, active.job),
+        completed
+    );
+    let result_page = Request::GetQueryResults(session::first_query_match_request(active.job));
+    assert!(matches!(
+        session::execute(&mut harness, result_page.clone()),
+        Reply::QueryResults { .. }
+    ));
+
+    harness.get_by_role_and_label(Role::Button, "Run").click();
+    harness.step();
+    assert_eq!(
+        session::execute(&mut harness, result_page),
         ErrorCode::QueryJobNotFound.into()
     );
 }
@@ -673,7 +766,7 @@ fn assert_channel_rows(
 #[test]
 fn session_query_status_becomes_stale_after_replacing_the_recording() {
     let mut harness = ui_tests::app_with_a_recording();
-    let job = session::start_query(&mut harness, "points | where velocity > 1 km/h");
+    let job = session::start_query(&mut harness, "points | where velocity > 1 km/h | table kp");
     let completed = session::completed_single_track_query(1);
     assert_eq!(
         session::wait_for_query_to_stop(&mut harness, job),
@@ -693,6 +786,10 @@ fn session_query_status_becomes_stale_after_replacing_the_recording() {
         .loaded_files
         .replace_file(0, replacement, FileHistory::None);
 
+    let cache_generation = harness
+        .state()
+        .geomagnetic_indices
+        .track_values_generation();
     assert_eq!(
         session::execute(
             &mut harness,
@@ -703,5 +800,12 @@ fn session_query_status_becomes_stale_after_replacing_the_recording() {
     assert_eq!(
         session::query_status(&mut harness, job),
         QueryJobState::Stale
+    );
+    assert_eq!(
+        harness
+            .state()
+            .geomagnetic_indices
+            .track_values_generation(),
+        cache_generation
     );
 }

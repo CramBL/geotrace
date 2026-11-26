@@ -12,7 +12,7 @@ use gt_ui_types::{
 };
 use uuid::Uuid;
 
-use super::session_query::SessionQuery;
+use super::query_run::BackgroundQuery;
 use super::{App, SharedAppState};
 
 #[derive(Clone, Copy)]
@@ -74,7 +74,7 @@ impl MapPresentation {
         self,
         shared: &SharedAppState,
         query_matches: Option<&QueryMatches>,
-        queries: &SessionQuery,
+        queries: &BackgroundQuery,
     ) -> bool {
         if self.inputs != MapPresentationInputs::of(shared, query_matches) {
             return false;
@@ -96,7 +96,7 @@ impl MapPresentation {
         self,
         shared: &SharedAppState,
         query_matches: Option<&QueryMatches>,
-        queries: &SessionQuery,
+        queries: &BackgroundQuery,
     ) -> bool {
         self.is_current(shared, query_matches, queries)
             && (matches!(self.target, PresentationTarget::Point { .. })
@@ -173,7 +173,6 @@ impl App {
 
     pub(super) fn session_show_on_map(
         &mut self,
-        queries: &mut SessionQuery,
         session: Uuid,
         ShowOnMap { target }: ShowOnMap,
     ) -> Result<MapPresentation, ErrorCode> {
@@ -189,9 +188,12 @@ impl App {
                 query,
                 matched,
             } => {
-                let run = queries.result_session(self, session, job)?;
+                self.require_completed_query(session, job)?;
                 let shared = self.shared.borrow();
-                let results = run.retained_results(shared.loaded_files.view())?;
+                let results = self
+                    .editor_query
+                    .session()
+                    .retained_results(shared.loaded_files.view())?;
                 let matched = results.query(query)?.match_at(matched.into())?;
                 let MatchExtent::Points(points) = matched.extent() else {
                     return Err(ErrorCode::QueryMatchIsChannel);
@@ -225,7 +227,7 @@ impl SharedAppState {
         &mut self,
         map: &mut NavMap,
         query_matches: Option<&QueryMatches>,
-        queries: &SessionQuery,
+        queries: &BackgroundQuery,
     ) {
         // Queuing a session request clears the earlier GUI camera requests.
         let later_gui_camera = self.map_center_request.is_some()

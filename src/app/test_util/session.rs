@@ -74,7 +74,7 @@ pub fn query_status(harness: &mut Harness<'_, App>, job: QueryJobId) -> QueryJob
 }
 
 pub fn wait_for_query_to_stop(harness: &mut Harness<'_, App>, job: QueryJobId) -> QueryJobState {
-    assert!(harness.step_until(|harness| { !harness.state().session_query.is_active() }));
+    assert!(harness.step_until(|harness| { !harness.state().editor_query.is_active() }));
     self::query_status(harness, job)
 }
 
