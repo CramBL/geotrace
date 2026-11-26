@@ -31,6 +31,7 @@ use loader::{
 use log_viewer::LogViewerRequests;
 use log_viewer::association_dialog::LogAssociationDialog;
 use panes::MainPane;
+use query_run::BackgroundQuery;
 use recording_name_template::TemplatePreviewRecording;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_history::{HistoryLoadAdoption, SessionHistory};
@@ -469,6 +470,7 @@ pub struct App {
     history_window: history::HistoryWindow,
     pending_track_data_detach: Option<PendingTrackDataDetach>,
     query_window: query::QueryWindow,
+    editor_query: BackgroundQuery,
     /// The log viewer window, opened whenever a log finishes loading.
     log_viewer: log_viewer::LogViewerWindow,
     /// What the log viewer requested while it drew, applied once the shared
@@ -755,6 +757,7 @@ impl App {
             history_window: history::HistoryWindow::new(),
             pending_track_data_detach: None,
             query_window: query::QueryWindow::new(),
+            editor_query: BackgroundQuery::default(),
             log_viewer: log_viewer::LogViewerWindow::new(),
             log_viewer_requests: LogViewerRequests::default(),
             association_dialog: None,

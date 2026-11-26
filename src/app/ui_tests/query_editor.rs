@@ -30,7 +30,7 @@ fn reset_filters_clears_the_query_filter() {
     harness.run_steps(3);
 
     assert!(
-        harness.state().query_window.matches().is_none(),
+        harness.state().editor_query.session().matches().is_none(),
         "Reset filters drops the query results"
     );
     assert!(!harness.state().query_filter_active());
@@ -76,10 +76,11 @@ fn query_example_loads_into_editor_without_running() {
     harness.get_by_label("Weak fix").click();
     harness.run_steps(3);
 
-    let window = &harness.state().query_window;
-    assert_eq!(window.text(), "points\n| where sats_fix < 6");
+    let app = harness.state();
+    let query = app.editor_query.session();
+    assert_eq!(query.text(), "points\n| where sats_fix < 6");
     assert!(
-        window.matches().is_none() && window.history().is_empty(),
+        query.matches().is_none() && app.query_window.history().is_empty(),
         "loading an example only fills the editor - it never runs"
     );
 }
@@ -90,7 +91,8 @@ fn query_ctrl_enter_runs() {
     let mut harness = ui_tests::app_with_query_window_open();
     harness
         .state_mut()
-        .query_window
+        .editor_query
+        .session_mut()
         .set_text("points | where velocity > 1 km/h".to_owned());
     harness.run_steps(3);
 
@@ -106,7 +108,7 @@ fn query_ctrl_enter_runs() {
     harness.run_steps(3);
 
     assert!(
-        harness.state().query_window.matches().is_some(),
+        harness.state().editor_query.session().matches().is_some(),
         "Ctrl+Enter starts a run"
     );
     assert_eq!(
@@ -127,7 +129,7 @@ fn editor_with_popup(text: &str) -> Harness<'static, App> {
     {
         let app = harness.state_mut();
         app.query_window.open = true;
-        app.query_window.set_text(text.to_owned());
+        app.editor_query.session_mut().set_text(text.to_owned());
     }
     harness.run_steps(2);
     ui_tests::focus_query_editor_at_end(&harness, text);
@@ -152,7 +154,10 @@ fn autocomplete_enter_accepts_top_candidate() {
         .push(ui_tests::key_press(egui::Key::Enter));
     harness.run_steps(2);
 
-    assert_eq!(harness.state().query_window.text(), "points | where ");
+    assert_eq!(
+        harness.state().editor_query.session().text(),
+        "points | where "
+    );
 }
 
 /// Arrow keys move the selection before Enter accepts it.
@@ -171,7 +176,10 @@ fn autocomplete_arrow_down_then_enter_accepts_second() {
         .push(ui_tests::key_press(egui::Key::Enter));
     harness.run_steps(2);
 
-    assert_eq!(harness.state().query_window.text(), "points | with ");
+    assert_eq!(
+        harness.state().editor_query.session().text(),
+        "points | with "
+    );
 }
 
 /// Esc dismisses the popup without editing the text or closing the window, and
@@ -186,13 +194,14 @@ fn autocomplete_esc_dismisses_without_editing() {
         .push(ui_tests::key_press(egui::Key::Escape));
     harness.run_steps(2);
 
-    let window = &harness.state().query_window;
+    let app = harness.state();
+    let window = &app.query_window;
     assert!(
         window.autocomplete_names().is_empty(),
         "Esc closes the popup"
     );
     assert_eq!(
-        window.text(),
+        app.editor_query.session().text(),
         "points | wh",
         "Esc leaves the text unchanged"
     );
@@ -240,7 +249,7 @@ fn passive_unit_popup_lets_enter_break_the_line() {
         .push(ui_tests::key_press(egui::Key::Enter));
     harness.run_steps(2);
     assert_eq!(
-        harness.state().query_window.text(),
+        harness.state().editor_query.session().text(),
         "points | where velocity > 30\n",
         "Enter breaks the line; the passive popup does not claim it"
     );
@@ -257,7 +266,7 @@ fn tab_accepts_a_passive_unit_with_a_separating_space() {
         .push(ui_tests::key_press(egui::Key::Tab));
     harness.run_steps(2);
     assert_eq!(
-        harness.state().query_window.text(),
+        harness.state().editor_query.session().text(),
         "points | where velocity > 30 km/h"
     );
 }
@@ -272,7 +281,7 @@ fn accepting_a_function_inserts_parentheses() {
         .push(ui_tests::key_press(egui::Key::Enter));
     harness.run_steps(2);
     assert_eq!(
-        harness.state().query_window.text(),
+        harness.state().editor_query.session().text(),
         "points | window 3 | where avg()"
     );
     // Typing lands inside the parentheses.
@@ -282,7 +291,7 @@ fn accepting_a_function_inserts_parentheses() {
         .push(egui::Event::Text("velocity".to_owned()));
     harness.run_steps(2);
     assert_eq!(
-        harness.state().query_window.text(),
+        harness.state().editor_query.session().text(),
         "points | window 3 | where avg(velocity)"
     );
 }
@@ -353,7 +362,7 @@ fn comment_only_chunk_does_not_block_run() {
         "# scratch note between queries\n\npoints | where velocity > 1 km/h",
     );
     assert!(
-        harness.state().query_window.matches().is_some(),
+        harness.state().editor_query.session().matches().is_some(),
         "the comment paragraph must not disable Run"
     );
 }
@@ -406,7 +415,7 @@ fn channel_popup_offers_and_inserts_a_loaded_channel() {
     {
         let app = harness.state_mut();
         app.query_window.open = true;
-        app.query_window.set_text("@ac".to_owned());
+        app.editor_query.session_mut().set_text("@ac".to_owned());
     }
     harness.run_steps(2);
     ui_tests::focus_query_editor_at_end(&harness, "@ac");
@@ -422,7 +431,7 @@ fn channel_popup_offers_and_inserts_a_loaded_channel() {
         .events
         .push(ui_tests::key_press(egui::Key::Enter));
     harness.run_steps(2);
-    assert_eq!(harness.state().query_window.text(), "@accel");
+    assert_eq!(harness.state().editor_query.session().text(), "@accel");
 }
 
 /// A channel-source query mixed with a points query cannot run. The editor
@@ -438,7 +447,8 @@ fn mixed_channel_queries_explain_why_run_is_disabled() {
     {
         let app = harness.state_mut();
         app.query_window.open = true;
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | where velocity > 1 km/h\n\n@accel | where @accel > 1 g".to_owned());
     }
     harness.run_steps(3);
@@ -456,7 +466,10 @@ fn autocomplete_click_accepts_candidate() {
         .get_by_label_contains("set satellite-analysis parameters")
         .click();
     harness.run_steps(2);
-    assert_eq!(harness.state().query_window.text(), "points | with ");
+    assert_eq!(
+        harness.state().editor_query.session().text(),
+        "points | with "
+    );
 }
 
 /// Right-clicking the toolbar query button while a filter is active offers
@@ -497,7 +510,7 @@ fn snapshot_query_autocomplete_popup() {
     {
         let app = harness.inner.state_mut();
         app.query_window.open = true;
-        app.query_window.set_text(text.to_owned());
+        app.editor_query.session_mut().set_text(text.to_owned());
     }
     harness.inner.run_steps(3);
     ui_tests::focus_query_editor_at_end(&harness.inner, text);
@@ -528,7 +541,8 @@ fn snapshot_query_error() {
         let app = harness.inner.state_mut();
         app.query_window.open = true;
         // Per-point metric in a window: the message splits into problem + hint.
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | window 10 | where velocity >= 10 km/h".to_owned());
     }
     // Editor left unfocused so no completion popup covers the error.
@@ -548,7 +562,8 @@ fn snapshot_query_hover_docs() {
     {
         let app = harness.inner.state_mut();
         app.query_window.open = true;
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | window 10 | where avg(velocity) > 30 km/h".to_owned());
     }
     harness.inner.run_steps(3);
@@ -580,7 +595,8 @@ fn query_hover_doc_sticks_within_its_token() {
     {
         let app = harness.inner.state_mut();
         app.query_window.open = true;
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | window 10 | where avg(velocity) > 30 km/h".to_owned());
     }
     harness.inner.run_steps(3);

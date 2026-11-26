@@ -376,7 +376,7 @@ pub fn step_until_the_prompt_over_stored_recordings_is_drawn(harness: &mut Harne
 /// Step the harness repeatedly until the query worker's result has landed.
 pub fn step_until_query_result(harness: &mut Harness<App>) {
     assert!(
-        harness.step_until(|harness| harness.state().query_window.matches().is_some()),
+        harness.step_until(|harness| harness.state().editor_query.session().matches().is_some()),
         "the query worker produced no result"
     );
 }

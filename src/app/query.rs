@@ -19,13 +19,10 @@ use gt_loaded_files::LoadedFilesView;
 use gt_query::{
     ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span, TokenClass,
 };
-use gt_query_run::{CheckRefresh, MIXED_CHANNEL_MESSAGE, RunInputs, RunKind};
-use gt_side_panel::widgets::PointClickRequests;
-use gt_ui_types::{MapHighlight, MapPresence, MatchRevealTarget, QueryMatches, StaleRunNote};
+use gt_query_run::{CheckRefresh, MIXED_CHANNEL_MESSAGE, QuerySession, RunKind};
+use gt_ui_types::{MapPresence, StaleRunNote};
 use strum::{EnumIter, IntoEnumIterator as _};
 
-use crate::app::App;
-use crate::app::query_run::{BackgroundQuery, CapturedQueryInputs};
 use crate::settings::QueryHistoryEntry;
 
 use self::results::{ResultsOutputs, ResultsState, ResultsTables};
@@ -36,14 +33,6 @@ mod match_row;
 pub(crate) mod results;
 pub(crate) mod results_split;
 mod value_bar;
-
-impl App {
-    pub(super) fn query_filter_active(&self) -> bool {
-        self.query_window
-            .map_matches(self.shared.borrow().loaded_files.view())
-            .is_some_and(|matches| !matches.is_empty())
-    }
-}
 
 /// A built-in query offered in the examples list.
 struct QueryExample {
@@ -71,15 +60,13 @@ impl QueryTab {
     }
 }
 
-/// The floating query window: the editor, the results panel, and the query
-/// history list around a [`BackgroundQuery`].
+pub(super) enum QueryAction {
+    Run,
+    Cancel,
+}
+
 pub struct QueryWindow {
     pub open: bool,
-    query: BackgroundQuery,
-    /// Set by the Run button, consumed at the end of `show`.
-    run_requested: bool,
-    /// Set by the Cancel button while a run is in flight.
-    cancel_requested: bool,
     /// Previously run queries, newest first. Persisted in settings.
     history: Vec<QueryHistoryEntry>,
     /// Bumped on every history mutation so the config dirty-check (which
@@ -233,10 +220,7 @@ struct Autocomplete {
 impl QueryWindow {
     pub fn new() -> Self {
         Self {
-            query: BackgroundQuery::default(),
             open: false,
-            run_requested: false,
-            cancel_requested: false,
             history: Vec::new(),
             history_revision: 0,
             autocomplete: Autocomplete::default(),
@@ -250,39 +234,11 @@ impl QueryWindow {
         }
     }
 
-    #[cfg(test)]
-    pub fn matches(&self) -> Option<&QueryMatches> {
-        self.query.session().matches()
-    }
-
-    pub(super) fn map_matches(&self, files: LoadedFilesView<'_>) -> Option<&QueryMatches> {
-        self.query.session().map_matches(files)
-    }
-
-    /// The byte offset of the editor caret, from the text edit's stored state.
-    /// Zero before the editor has ever been focused.
-    fn caret_byte(&self, ctx: &egui::Context, editor_id: egui::Id) -> usize {
+    fn caret_byte(text: &str, ctx: &egui::Context, editor_id: egui::Id) -> usize {
         let caret_char = TextEdit::load_state(ctx, editor_id)
             .and_then(|state| state.cursor.char_range())
             .map_or(egui::text::CharIndex::ZERO, |range| range.primary.index);
-        char_to_byte(self.text(), caret_char)
-    }
-
-    /// Drop the last run's results so the map returns to normal, abandoning any
-    /// run still in flight. Called by the toolbar's clear action and by the
-    /// side panel's "Reset filters".
-    pub fn clear_filter(&mut self) {
-        self.query.clear_results();
-    }
-
-    /// Replace the editor text, e.g. when loading a history entry or an
-    /// example. Never runs - running stays an explicit action.
-    pub fn set_text(&mut self, text: String) {
-        self.query.set_text(text);
-    }
-
-    pub(super) fn text(&self) -> &str {
-        self.query.session().text()
+        char_to_byte(text, caret_char)
     }
 
     /// The insertions currently offered by the autocomplete popup, best first
@@ -318,10 +274,9 @@ impl QueryWindow {
         self.history_revision
     }
 
-    /// Record a query that is about to run: deduplicated by trimmed text
-    /// (rerunning moves the entry to the top and keeps its pin), capped at
-    /// [`MAX_UNPINNED_HISTORY`] unpinned entries with the oldest evicted.
-    fn record_run(&mut self, text: &str) {
+    /// Reruns with the same trimmed text retain their pin.
+    /// History retains at most [`MAX_UNPINNED_HISTORY`] unpinned entries.
+    pub(super) fn record_run(&mut self, text: &str) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return;
@@ -352,29 +307,20 @@ impl QueryWindow {
         self.history_revision += 1;
     }
 
-    /// Render the window and handle runs. Call after the plot-hover
-    /// forwarding: match-table row hover writes the same cross-highlight
-    /// fields and must win for the frame.
-    ///
-    /// The window replaces the `query_matches` of `map_scope` with its own
-    /// run's effect.
-    pub fn show(
+    pub(super) fn select_results_tab(&mut self) {
+        self.tab = QueryTab::Results;
+    }
+
+    pub(super) fn show(
         &mut self,
         ctx: &egui::Context,
-        captured_inputs: CapturedQueryInputs<'_>,
+        session: &mut QuerySession,
+        loaded_files: LoadedFilesView<'_>,
         map_scope: MapPresence<'_>,
-        highlight: &mut MapHighlight,
-        requests: &mut PointClickRequests<'_>,
-        reveal_matches_request: &mut Option<MatchRevealTarget>,
-    ) {
-        let inputs = captured_inputs.run_inputs();
-        let RunInputs { loaded_files, .. } = inputs;
-        if self.query.update(captured_inputs) {
-            self.tab = QueryTab::Results;
-        }
-
+        outputs: &mut ResultsOutputs<'_, '_>,
+    ) -> Option<QueryAction> {
         if !self.open {
-            return;
+            return None;
         }
 
         let files = loaded_files.files();
@@ -384,13 +330,14 @@ impl QueryWindow {
         // Read before the window renders: `editor_ui` updates the field.
         let editor_was_focused = self.editor_had_focus;
         let mut open = self.open;
+        let mut action = None;
         Window::new("Query")
             .open(&mut open)
             .default_width(DEFAULT_WINDOW_WIDTH)
             .default_height(DEFAULT_WINDOW_HEIGHT)
             .resizable(true)
             .show(ctx, |ui| {
-                self.editor_ui(ui, &schema);
+                action = self.editor_ui(ui, session, &schema);
                 ui.separator();
                 self.tab_strip_ui(ui);
                 ui.separator();
@@ -400,20 +347,15 @@ impl QueryWindow {
                         // not the run filled it: a window that resized itself
                         // around its results would jump on every run.
                         ui.set_min_height(ui.available_height());
-                        self.results_ui(
-                            ui,
-                            inputs,
-                            map_scope,
-                            highlight,
-                            requests,
-                            reveal_matches_request,
-                        );
+                        self.results_ui(ui, session, loaded_files, map_scope, outputs);
                     }
                     QueryTab::History => {
-                        tab_scroll_area("query_history_tab").show(ui, |ui| self.history_ui(ui));
+                        tab_scroll_area("query_history_tab")
+                            .show(ui, |ui| self.history_ui(ui, session));
                     }
                     QueryTab::Examples => {
-                        tab_scroll_area("query_examples_tab").show(ui, |ui| self.examples_ui(ui));
+                        tab_scroll_area("query_examples_tab")
+                            .show(ui, |ui| Self::examples_ui(ui, session));
                     }
                 }
             });
@@ -434,29 +376,14 @@ impl QueryWindow {
         // Ctrl+Enter (Cmd+Enter on macOS) runs, mirroring the Run button.
         // Consumed only while the window is open, so it never steals the
         // chord from other widgets.
-        let session = self.query.session();
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter))
             && session.all_ok()
             && session.run_kind() != RunKind::MixedChannel
             && !session.run_in_flight()
         {
-            self.run_requested = true;
+            action = Some(QueryAction::Run);
         }
-
-        if self.cancel_requested {
-            self.cancel_requested = false;
-            self.query.session().cancel_run();
-        }
-        // The run button lives inside `editor_ui` and sets this flag. One
-        // run at a time: the button is disabled while one is in flight.
-        if self.run_requested {
-            self.run_requested = false;
-            if !self.query.session().run_in_flight() {
-                let text = self.text().to_owned();
-                self.record_run(&text);
-                self.query.start(ctx, inputs);
-            }
-        }
+        action
     }
 
     /// The strip choosing which list fills the rest of the window.
@@ -472,7 +399,7 @@ impl QueryWindow {
 
     /// The query history, newest first. Loading an entry only fills the editor
     /// - running stays explicit.
-    fn history_ui(&mut self, ui: &mut egui::Ui) {
+    fn history_ui(&mut self, ui: &mut egui::Ui, session: &mut QuerySession) {
         // Gather actions during the borrow of `self.history`, apply after.
         let mut load: Option<String> = None;
         let mut toggle_pin: Option<usize> = None;
@@ -534,7 +461,7 @@ impl QueryWindow {
             });
 
         if let Some(text) = load {
-            self.set_text(text);
+            session.set_text(text);
         }
         if let Some(index) = toggle_pin
             && let Some(entry) = self.history.get_mut(index)
@@ -556,7 +483,7 @@ impl QueryWindow {
     }
 
     /// The built-in starter queries. Clicking one only fills the editor.
-    fn examples_ui(&mut self, ui: &mut egui::Ui) {
+    fn examples_ui(ui: &mut egui::Ui, session: &mut QuerySession) {
         let mut load: Option<&'static str> = None;
         for example in EXAMPLES {
             if ui
@@ -568,17 +495,22 @@ impl QueryWindow {
             }
         }
         if let Some(text) = load {
-            self.set_text(text.to_owned());
+            session.set_text(text.to_owned());
         }
     }
 
-    fn editor_ui(&mut self, ui: &mut egui::Ui, schema: &ChannelSchema) {
+    fn editor_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        session: &mut QuerySession,
+        schema: &ChannelSchema,
+    ) -> Option<QueryAction> {
         let editor_id = egui::Id::unique(EDITOR_ID_SALT);
         // Runs before the editor so the open popup can claim its keys, and may
         // edit the text (accepting a candidate) - so re-check after.
-        self.apply_autocomplete_input(ui, editor_id);
+        self.apply_autocomplete_input(ui, editor_id, session.text_mut());
 
-        match self.query.sync_checks(schema) {
+        match session.sync_checks(schema) {
             CheckRefresh::Unchanged => {}
             CheckRefresh::SchemaChanged => self.assist_revision += 1,
             CheckRefresh::TextChanged => {
@@ -595,11 +527,10 @@ impl QueryWindow {
             && self
                 .last_edit_time
                 .is_some_and(|at| now - at < DIAGNOSTIC_IDLE_SECS);
-        let caret_byte = self.caret_byte(ui.ctx(), editor_id);
+        let caret_byte = Self::caret_byte(session.text(), ui.ctx(), editor_id);
         let mut errors: Vec<Diagnostic> = Vec::new();
         let mut underlines: Vec<Span> = Vec::new();
         let mut suppressed = false;
-        let session = self.query.session();
         for chunk in session.chunks() {
             let Err(diagnostic) = &chunk.result else {
                 continue;
@@ -629,7 +560,7 @@ impl QueryWindow {
             job.wrap.max_width = wrap_width;
             ui.fonts_mut(|f| f.layout_job(job))
         };
-        let output = TextEdit::multiline(self.query.text_mut())
+        let output = TextEdit::multiline(session.text_mut())
             .id(editor_id)
             .code_editor()
             .desired_rows(5)
@@ -639,8 +570,8 @@ impl QueryWindow {
             .show(ui);
         self.editor_had_focus = output.response.has_focus();
 
-        self.update_autocomplete(ui, editor_id, schema, &output);
-        self.hover_docs(ui, schema, &output);
+        self.update_autocomplete(ui, editor_id, schema, &output, session.text_mut());
+        self.hover_docs(ui, schema, &output, session.text());
 
         for diagnostic in &errors {
             // The message shows in red with an error icon (the quoted token
@@ -656,7 +587,6 @@ impl QueryWindow {
         }
 
         ui.horizontal(|ui| {
-            let session = self.query.session();
             let in_flight = session.run_in_flight();
             let all_ok = session.all_ok();
             let mixed = all_ok && session.run_kind() == RunKind::MixedChannel;
@@ -671,21 +601,13 @@ impl QueryWindow {
                 (true, true, _) => run.on_disabled_hover_text("A run is in progress"),
                 (true, false, false) => run,
             };
-            if run.clicked() {
-                self.run_requested = true;
-            }
-
             let cancel = ui.add_enabled(in_flight, Button::new("Cancel"));
             let cancel = if in_flight {
                 cancel
             } else {
                 cancel.on_disabled_hover_text("No run in progress")
             };
-            if cancel.clicked() {
-                self.cancel_requested = true;
-            }
-
-            let clearable = !self.text().is_empty();
+            let clearable = !session.text().is_empty();
             let clear = ui.add_enabled(clearable, Button::new("Clear"));
             let clear = if clearable {
                 clear
@@ -693,11 +615,11 @@ impl QueryWindow {
                 clear.on_disabled_hover_text("The editor is already empty")
             };
             if clear.clicked() {
-                self.query.text_mut().clear();
+                session.text_mut().clear();
                 self.autocomplete = Autocomplete::default();
             }
 
-            if let Some(progress) = self.query.session().progress() {
+            if let Some(progress) = session.progress() {
                 ui.spinner();
                 if progress.tracks_prepared < progress.track_total {
                     ui.label(format!(
@@ -710,7 +632,15 @@ impl QueryWindow {
                 // Keep repainting so progress and completion show promptly.
                 ui.ctx().request_repaint_after(Duration::from_millis(100));
             }
-        });
+            if run.clicked() {
+                Some(QueryAction::Run)
+            } else if cancel.clicked() {
+                Some(QueryAction::Cancel)
+            } else {
+                None
+            }
+        })
+        .inner
     }
 
     /// Handle keyboard input for the autocomplete popup, using the candidates
@@ -722,7 +652,7 @@ impl QueryWindow {
     /// Enter must still break the line and the arrows must still move the
     /// caret, or the popup hijacks ordinary editing. Typing a prefix or
     /// pressing Ctrl+Space makes it active, claiming Enter and the arrows too.
-    fn apply_autocomplete_input(&mut self, ui: &egui::Ui, editor_id: egui::Id) {
+    fn apply_autocomplete_input(&mut self, ui: &egui::Ui, editor_id: egui::Id, text: &mut String) {
         // Ctrl+Space (Cmd+Space on macOS) requests completion at the caret,
         // the explicit counterpart to the automatic popup.
         if self.editor_had_focus
@@ -782,19 +712,25 @@ impl QueryWindow {
         if let Some(index) = accept
             && let Some(candidate) = self.autocomplete.items.get(index).cloned()
         {
-            self.accept_completion(ui, editor_id, &candidate);
+            self.accept_completion(ui, editor_id, &candidate, text);
         }
     }
 
     /// Replace the partial word under the caret with `candidate`, then move the
     /// caret past the insertion (or inside a function's inserted `()`) and
     /// close the popup for that word.
-    fn accept_completion(&mut self, ui: &egui::Ui, editor_id: egui::Id, candidate: &Candidate) {
+    fn accept_completion(
+        &mut self,
+        ui: &egui::Ui,
+        editor_id: egui::Id,
+        candidate: &Candidate,
+        text: &mut String,
+    ) {
         let range = self.autocomplete.range.clone();
         // The candidates were computed for the word recorded alongside them.
         // A same-frame edit (key repeat, paste) may have moved or replaced it,
         // in which case accepting would splice the wrong span, so do nothing.
-        if self.text().get(range.clone()) != Some(self.autocomplete.word.as_str()) {
+        if text.get(range.clone()) != Some(self.autocomplete.word.as_str()) {
             return;
         }
         // A unit accepted directly after a digit gets a separating space:
@@ -803,17 +739,14 @@ impl QueryWindow {
             && range
                 .start
                 .checked_sub(1)
-                .and_then(|i| self.text().as_bytes().get(i))
+                .and_then(|i| text.as_bytes().get(i))
                 .is_some_and(u8::is_ascii_digit);
         let space = if pad { " " } else { "" };
         let insertion = format!("{space}{}{}", candidate.insert, candidate.suffix);
         let caret_byte = range.start + insertion.len() - candidate.caret_back;
-        self.query.text_mut().replace_range(range, &insertion);
+        text.replace_range(range, &insertion);
 
-        let caret_char = self
-            .text()
-            .get(..caret_byte)
-            .map_or(0, |s| s.chars().count());
+        let caret_char = text.get(..caret_byte).map_or(0, |s| s.chars().count());
         let mut state = TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
         state
             .cursor
@@ -839,6 +772,7 @@ impl QueryWindow {
         editor_id: egui::Id,
         schema: &ChannelSchema,
         output: &egui::widgets::text_edit::TextEditOutput,
+        text: &mut String,
     ) {
         let focused = output.response.has_focus();
         let manual = std::mem::take(&mut self.autocomplete.manual_request);
@@ -846,10 +780,10 @@ impl QueryWindow {
             focused,
             output.cursor_range.map(|range| range.primary.index),
         ) {
-            let caret_byte = char_to_byte(self.text(), caret_char);
+            let caret_byte = char_to_byte(text, caret_char);
             let memo_key = (self.assist_revision, caret_byte);
             if manual || self.autocomplete.computed_for != Some(memo_key) {
-                self.recompute_candidates(caret_byte, schema, manual);
+                self.recompute_candidates(text, caret_byte, schema, manual);
                 self.autocomplete.computed_for = Some(memo_key);
             }
             // Esc keeps the popup closed while completing the same word. The
@@ -884,7 +818,7 @@ impl QueryWindow {
 
         if let Some(index) = clicked {
             if let Some(candidate) = self.autocomplete.items.get(index).cloned() {
-                self.accept_completion(ui, editor_id, &candidate);
+                self.accept_completion(ui, editor_id, &candidate, text);
             }
         } else if !focused {
             // Focus left the editor without a click into the popup (e.g. a
@@ -897,15 +831,21 @@ impl QueryWindow {
 
     /// Compute the completion candidates for the caret at `caret_byte` and
     /// store them in `self.autocomplete`.
-    fn recompute_candidates(&mut self, caret_byte: usize, schema: &ChannelSchema, manual: bool) {
+    fn recompute_candidates(
+        &mut self,
+        text: &str,
+        caret_byte: usize,
+        schema: &ChannelSchema,
+        manual: bool,
+    ) {
         // Analyze only the query the caret is in, then shift the byte range
         // back to editor coordinates. The chunk ranges are recomputed from the
         // current text: the checked chunks are one frame stale (the editor
         // applies this frame's keystrokes after the check ran), and a stale
         // range would misroute the caret to the between-queries fallback.
-        let context = gt_query_run::analysis_context(self.text(), caret_byte);
+        let context = gt_query_run::analysis_context(text, caret_byte);
         let offset = context.start;
-        let src = self.text().get(context).unwrap_or("");
+        let src = text.get(context).unwrap_or("");
         let local = caret_byte - offset;
         let trigger = if manual {
             CompletionTrigger::Manual
@@ -955,7 +895,7 @@ impl QueryWindow {
         // The popup claims Enter and the arrows only once the user has shown
         // intent: a typed prefix or an explicit request.
         self.autocomplete.active = manual || caret_byte > range.start;
-        self.autocomplete.word = self.text().get(range.clone()).unwrap_or("").to_owned();
+        self.autocomplete.word = text.get(range.clone()).unwrap_or("").to_owned();
         self.autocomplete.items = items;
         self.autocomplete.notice = notice;
         self.autocomplete.range = range;
@@ -973,6 +913,7 @@ impl QueryWindow {
         ui: &egui::Ui,
         schema: &ChannelSchema,
         output: &egui::widgets::text_edit::TextEditOutput,
+        text: &str,
     ) {
         // Taken up front and put back only when a doc actually shows, so every
         // bail-out below (popup up, left the editor, off any token) drops the
@@ -988,17 +929,17 @@ impl QueryWindow {
             return;
         }
         let ccursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
-        let byte = char_to_byte(self.text(), ccursor.index);
+        let byte = char_to_byte(text, ccursor.index);
         // Look up the token within the query under the pointer. Fresh ranges:
         // the checked chunks can be one frame stale after an edit.
-        let Some(chunk) = gt_query_run::split_queries(self.text())
+        let Some(chunk) = gt_query_run::split_queries(text)
             .into_iter()
             .find(|range| range.start <= byte && byte <= range.end)
         else {
             return;
         };
         let local = byte - chunk.start;
-        let src = self.text().get(chunk.clone()).unwrap_or("");
+        let src = text.get(chunk.clone()).unwrap_or("");
         // Hit-test the token's actual span rectangle before documenting it.
         let Some(token_span) = gt_query::tokenize(src)
             .into_iter()
@@ -1007,17 +948,10 @@ impl QueryWindow {
         else {
             return;
         };
-        if !self
-            .token_rect(
-                output,
-                chunk.start + token_span.start,
-                chunk.start + token_span.end,
-            )
-            .contains(pointer)
-        {
+        let span = chunk.start + token_span.start..chunk.start + token_span.end;
+        if !Self::token_rect(text, output, &span).contains(pointer) {
             return;
         }
-        let span = chunk.start + token_span.start..chunk.start + token_span.end;
         let rested = ui.input(|i| i.pointer.time_since_last_movement());
         if !hover_doc_shows(shown.as_ref(), &span, rested) {
             // Repaint when the delay lapses so the tooltip appears without
@@ -1050,18 +984,18 @@ impl QueryWindow {
             });
     }
 
-    /// The screen rectangle spanned by the text between byte `start` and
-    /// `end`, from the editor galley. Grown a little so hovering the very edge
-    /// of a glyph still counts.
     fn token_rect(
-        &self,
+        text: &str,
         output: &egui::widgets::text_edit::TextEditOutput,
-        start: usize,
-        end: usize,
+        span: &Range<usize>,
     ) -> egui::Rect {
-        let char_at = |byte: usize| self.text().get(..byte).map_or(0, |s| s.chars().count());
-        let first = output.galley.pos_from_cursor(CCursor::new(char_at(start)));
-        let last = output.galley.pos_from_cursor(CCursor::new(char_at(end)));
+        let char_at = |byte: usize| text.get(..byte).map_or(0, |s| s.chars().count());
+        let first = output
+            .galley
+            .pos_from_cursor(CCursor::new(char_at(span.start)));
+        let last = output
+            .galley
+            .pos_from_cursor(CCursor::new(char_at(span.end)));
         first
             .union(last)
             .translate(output.galley_pos.to_vec2())
@@ -1071,25 +1005,15 @@ impl QueryWindow {
     fn results_ui(
         &mut self,
         ui: &mut egui::Ui,
-        inputs: RunInputs<'_>,
+        session: &QuerySession,
+        loaded_files: LoadedFilesView<'_>,
         map_scope: MapPresence<'_>,
-        highlight: &mut MapHighlight,
-        requests: &mut PointClickRequests<'_>,
-        reveal_matches_request: &mut Option<MatchRevealTarget>,
+        outputs: &mut ResultsOutputs<'_, '_>,
     ) {
-        // Split borrows: the results are read while the list state they drive
-        // is written.
-        let Self {
-            query,
-            results_state,
-            matches_popped_out,
-            ..
-        } = self;
         // What the map draws right now: a point row can only pin a point that
         // is on it.
-        let scope = map_scope.with_query_matches(query.session().map_matches(inputs.loaded_files));
-        let Some(mut results) = ResultsTables::of_session(inputs.loaded_files, query.session())
-        else {
+        let scope = map_scope.with_query_matches(session.map_matches(loaded_files));
+        let Some(mut results) = ResultsTables::of_session(loaded_files, session) else {
             ui.label(RichText::new("No runs yet").weak());
             return;
         };
@@ -1100,12 +1024,13 @@ impl QueryWindow {
                     .italics(),
             );
         }
-        let mut outputs = ResultsOutputs {
-            highlight,
-            requests,
-            reveal: reveal_matches_request,
-        };
-        results.ui(ui, results_state, matches_popped_out, scope, &mut outputs);
+        results.ui(
+            ui,
+            &mut self.results_state,
+            &mut self.matches_popped_out,
+            scope,
+            outputs,
+        );
     }
 }
 

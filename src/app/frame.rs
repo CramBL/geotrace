@@ -10,6 +10,7 @@ use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_ionex::quiet_time::QuietTimeDeviationPeak;
 use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
+use gt_side_panel::widgets::PointClickRequests;
 use gt_side_panel::{
     DetachRequest, DragDetach, PanelContext, SidePanelEvent, SnapCostingTarget, SnapPanelView,
 };
@@ -30,6 +31,8 @@ use super::loader::{
 use super::log_viewer::{self, LogViewerContext};
 use super::modals::{SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice};
 use super::panes::MainBehavior;
+use super::query::QueryAction;
+use super::query::results::ResultsOutputs;
 use super::query_run::QuerySeries;
 use super::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use super::shutdown::FrameContents;
@@ -177,7 +180,7 @@ impl eframe::App for App {
 
         // Process the current input before replacing the editor text.
         if let Some(text) = self.pending_session_query_draft.take() {
-            self.query_window.set_text(text);
+            self.editor_query.session_mut().set_text(text);
             self.query_window.open = true;
             ui.ctx().request_repaint();
         }
@@ -189,6 +192,13 @@ impl eframe::App for App {
 }
 
 impl App {
+    pub(super) fn query_filter_active(&self) -> bool {
+        self.editor_query
+            .session()
+            .map_matches(self.shared.borrow().loaded_files.view())
+            .is_some_and(|matches| !matches.is_empty())
+    }
+
     pub(super) fn apply_finished_recording_work(&mut self, ctx: &egui::Context) {
         // Adopt the databases first: what waited on them starts in the frame
         // they arrive.
@@ -407,7 +417,7 @@ impl App {
                                 .button(format!("{ICON_TRASH} Clear query filter"))
                                 .clicked()
                             {
-                                self.query_window.clear_filter();
+                                self.editor_query.clear_results();
                                 ui.close();
                             }
                         });
@@ -510,7 +520,7 @@ impl App {
                             filter_state: &mut s.filter_state,
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
-                            query_matches: self.query_window.map_matches(loaded_files),
+                            query_matches: self.editor_query.session().map_matches(loaded_files),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
                             shelf_request: &mut shelf_request,
@@ -566,7 +576,7 @@ impl App {
                         filter_state: &mut s.filter_state,
                         map_center_request: &mut s.map_center_request,
                         popup_pos_request: &mut s.popup_pos_request,
-                        query_matches: self.query_window.map_matches(loaded_files),
+                        query_matches: self.editor_query.session().map_matches(loaded_files),
                         zoom_to_visible_request: &mut s.zoom_to_visible_request,
                         warnings_request: &mut s.warnings_popup,
                         shelf_request: &mut shelf_request,
@@ -644,7 +654,7 @@ impl App {
 
         // "Reset filters" also drops the query filter so the map fully clears.
         if std::mem::take(&mut self.shared.borrow_mut().clear_query_request) {
-            self.query_window.clear_filter();
+            self.editor_query.clear_results();
         }
     }
 
@@ -814,7 +824,10 @@ impl App {
             if let Some(inputs) = query_series.inputs(s.loaded_files.view(), &s.tree, &s.filter) {
                 self.session_query.refresh(inputs);
             }
-            let query_matches = self.query_window.map_matches(s.loaded_files.view());
+            let query_matches = self
+                .editor_query
+                .session()
+                .map_matches(s.loaded_files.view());
             s.discard_stale_session_map(&mut self.map, query_matches, &self.session_query);
 
             if s.pending_session_plot
@@ -993,9 +1006,13 @@ impl App {
             // below is driving a scrub, and vanishes as soon as it closes.
             highlight.scrub_time = None;
             if let Some(inputs) = query_series.inputs(loaded_files.view(), tree, filter) {
-                self.query_window.show(
+                if self.editor_query.update(inputs) {
+                    self.query_window.select_results_tab();
+                }
+                let action = self.query_window.show(
                     ui.ctx(),
-                    inputs,
+                    self.editor_query.session_mut(),
+                    loaded_files.view(),
                     MapEligibility::new(
                         loaded_files.files(),
                         tree.visibility(),
@@ -1005,13 +1022,25 @@ impl App {
                         tree.event_marker_visibility(),
                     )
                     .with_display_mask(*display_mask),
-                    highlight,
-                    &mut gt_side_panel::widgets::PointClickRequests {
-                        map_center: map_center_request,
-                        popup_pos: popup_pos_request,
+                    &mut ResultsOutputs {
+                        highlight,
+                        requests: &mut PointClickRequests {
+                            map_center: map_center_request,
+                            popup_pos: popup_pos_request,
+                        },
+                        reveal: reveal_query_matches_request,
                     },
-                    reveal_query_matches_request,
                 );
+                match action {
+                    Some(QueryAction::Run) => {
+                        if self.editor_query.start(ui.ctx(), inputs.run_inputs()) {
+                            self.query_window
+                                .record_run(self.editor_query.session().text());
+                        }
+                    }
+                    Some(QueryAction::Cancel) => self.editor_query.session().cancel_run(),
+                    None => {}
+                }
             } else {
                 ui.ctx().request_repaint();
             }
