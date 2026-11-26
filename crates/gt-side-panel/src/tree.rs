@@ -252,12 +252,6 @@ impl FileNode {
         }
     }
 
-    fn current_visibility_layout(&self) -> Option<&StoredLayoutRevision> {
-        self.visibility_layout
-            .as_ref()
-            .filter(|layout| layout.is_current())
-    }
-
     fn recompute_check(&mut self) {
         self.check =
             aggregate_check_states(self.tracks.iter().map(|t| t.check)).unwrap_or(CheckState::On);
@@ -292,6 +286,23 @@ struct StoredTrackCheckEdit {
 }
 
 impl StoredHiddenTracks {
+    /// The tree retains edits on an expired observation for a checked layout update.
+    fn for_local_edit<'a>(
+        by_recording: &'a mut BTreeMap<DatabaseRef, Self>,
+        layout: &StoredLayoutRevision,
+    ) -> Option<&'a mut Self> {
+        let stored = by_recording
+            .entry(layout.recording().clone())
+            .or_insert_with(|| Self::awaiting_read(layout));
+        if !stored.layout.same_observation(layout) {
+            if !layout.is_current() || stored.layout.is_current() {
+                return None;
+            }
+            *stored = Self::awaiting_read(layout);
+        }
+        Some(stored)
+    }
+
     fn awaiting_read(layout: &StoredLayoutRevision) -> Self {
         Self {
             layout: layout.clone(),
@@ -781,17 +792,11 @@ impl TreeState {
             if edited_tracks.peek().is_none() {
                 continue;
             }
-            let recording = layout.recording();
-            let stored = self
-                .hidden_tracks_by_recording
-                .entry(recording.clone())
-                .or_insert_with(|| StoredHiddenTracks::awaiting_read(layout));
-            if !stored.layout.same_observation(layout) {
-                if !layout.is_current() || stored.layout.is_current() {
-                    continue;
-                }
-                *stored = StoredHiddenTracks::awaiting_read(layout);
-            }
+            let Some(stored) =
+                StoredHiddenTracks::for_local_edit(&mut self.hidden_tracks_by_recording, layout)
+            else {
+                continue;
+            };
 
             let mut changed = false;
             for track in edited_tracks {
@@ -807,30 +812,24 @@ impl TreeState {
             }
             if changed {
                 self.recordings_with_hidden_tracks_to_store
-                    .insert(recording.clone());
+                    .insert(layout.recording().clone());
             }
         }
     }
 
     fn clear_saved_track_visibility(&mut self) {
         for file_node in &self.files {
-            let Some(layout) = file_node.current_visibility_layout() else {
+            let Some(layout) = file_node.visibility_layout.as_ref() else {
                 continue;
             };
-            let recording = layout.recording();
-            let stored = self
-                .hidden_tracks_by_recording
-                .entry(recording.clone())
-                .or_insert_with(|| StoredHiddenTracks::awaiting_read(layout));
-            if !stored.layout.same_observation(layout) {
-                if stored.layout.is_current() {
-                    continue;
-                }
-                *stored = StoredHiddenTracks::awaiting_read(layout);
-            }
+            let Some(stored) =
+                StoredHiddenTracks::for_local_edit(&mut self.hidden_tracks_by_recording, layout)
+            else {
+                continue;
+            };
             if stored.clear_visibility(self.next_track_check_edit) {
                 self.recordings_with_hidden_tracks_to_store
-                    .insert(recording.clone());
+                    .insert(layout.recording().clone());
             }
             self.next_track_check_edit += 1;
         }
