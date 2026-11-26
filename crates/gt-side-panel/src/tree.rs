@@ -262,43 +262,54 @@ impl FileNode {
         self.check =
             aggregate_check_states(self.tracks.iter().map(|t| t.check)).unwrap_or(CheckState::On);
     }
+
+    fn apply_stored_hidden_tracks(&mut self, track_numbers: &BTreeSet<usize>) {
+        for track in &mut self.tracks {
+            if track.check_edit == TrackCheckEdit::Unchanged {
+                track.check = if track_numbers.contains(&track.track_number) {
+                    CheckState::Off
+                } else {
+                    CheckState::On
+                };
+            }
+        }
+        self.recompute_check();
+    }
 }
 
 struct StoredHiddenTracks {
     layout: StoredLayoutRevision,
-    visibility: StoredTrackVisibility,
+    hidden: Option<BTreeSet<usize>>,
+    // Retain edits after writes to reconcile both addresses of a checked rename.
+    edits: BTreeMap<usize, StoredTrackCheckEdit>,
 }
 
-enum StoredTrackVisibility {
-    AwaitingRead(BTreeMap<usize, CheckState>),
-    Observed {
-        hidden: BTreeSet<usize>,
-        locally_edited: bool,
-    },
+#[derive(Clone, Copy)]
+struct StoredTrackCheckEdit {
+    check: CheckState,
+    sequence: u64,
 }
 
 impl StoredHiddenTracks {
     fn awaiting_read(layout: &StoredLayoutRevision) -> Self {
         Self {
             layout: layout.clone(),
-            visibility: StoredTrackVisibility::AwaitingRead(BTreeMap::new()),
+            hidden: None,
+            edits: BTreeMap::new(),
         }
     }
 
     /// The tree initializes checkboxes from an exact cached layout even after that layout expires.
     fn numbers_for_layout(&self, layout: &StoredLayoutRevision) -> Option<&BTreeSet<usize>> {
-        if let StoredTrackVisibility::Observed { hidden, .. } = &self.visibility
-            && self.layout.same_observation(layout)
-        {
-            return Some(hidden);
-        }
-        None
+        self.hidden
+            .as_ref()
+            .filter(|_| self.layout.same_observation(layout))
     }
 
-    fn adopt_purge(&mut self, update: &StoredTrackSnapshotUpdate) {
+    fn adopt_layout_update(&mut self, update: &StoredTrackSnapshotUpdate) {
         self.layout = update.after().layout().clone();
-        if let StoredTrackVisibility::AwaitingRead(edits) = &mut self.visibility {
-            edits.retain(|&number, _| {
+        if self.hidden.is_none() {
+            self.edits.retain(|&number, _| {
                 number
                     .checked_sub(1)
                     .and_then(|index| update.after().rows().get(index))
@@ -307,23 +318,36 @@ impl StoredHiddenTracks {
         }
     }
 
-    fn record_edit(&mut self, track: &TrackNode) -> bool {
-        match &mut self.visibility {
-            StoredTrackVisibility::AwaitingRead(edits) => {
-                edits.insert(track.track_number, track.check);
-                false
-            }
-            StoredTrackVisibility::Observed {
-                hidden,
-                locally_edited,
-            } => {
-                let changed = track
-                    .check
-                    .apply_to_hidden_tracks(track.track_number, hidden);
-                *locally_edited |= changed;
-                changed
-            }
+    fn reconcile_successor(&mut self, successor: Self) {
+        for (number, edit) in successor.edits {
+            self.edits
+                .entry(number)
+                .and_modify(|earlier| {
+                    if edit.sequence > earlier.sequence {
+                        *earlier = edit;
+                    }
+                })
+                .or_insert(edit);
         }
+        if let Some(mut hidden) = successor.hidden.or_else(|| self.hidden.take()) {
+            self.apply_edits(&mut hidden);
+            self.hidden = Some(hidden);
+        }
+    }
+
+    fn apply_edits(&self, hidden: &mut BTreeSet<usize>) -> bool {
+        let mut changed = false;
+        for (&number, edit) in &self.edits {
+            changed |= edit.check.apply_to_hidden_tracks(number, hidden);
+        }
+        changed
+    }
+
+    fn record_edit(&mut self, number: usize, edit: StoredTrackCheckEdit) -> bool {
+        self.edits.insert(number, edit);
+        self.hidden
+            .as_mut()
+            .is_some_and(|hidden| edit.check.apply_to_hidden_tracks(number, hidden))
     }
 }
 
@@ -356,6 +380,7 @@ pub struct TreeState {
     generated_marker_visibility: GeneratedMarkerVisibility,
     /// Saved visibility and checkbox edits by stored track number and layout.
     hidden_tracks_by_recording: BTreeMap<DatabaseRef, StoredHiddenTracks>,
+    next_track_check_edit: u64,
     /// The recordings whose hidden tracks differ from what the history
     /// database holds, until [`TreeState::take_observed_hidden_tracks_to_store`] takes
     /// them.
@@ -383,6 +408,7 @@ impl TreeState {
             event_marker_visibility: EventMarkerVisibility::new(),
             generated_marker_visibility: GeneratedMarkerVisibility::new(),
             hidden_tracks_by_recording: BTreeMap::new(),
+            next_track_check_edit: 0,
             recordings_with_hidden_tracks_to_store: BTreeSet::new(),
         }
     }
@@ -423,41 +449,38 @@ impl TreeState {
             return;
         }
         let recording = layout.recording().clone();
-        let mut changed = false;
-        if let Some(stored) = self.hidden_tracks_by_recording.get(&recording)
-            && stored.layout.same_observation(&layout)
+        if self
+            .hidden_tracks_by_recording
+            .get(&recording)
+            .is_some_and(|stored| {
+                stored.layout.same_observation(&layout)
+                    && stored.hidden.is_some()
+                    && !stored.edits.is_empty()
+            })
         {
-            match &stored.visibility {
-                StoredTrackVisibility::Observed {
-                    locally_edited: true,
-                    ..
-                } => return,
-                StoredTrackVisibility::Observed { .. } => {}
-                StoredTrackVisibility::AwaitingRead(edits) => {
-                    for (&number, &check) in edits {
-                        changed |= check.apply_to_hidden_tracks(number, &mut track_numbers);
-                    }
-                }
-            }
+            return;
         }
+        let edits = self
+            .hidden_tracks_by_recording
+            .remove(&recording)
+            .filter(|stored| stored.layout.same_observation(&layout))
+            .map(|stored| stored.edits)
+            .unwrap_or_default();
+        let mut stored = StoredHiddenTracks {
+            layout,
+            hidden: None,
+            edits,
+        };
+        let changed = stored.apply_edits(&mut track_numbers);
         for file_node in &mut self.files {
             if !file_node
                 .visibility_layout
                 .as_ref()
-                .is_some_and(|source| source.same_observation(&layout))
+                .is_some_and(|source| source.same_observation(&stored.layout))
             {
                 continue;
             }
-            for track_node in &mut file_node.tracks {
-                if track_node.check_edit == TrackCheckEdit::Unchanged {
-                    track_node.check = if track_numbers.contains(&track_node.track_number) {
-                        CheckState::Off
-                    } else {
-                        CheckState::On
-                    };
-                }
-            }
-            file_node.recompute_check();
+            file_node.apply_stored_hidden_tracks(&track_numbers);
         }
         if changed {
             self.recordings_with_hidden_tracks_to_store
@@ -466,16 +489,8 @@ impl TreeState {
             self.recordings_with_hidden_tracks_to_store
                 .remove(&recording);
         }
-        self.hidden_tracks_by_recording.insert(
-            recording,
-            StoredHiddenTracks {
-                layout,
-                visibility: StoredTrackVisibility::Observed {
-                    hidden: track_numbers,
-                    locally_edited: changed,
-                },
-            },
-        );
+        stored.hidden = Some(track_numbers);
+        self.hidden_tracks_by_recording.insert(recording, stored);
         self.rebuild_visibility();
     }
 
@@ -509,8 +524,8 @@ impl TreeState {
     }
 
     /// The tree preserves expansion, event paths and marker toggles by loaded file ID and track number.
-    /// Tracks on the same layout keep their checkboxes.
-    /// Tracks on a different stored layout use that layout's saved visibility.
+    /// Tracks on the same layout keep their local checkbox edits.
+    /// Tracks without local edits use the cached visibility for their layout.
     /// New rows start collapsed.
     ///
     /// Each [`NodeKey`] the state holds - the selection, its anchor, the
@@ -571,18 +586,16 @@ impl TreeState {
                     let mut track_node = previous.unwrap_or_else(|| TrackNode::new(track_number));
                     if reset_checks || new_track {
                         track_node.check_edit = TrackCheckEdit::Unchanged;
-                        track_node.check = if hidden_tracks
-                            .is_some_and(|numbers| numbers.contains(&track_number))
-                        {
-                            CheckState::Off
-                        } else {
-                            CheckState::On
-                        };
+                        track_node.check = CheckState::On;
                     }
                     track_node.sync_event_paths_from(loaded_track);
                     file_node.tracks.push(track_node);
                 }
-                file_node.recompute_check();
+                if let Some(hidden_tracks) = hidden_tracks {
+                    file_node.apply_stored_hidden_tracks(hidden_tracks);
+                } else {
+                    file_node.recompute_check();
+                }
                 file_node
             })
             .collect();
@@ -593,30 +606,52 @@ impl TreeState {
         self.rebuild_generated_marker_visibility();
     }
 
-    pub fn sync_after_track_purges(
+    pub fn sync_after_track_snapshot_updates(
         &mut self,
         files: LoadedFilesView<'_>,
         updates: &[StoredTrackSnapshotUpdate],
         adopted: &[(LoadedFileId, &StoredTrackSnapshotUpdate)],
     ) -> Vec<StoredLayoutRevision> {
+        let mut updated_visibility = false;
         for update in updates {
             let before = update.before().layout();
-            let recording = before.recording();
-            if let Some(stored) = self.hidden_tracks_by_recording.get_mut(recording)
-                && stored.layout.same_observation(before)
+            let after = update.after().layout();
+            if self
+                .hidden_tracks_by_recording
+                .get(before.recording())
+                .is_none_or(|stored| !stored.layout.same_observation(before))
+                || self
+                    .hidden_tracks_by_recording
+                    .get(after.recording())
+                    .is_some_and(|stored| {
+                        stored.layout.is_current() && !stored.layout.same_observation(after)
+                    })
             {
-                stored.adopt_purge(update);
-                if matches!(
-                    &stored.visibility,
-                    StoredTrackVisibility::Observed {
-                        locally_edited: true,
-                        ..
-                    }
-                ) {
-                    self.recordings_with_hidden_tracks_to_store
-                        .insert(recording.clone());
-                }
+                continue;
             }
+            let Some(mut stored) = self.hidden_tracks_by_recording.remove(before.recording())
+            else {
+                continue;
+            };
+            stored.adopt_layout_update(update);
+            self.recordings_with_hidden_tracks_to_store
+                .remove(before.recording());
+            let after_recording = after.recording();
+            if let Some(successor) = self.hidden_tracks_by_recording.remove(after_recording)
+                && successor.layout.same_observation(after)
+            {
+                stored.reconcile_successor(successor);
+            }
+            if stored.hidden.is_some() && !stored.edits.is_empty() {
+                self.recordings_with_hidden_tracks_to_store
+                    .insert(after_recording.clone());
+            } else {
+                self.recordings_with_hidden_tracks_to_store
+                    .remove(after_recording);
+            }
+            self.hidden_tracks_by_recording
+                .insert(after_recording.clone(), stored);
+            updated_visibility = true;
         }
         for &(id, update) in adopted {
             let before = update.before().layout();
@@ -631,7 +666,7 @@ impl TreeState {
                 node.visibility_layout = Some(after.clone());
             }
         }
-        if !adopted.is_empty() {
+        if updated_visibility || !adopted.is_empty() {
             self.sync_from_loaded_files(files);
         }
         let adopted_layouts = adopted.iter().map(|(_, update)| update.after().layout());
@@ -639,7 +674,8 @@ impl TreeState {
             let layout = update.after().layout();
             let stored = self.hidden_tracks_by_recording.get(layout.recording())?;
             if stored.layout.same_observation(layout)
-                && matches!(&stored.visibility, StoredTrackVisibility::AwaitingRead(edits) if !edits.is_empty())
+                && stored.hidden.is_none()
+                && !stored.edits.is_empty()
             {
                 return Some(layout);
             }
@@ -670,10 +706,8 @@ impl TreeState {
                 recording,
                 StoredHiddenTracks {
                     layout: observation,
-                    visibility: StoredTrackVisibility::Observed {
-                        hidden: BTreeSet::new(),
-                        locally_edited: false,
-                    },
+                    hidden: Some(BTreeSet::new()),
+                    edits: BTreeMap::new(),
                 },
             );
         }
@@ -736,7 +770,14 @@ impl TreeState {
 
             let mut changed = false;
             for track in edited_tracks {
-                changed |= stored.record_edit(track);
+                changed |= stored.record_edit(
+                    track.track_number,
+                    StoredTrackCheckEdit {
+                        check: track.check,
+                        sequence: self.next_track_check_edit,
+                    },
+                );
+                self.next_track_check_edit += 1;
                 track.check_edit = TrackCheckEdit::Recorded;
             }
             if changed {
@@ -759,18 +800,23 @@ impl TreeState {
             else {
                 continue;
             };
-            match &mut stored.visibility {
-                StoredTrackVisibility::AwaitingRead(edits) => edits.clear(),
-                StoredTrackVisibility::Observed {
-                    hidden,
-                    locally_edited,
-                } if !hidden.is_empty() => {
-                    hidden.clear();
-                    *locally_edited = true;
-                    self.recordings_with_hidden_tracks_to_store
-                        .insert(recording.clone());
+            let Some(hidden) = &mut stored.hidden else {
+                stored.edits.clear();
+                continue;
+            };
+            if !hidden.is_empty() {
+                for number in mem::take(hidden) {
+                    stored.edits.insert(
+                        number,
+                        StoredTrackCheckEdit {
+                            check: CheckState::On,
+                            sequence: self.next_track_check_edit,
+                        },
+                    );
                 }
-                StoredTrackVisibility::Observed { .. } => {}
+                self.next_track_check_edit += 1;
+                self.recordings_with_hidden_tracks_to_store
+                    .insert(recording.clone());
             }
         }
     }

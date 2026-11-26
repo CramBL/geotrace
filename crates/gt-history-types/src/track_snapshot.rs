@@ -293,20 +293,7 @@ impl HistoryAccess {
         expected: &StoredTrackSnapshot,
         actual: &StoredTrackSnapshot,
     ) -> Result<(), DbError> {
-        if expected.same_observation(actual)
-            && expected.is_current()
-            && expected.rows.len() == actual.rows.len()
-            && expected
-                .rows
-                .iter()
-                .zip(actual.rows())
-                .all(|(expected, actual)| {
-                    expected.start == actual.start
-                        && expected.end == actual.end
-                        && (expected.state == TrackState::Deleted)
-                            == (actual.state == TrackState::Deleted)
-                })
-        {
+        if expected.is_current() && expected.same_layout_and_payload(actual) {
             Ok(())
         } else {
             Err(DbError::StoredTrackLayoutChanged)
@@ -423,6 +410,18 @@ impl StoredTrackSnapshot {
 
     pub fn same_payload_revision(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.payload_revision, &other.payload_revision)
+    }
+
+    /// Compare the payload and track ranges across membership changes and expired observations.
+    pub fn same_layout_and_payload(&self, other: &Self) -> bool {
+        self.same_observation(other)
+            && self.same_payload_revision(other)
+            && self.rows.len() == other.rows.len()
+            && self.rows.iter().zip(other.rows()).all(|(left, right)| {
+                left.start == right.start
+                    && left.end == right.end
+                    && (left.state == TrackState::Deleted) == (right.state == TrackState::Deleted)
+            })
     }
 
     fn is_partial_purge_successor(&self, rows: &[TrackRange]) -> bool {

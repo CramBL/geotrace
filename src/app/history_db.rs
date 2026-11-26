@@ -150,7 +150,6 @@ pub enum StoredTrackAction {
 /// A completed mutation, carried back so the UI can show the right toast.
 pub enum DbOp {
     IdentityRenamed {
-        old: String,
         new: String,
         outcome: Option<HistoryRenameOutcome>,
     },
@@ -1172,7 +1171,7 @@ fn handle_write_request(
                 Err(error) => (None, Err(error)),
             };
             Response::Mutated {
-                op: DbOp::IdentityRenamed { old, new, outcome },
+                op: DbOp::IdentityRenamed { new, outcome },
                 result,
             }
         }

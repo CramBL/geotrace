@@ -20,6 +20,7 @@ mod about_dialog;
 mod app_snapshots;
 mod archive_recovery;
 mod detached_panel;
+mod history_rename;
 mod instance_wait;
 mod loading;
 mod log_association;
