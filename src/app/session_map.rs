@@ -4,7 +4,7 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::RecordingData;
 use gt_map::{NavMap, PresentationCamera};
 use gt_query_run::MatchExtent;
-use gt_session_bridge::{ErrorCode, OpenPoint, QueryJobId, RangeTarget, ShowOnMap};
+use gt_session_bridge::{ErrorCode, OpenPoint, RangeTarget, ShowOnMap};
 use gt_types::{DataCategory, FixRef, Generation, Latitude, Longitude, PointIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, MapElementRef, MapEligibility, MapPresence, MapPresenceResult, MatchHighlight,
@@ -12,11 +12,13 @@ use gt_ui_types::{
 };
 use uuid::Uuid;
 
+use super::pane_presentation::{PanePresentation, PresentationDetail, PresentationQueryMatch};
 use super::query_run::BackgroundQuery;
 use super::{App, SharedAppState};
 
 #[derive(Clone, Copy)]
 pub(super) struct MapPresentation {
+    id: Uuid,
     target: PresentationTarget,
     inputs: MapPresentationInputs,
 }
@@ -29,7 +31,41 @@ pub(super) struct QueuedMapPresentation {
 #[derive(Clone, Copy)]
 pub(super) struct AppliedMapPresentation {
     presentation: MapPresentation,
-    owned_pin_revision: Option<PinRevision>,
+    pin: Option<PresentedPin>,
+}
+
+impl AppliedMapPresentation {
+    pub(super) fn id(self) -> Uuid {
+        self.presentation.id
+    }
+
+    pub(super) fn target(self) -> PanePresentation {
+        match self.presentation.target {
+            PresentationTarget::Point { fix, .. } => PanePresentation {
+                track: fix.track,
+                detail: PresentationDetail::Point(fix.point),
+            },
+            PresentationTarget::Range {
+                highlight,
+                query_match,
+            } => PanePresentation {
+                track: highlight.track,
+                detail: query_match.map_or(
+                    PresentationDetail::Points {
+                        start: highlight.start,
+                        end: highlight.end,
+                    },
+                    PresentationQueryMatch::detail,
+                ),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PresentedPin {
+    revision: PinRevision,
+    owned: bool,
 }
 
 impl MapPresentation {
@@ -39,6 +75,7 @@ impl MapPresentation {
         query_matches: Option<&QueryMatches>,
     ) -> Self {
         Self {
+            id: Uuid::new_v4(),
             target,
             inputs: MapPresentationInputs::of(shared, query_matches),
         }
@@ -49,7 +86,7 @@ impl MapPresentation {
         query_matches: Option<&QueryMatches>,
         track: TrackRef,
         points: Range<usize>,
-        job: Option<QueryJobId>,
+        query_match: Option<PresentationQueryMatch>,
     ) -> Result<Self, ErrorCode> {
         if !shared
             .display_mask
@@ -63,7 +100,7 @@ impl MapPresentation {
         Ok(Self::new(
             PresentationTarget::Range {
                 highlight: MatchHighlight::new(track, &points),
-                job,
+                query_match,
             },
             shared,
             query_matches,
@@ -82,12 +119,16 @@ impl MapPresentation {
         let scope = shared.map_presence(query_matches);
         match self.target {
             PresentationTarget::Point { fix, .. } => scope.draws(MapElementRef::Fix(fix)),
-            PresentationTarget::Range { highlight, job } => {
-                job.is_none_or(|id| queries.has_current_results(id, shared.loaded_files.view()))
-                    && scope
-                        .eligibility()
-                        .prepare_track(highlight.track)
-                        .category_visible(DataCategory::Track)
+            PresentationTarget::Range {
+                highlight,
+                query_match,
+            } => {
+                query_match.is_none_or(|matched| {
+                    queries.has_current_results(matched.job, shared.loaded_files.view())
+                }) && scope
+                    .eligibility()
+                    .prepare_track(highlight.track)
+                    .category_visible(DataCategory::Track)
             }
         }
     }
@@ -115,7 +156,7 @@ enum PresentationTarget {
     },
     Range {
         highlight: MatchHighlight,
-        job: Option<QueryJobId>,
+        query_match: Option<PresentationQueryMatch>,
     },
 }
 
@@ -176,7 +217,7 @@ impl App {
         session: Uuid,
         ShowOnMap { target }: ShowOnMap,
     ) -> Result<MapPresentation, ErrorCode> {
-        let (track, points, query_job) = match target {
+        let (track, points, query_match) = match target {
             RangeTarget::Track { track, start, end } => {
                 let shared = self.shared.borrow();
                 let files = shared.loaded_files.view();
@@ -186,7 +227,7 @@ impl App {
             RangeTarget::QueryMatch {
                 job,
                 query,
-                matched,
+                matched: position,
             } => {
                 self.require_completed_query(session, job)?;
                 let shared = self.shared.borrow();
@@ -194,11 +235,19 @@ impl App {
                     .editor_query
                     .session()
                     .retained_results(shared.loaded_files.view())?;
-                let matched = results.query(query)?.match_at(matched.into())?;
+                let matched = results.query(query)?.match_at(position.into())?;
                 let MatchExtent::Points(points) = matched.extent() else {
                     return Err(ErrorCode::QueryMatchIsChannel);
                 };
-                (matched.track(), points.clone(), Some(job))
+                (
+                    matched.track(),
+                    points.clone(),
+                    Some(PresentationQueryMatch {
+                        job,
+                        query,
+                        match_ordinal: position.match_ordinal,
+                    }),
+                )
             }
         };
         let shared = self.shared.borrow();
@@ -206,7 +255,7 @@ impl App {
             .editor_query
             .session()
             .map_matches(shared.loaded_files.view());
-        MapPresentation::track_range(&shared, query_matches, track, points, query_job)
+        MapPresentation::track_range(&shared, query_matches, track, points, query_match)
     }
 }
 
@@ -242,9 +291,9 @@ impl SharedAppState {
         });
         if let Some(active) = self.presented_session_map
             && (!active.presentation.is_current(self, query_matches, queries)
-                || active.owned_pin_revision.is_some_and(|revision| {
-                    revision != self.highlight.pin_revision()
-                        && map.pin_rollback_revision(&self.highlight) != Some(revision)
+                || active.pin.is_some_and(|pin| {
+                    pin.revision != self.highlight.pin_revision()
+                        && map.pin_rollback_revision(&self.highlight) != Some(pin.revision)
                 }))
         {
             self.clear_session_map(map);
@@ -262,8 +311,17 @@ impl SharedAppState {
         query_matches: Option<&QueryMatches>,
     ) -> Option<PresentationCamera> {
         let presentation = self.pending_session_map.take()?.presentation;
+        if let PresentationTarget::Range { highlight, .. } = presentation.target
+            && !gt_map::query_match_has_geometry(
+                self.map_presence(query_matches),
+                highlight.track,
+                &(highlight.start..highlight.end),
+            )
+        {
+            return None;
+        }
         self.clear_session_map(map);
-        let (camera, owned_pin_revision) = match presentation.target {
+        let (camera, pin) = match presentation.target {
             PresentationTarget::Point {
                 fix,
                 latitude,
@@ -274,41 +332,44 @@ impl SharedAppState {
                     latitude,
                     longitude,
                 };
-                if self.highlight.is_sticky(element) {
-                    return Some(camera);
+                let owned = !self.highlight.is_sticky(element);
+                if owned {
+                    let MapPresenceResult::Present(present) =
+                        self.map_presence(query_matches).resolve(element)
+                    else {
+                        return None;
+                    };
+                    let mut highlight = self.highlight;
+                    highlight.pin(present);
+                    self.highlight = highlight;
+                    self.popup_pos_request = None;
                 }
-                let MapPresenceResult::Present(present) =
-                    self.map_presence(query_matches).resolve(element)
-                else {
-                    return None;
-                };
-                let mut highlight = self.highlight;
-                highlight.pin(present);
-                self.highlight = highlight;
-                self.popup_pos_request = None;
-                (camera, Some(self.highlight.pin_revision()))
+                (
+                    camera,
+                    Some(PresentedPin {
+                        revision: self.highlight.pin_revision(),
+                        owned,
+                    }),
+                )
             }
             PresentationTarget::Range { highlight, .. } => {
                 self.highlight.presented_match = Some(highlight);
                 (PresentationCamera::TrackRange(highlight), None)
             }
         };
-        self.presented_session_map = Some(AppliedMapPresentation {
-            presentation,
-            owned_pin_revision,
-        });
+        self.presented_session_map = Some(AppliedMapPresentation { presentation, pin });
         Some(camera)
     }
 
-    fn clear_session_map(&mut self, map: &mut NavMap) {
+    pub(super) fn clear_session_map(&mut self, map: &mut NavMap) {
         if let Some(active) = self.presented_session_map.take() {
             match active.presentation.target {
                 PresentationTarget::Point { .. } => {
-                    let Some(owned) = active.owned_pin_revision else {
+                    let Some(pin) = active.pin.filter(|pin| pin.owned) else {
                         return;
                     };
-                    map.discard_pin_rollback(owned);
-                    if owned == self.highlight.pin_revision() {
+                    map.discard_pin_rollback(pin.revision);
+                    if pin.revision == self.highlight.pin_revision() {
                         self.highlight.clear_sticky();
                     }
                 }

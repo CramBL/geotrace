@@ -1,6 +1,8 @@
 use chrono::TimeDelta;
 use egui::accesskit::Role;
 use egui_kittest::Harness;
+use egui_kittest::kittest::NodeT as _;
+use gt_pending_writes::WriteKind;
 use gt_session_bridge::{
     ErrorCode, GetQueryResults, OpenPoint, QueryJobId, QueryJobState, QueryMatchPosition,
     QueryPageRequest, RangeTarget, Reply, Request, ShowOnMap,
@@ -48,15 +50,17 @@ fn session_map_frames_a_range_when_the_map_draws() {
         harness.state().shared.borrow().highlight.presented_match,
         None
     );
+    assert!(harness.query_by_label("Dismiss map presentation").is_none());
 
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, true);
-    harness.step();
+    harness.run_steps(2);
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     assert_eq!(
         harness.state().shared.borrow().highlight.presented_match,
         Some(MatchHighlight::new(track_ref, &(0..33)))
     );
+    harness.get_by_label("test.gtd / Track 1 / Points 0 to 32");
     let framed = harness.state().map.viewport_geo_bounds().unwrap();
     assert!(framed.lat_max - framed.lat_min < initial.lat_max - initial.lat_min);
     let shared = harness.state().shared.borrow();
@@ -68,11 +72,25 @@ fn session_map_frames_a_range_when_the_map_draws() {
     assert!(excluded_latitude < framed.lat_min);
     drop(shared);
 
-    self::exclude_recording_times(&mut harness);
-    harness.step();
+    let dismiss = harness
+        .get_by_role_and_label(Role::Button, "Dismiss map presentation")
+        .rect();
+    harness.click_at(dismiss.center());
+    harness.run_steps(2);
     assert_eq!(
         harness.state().shared.borrow().highlight.presented_match,
         None
+    );
+    assert!(harness.query_by_label("Dismiss map presentation").is_none());
+    let after = harness.state().map.viewport_geo_bounds().unwrap();
+    assert_eq!(
+        (after.lat_min, after.lat_max, after.lon_min, after.lon_max),
+        (
+            framed.lat_min,
+            framed.lat_max,
+            framed.lon_min,
+            framed.lon_max
+        )
     );
 }
 
@@ -141,7 +159,7 @@ fn session_map_discards_a_query_match_without_a_status_request(
         session::execute(&mut harness, request.clone()),
         Reply::MapPresentationQueued
     );
-    harness.step();
+    harness.run_steps(2);
     {
         let shared = harness.state().shared.borrow();
         assert_eq!(
@@ -150,6 +168,12 @@ fn session_map_discards_a_query_match_without_a_status_request(
         );
         assert_eq!(shared.pending_session_map.is_some(), !map_visible);
     }
+    assert_eq!(
+        harness
+            .query_by_label_contains("Track 1 / Query 2 match 1")
+            .is_some(),
+        map_visible
+    );
 
     let expected_error = match invalidation {
         MatchInvalidation::ReplaceJob => {
@@ -172,6 +196,7 @@ fn session_map_discards_a_query_match_without_a_status_request(
         assert_eq!(shared.highlight.presented_match, None);
         assert!(shared.pending_session_map.is_none());
     }
+    assert!(harness.query_by_label("Dismiss map presentation").is_none());
     assert_eq!(
         session::execute(&mut harness, request),
         expected_error.into()
@@ -486,15 +511,27 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
         }),
     ];
     for request in requests {
+        let is_point = matches!(request, Request::OpenPoint(_));
         assert_eq!(
             session::execute(&mut harness, request),
             Reply::MapPresentationQueued,
         );
-        harness.step();
+        harness.run_steps(2);
         assert_eq!(
             harness.state().shared.borrow().highlight.sticky(),
             Some(MapElementRef::Fix(fix)),
         );
+        if is_point {
+            harness
+                .get_by_role_and_label(Role::Button, "Dismiss map presentation")
+                .click();
+            harness.run_steps(2);
+            assert!(harness.query_by_label("Dismiss map presentation").is_none());
+            assert_eq!(
+                harness.state().shared.borrow().highlight.sticky(),
+                Some(MapElementRef::Fix(fix))
+            );
+        }
     }
     assert_eq!(
         harness.state().shared.borrow().highlight.presented_match,
@@ -522,6 +559,53 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
     app.tiles_tree.set_visible(app.map_tile_id, true);
     harness.step();
     assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
+}
+
+#[test]
+fn dismissing_a_presented_point_clears_its_pin() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    let point = 20;
+    assert_eq!(
+        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
+        Reply::MapPresentationQueued
+    );
+    harness.run_steps(2);
+    harness.get_by_label("test.gtd / Track 1 / Point 20");
+    assert!(harness.state().shared.borrow().highlight.sticky().is_some());
+    harness
+        .get_by_role_and_label(Role::Button, "Dismiss map presentation")
+        .click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Dismiss map presentation").is_none());
+    assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
+}
+
+#[test]
+fn the_map_dismiss_button_is_disabled_during_shutdown() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::OpenPoint(OpenPoint { track, point: 20 })
+        ),
+        Reply::MapPresentationQueued
+    );
+    harness.run_steps(2);
+    let _write = harness
+        .state()
+        .pending_writes
+        .try_begin("Saving recording", WriteKind::RecordingDatabase)
+        .unwrap();
+    ui_tests::request_window_close(&mut harness);
+    harness.step();
+    assert!(
+        harness
+            .get_by_role_and_label(Role::Button, "Dismiss map presentation")
+            .accesskit_node()
+            .is_disabled()
+    );
 }
 
 #[test]

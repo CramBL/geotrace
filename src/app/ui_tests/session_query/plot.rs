@@ -1,10 +1,11 @@
 use chrono::TimeDelta;
+use egui::accesskit::Role;
 use gt_loaded_files::FileHistory;
 use gt_session_bridge::{
     ErrorCode, QueryJobState, QueryMatchPosition, RangeTarget, Reply, Request, ShowOnMap,
     ShowOnPlot,
 };
-use gt_test_utils::fixtures;
+use gt_test_utils::{Queryable as _, fixtures};
 use gt_types::{FileIdx, MetricKind};
 use rstest::rstest;
 
@@ -20,10 +21,10 @@ fn the_plot_frames_filtered_fix_times_across_a_clock_reversal() {
         .into_iter()
         .flat_map(|offset| fixtures::nav_points_from(base + TimeDelta::milliseconds(offset), 1, 1))
         .collect();
-    let recording =
-        gt_test_utils::loaded_file_with_tracks(vec![gt_test_utils::loaded_track_with_points(
-            points,
-        )]);
+    let mut track = gt_test_utils::loaded_track_with_points(points);
+    track.metadata.index = 1;
+    let mut recording = gt_test_utils::loaded_file_with_tracks(vec![track]);
+    recording.metadata.filename = "reversal.gtd".to_owned();
     let app = harness.state_mut();
     app.tiles_tree.tiles.set_visible(app.plot_tile_id, false);
     {
@@ -61,6 +62,16 @@ fn the_plot_frames_filtered_fix_times_across_a_clock_reversal() {
     );
     assert!(harness.state().plot_is_visible());
     harness.run_steps(3);
+    harness.get_by_label("reversal.gtd / Track 1 / Points 0 to 4");
+    harness
+        .get_by_role_and_label(Role::Button, "Dismiss plot presentation")
+        .click();
+    harness.run_steps(2);
+    assert!(
+        harness
+            .query_by_label("Dismiss plot presentation")
+            .is_none()
+    );
     let shared = harness.state().shared.borrow();
     let state = &shared.plot_state;
     let base = base.timestamp() as f64;
@@ -96,6 +107,7 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
         harness.state().shared.borrow().plot_state.visible_x_range(),
         Some(framed.clone())
     );
+    harness.get_by_label_contains("Track 1 / Points 20 to 23");
 
     let target = RangeTarget::Track {
         track,
@@ -115,6 +127,11 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
     assert_eq!(shared.plot_state.visible_x_range(), Some(map_range.clone()));
     assert!(shared.plot_state.sync_to_map);
     drop(shared);
+    assert!(
+        harness
+            .query_by_label("Dismiss plot presentation")
+            .is_none()
+    );
 
     assert_eq!(
         session::execute(&mut harness, frame),
@@ -179,6 +196,11 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
     harness.step();
     assert!(
         harness
+            .query_by_label("Dismiss plot presentation")
+            .is_none()
+    );
+    assert!(
+        harness
             .state()
             .shared
             .borrow()
@@ -199,6 +221,12 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
     }
     harness.set_size(egui::vec2(1024.0, 700.0));
     harness.run_steps(3);
+    assert_eq!(
+        harness
+            .query_by_label_contains("Track 1 / Query 1 match 1")
+            .is_some(),
+        !replace_job
+    );
     let shared = harness.state().shared.borrow();
     let point = point_at.timestamp() as f64;
     let extent = point - 1.0..=point + 1.0;
@@ -210,6 +238,57 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
         assert_eq!(shared.plot_state.visible_x_range(), Some(extent));
     }
     assert!(shared.pending_session_plot.is_none());
+    drop(shared);
+    if !replace_job {
+        assert_ne!(session::start_query(&mut harness, "points"), job);
+        harness.run_steps(2);
+        assert!(
+            harness
+                .query_by_label("Dismiss plot presentation")
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn hiding_the_plot_clears_its_applied_presentation() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    let target = RangeTarget::Track {
+        track,
+        start: Some(20),
+        end: Some(24),
+    };
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::ShowOnPlot(ShowOnPlot {
+                target,
+                metrics: Vec::new()
+            })
+        ),
+        Reply::PlotPresentationQueued,
+    );
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::Button, "Dismiss plot presentation");
+    harness
+        .get_by_role_and_label(Role::Button, "Hide plot")
+        .click();
+    harness.run_steps(2);
+    assert!(!harness.state().plot_is_visible());
+    assert!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .presented_session_plot
+            .is_none()
+    );
+    assert!(
+        harness
+            .query_by_label("Dismiss plot presentation")
+            .is_none()
+    );
 }
 
 #[test]

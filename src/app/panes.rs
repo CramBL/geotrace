@@ -1,4 +1,4 @@
-use egui::WidgetText;
+use egui::{Align, Align2, Area, Frame, Layout, Role, WidgetInfo, WidgetText};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
@@ -7,6 +7,7 @@ use gt_types::{Generation, LoadedFile};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
 use super::SharedAppState;
+use super::pane_presentation::PresentationControls;
 
 /// Pane variants for the central area tiles tree.
 pub(super) enum MainPane {
@@ -71,7 +72,8 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
         match pane {
             MainPane::Map => {
                 let s = &mut *self.state;
-                let presentation_camera = if ui.max_rect().intersect(ui.clip_rect()).is_positive() {
+                let map_viewport = ui.max_rect().intersect(ui.clip_rect());
+                let presentation_camera = if map_viewport.is_positive() {
                     s.apply_session_map(self.map, self.query_matches)
                 } else {
                     None
@@ -129,22 +131,28 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         }
                     }
                 }
+                if map_viewport.is_positive()
+                    && let Some(presentation) = s.presented_session_map
+                    && let Some(caption) = presentation
+                        .target()
+                        .label(self.recording_names, s.loaded_files.files())
+                    && self::map_presentation_controls(
+                        ui,
+                        map_viewport,
+                        PresentationControls {
+                            id: presentation.id(),
+                            caption: &caption,
+                            dismiss_label: "Dismiss map presentation",
+                        },
+                    )
+                {
+                    s.clear_session_map(self.map);
+                    ui.ctx().request_repaint();
+                }
             }
             MainPane::Plot => {
-                egui::Panel::top("plot_header").show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .button(ICON_CARET_DOWN)
-                                .on_hover_text("Hide plot")
-                                .clicked()
-                            {
-                                self.toggle_plot_request = true;
-                            }
-                        });
-                    });
-                });
                 let s = &mut *self.state;
+                self.toggle_plot_request = self::plot_header(ui, s, self.recording_names);
                 let map_sync_x_range = if s.plot_state.sync_to_map {
                     self.map.viewport_geo_bounds().and_then(|bounds| {
                         s.map_synced_plot_range.range(
@@ -191,7 +199,16 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &mut s.plot_state,
                 );
                 if framed {
-                    s.pending_session_plot = None;
+                    s.presented_session_plot = s.pending_session_plot.take();
+                } else if s
+                    .presented_session_plot
+                    .as_ref()
+                    .is_some_and(|presentation| {
+                        s.plot_state.visible_x_range() != Some(presentation.view.framed_x_range())
+                    })
+                {
+                    s.presented_session_plot = None;
+                    ui.ctx().request_repaint();
                 }
             }
         }
@@ -216,6 +233,60 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
         }
     }
 }
+
+fn plot_header(ui: &mut egui::Ui, state: &mut SharedAppState, names: &RecordingNames) -> bool {
+    egui::Panel::top("plot_header")
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let hide = ui.button(ICON_CARET_DOWN).on_hover_text("Hide plot");
+                    hide.widget_info(|| {
+                        WidgetInfo::labeled(Role::Button, hide.enabled(), "Hide plot")
+                    });
+                    if let Some(presentation) = state.presented_session_plot.as_ref()
+                        && let Some(caption) =
+                            presentation.target.label(names, state.loaded_files.files())
+                        && (PresentationControls {
+                            id: presentation.id,
+                            caption: &caption,
+                            dismiss_label: "Dismiss plot presentation",
+                        })
+                        .show(ui)
+                    {
+                        state.presented_session_plot = None;
+                    }
+                    hide.clicked()
+                })
+                .inner
+            })
+            .inner
+        })
+        .inner
+}
+
+fn map_presentation_controls(
+    ui: &egui::Ui,
+    viewport: egui::Rect,
+    controls: PresentationControls<'_>,
+) -> bool {
+    let inset = ui.spacing().item_spacing;
+    let width = (viewport.width() - 2.0 * inset.x).min(MAP_PRESENTATION_MAX_WIDTH);
+    Area::new(ui.scope_id().with("map_presentation"))
+        .enabled(ui.is_enabled())
+        .fixed_pos(viewport.center_top() + egui::vec2(0.0, inset.y))
+        .pivot(Align2::CENTER_TOP)
+        .constrain_to(viewport)
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(width.max(0.0));
+            ui.set_clip_rect(viewport);
+            Frame::popup(ui.style())
+                .show(ui, |ui| ui.horizontal(|ui| controls.show(ui)).inner)
+                .inner
+        })
+        .inner
+}
+
+const MAP_PRESENTATION_MAX_WIDTH: f32 = 370.0;
 
 /// Find the Unix-second time range of TPV points that lie within `bounds`,
 /// considering only files/tracks currently enabled in `visibility`.

@@ -252,6 +252,10 @@ impl PlotViewRequest {
         })
     }
 
+    pub fn framed_x_range(&self) -> RangeInclusive<f64> {
+        self::padded_time_range(&self.extent)
+    }
+
     fn enable_series(&self, state: &mut PlotState) {
         for &metric in &self.metrics {
             state.metric_vis.set(metric, true);
@@ -770,7 +774,7 @@ pub fn show_track_plot(
     let plot_response = plot.show(ui, |plot_ui| {
         let bounds = plot_ui.plot_bounds();
         let view = view_request.filter(|_| plot_ui.response().interact_rect.is_positive());
-        let requested_x_range = view.map(|request| self::padded_time_range(&request.extent));
+        let requested_x_range = view.map(PlotViewRequest::framed_x_range);
         let x_range = requested_x_range
             .clone()
             .unwrap_or_else(|| bounds.range_x());

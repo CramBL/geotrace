@@ -87,6 +87,7 @@ mod map_synced_plot_range;
 mod mapbox_token;
 mod mapbox_token_test;
 mod modals;
+mod pane_presentation;
 mod panes;
 mod query;
 mod query_run;
@@ -152,6 +153,7 @@ struct SharedAppState {
     pending_session_map: Option<QueuedMapPresentation>,
     pending_session_plot: Option<PlotPresentation>,
     presented_session_map: Option<AppliedMapPresentation>,
+    presented_session_plot: Option<PlotPresentation>,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
     /// The recording whose metadata-details dialog is open, if any.
@@ -687,6 +689,7 @@ impl App {
                 pending_session_map: None,
                 pending_session_plot: None,
                 presented_session_map: None,
+                presented_session_plot: None,
                 sky_trails_request: None,
                 reference_document_request: None,
                 warnings_popup: None,

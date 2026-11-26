@@ -14,6 +14,7 @@ use gt_session_bridge::{
 };
 use gt_test_utils::fixtures;
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+use rstest::rstest;
 use uuid::Uuid;
 
 use crate::app::test_util;
@@ -27,6 +28,104 @@ mod map;
 mod plot;
 mod processing;
 mod settings;
+
+#[derive(Clone, Copy)]
+enum PresentationPane {
+    Map,
+    Plot,
+}
+
+#[rstest]
+#[case::map(PresentationPane::Map)]
+#[case::plot(PresentationPane::Plot)]
+fn releasing_dismiss_keeps_a_replacement_with_the_same_caption(#[case] pane: PresentationPane) {
+    let mut harness = ui_tests::harness_with_three_files_loaded();
+    let mut track = session::first_track_reference(&mut harness);
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .recording_name_template = "Recording".to_owned();
+    let dismiss = match pane {
+        PresentationPane::Map => "Dismiss map presentation",
+        PresentationPane::Plot => "Dismiss plot presentation",
+    };
+    let show = |track| {
+        let target = RangeTarget::Track {
+            track,
+            start: Some(20),
+            end: Some(24),
+        };
+        match pane {
+            PresentationPane::Map => Request::ShowOnMap(ShowOnMap { target }),
+            PresentationPane::Plot => Request::ShowOnPlot(ShowOnPlot {
+                target,
+                metrics: Vec::new(),
+            }),
+        }
+    };
+    let queued = match pane {
+        PresentationPane::Map => Reply::MapPresentationQueued,
+        PresentationPane::Plot => Reply::PlotPresentationQueued,
+    };
+    assert_eq!(session::execute(&mut harness, show(track)), queued);
+    harness.run_steps(3);
+    harness.get_by_label("Recording / Track 1 / Points 20 to 23");
+    let button = harness
+        .get_by_role_and_label(Role::Button, dismiss)
+        .rect()
+        .center();
+    harness.hover_at(button);
+    harness.step();
+    let step = |harness: &mut Harness<'_, App>| {
+        let time = harness.ctx.input(|input| input.time);
+        harness.input_mut().time = Some(time + 0.05);
+        harness.step();
+    };
+    let pointer_button = |pressed| egui::Event::PointerButton {
+        pos: button,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    harness.input_mut().events.push(pointer_button(true));
+    step(&mut harness);
+
+    let second_file = FileIdx::new(1);
+    track.recording.number = harness
+        .state()
+        .shared
+        .borrow()
+        .loaded_files
+        .view()
+        .entry_for(second_file)
+        .unwrap()
+        .id()
+        .into();
+    assert_eq!(session::execute(&mut harness, show(track)), queued);
+    for _ in 0..3 {
+        step(&mut harness);
+    }
+    harness.input_mut().events.push(pointer_button(false));
+    step(&mut harness);
+
+    let shared = harness.state().shared.borrow();
+    let presented = match pane {
+        PresentationPane::Map => shared
+            .presented_session_map
+            .map(|active| active.target().track),
+        PresentationPane::Plot => shared
+            .presented_session_plot
+            .as_ref()
+            .map(|active| active.target.track),
+    };
+    assert_eq!(
+        presented,
+        Some(TrackRef::new(second_file, TrackIdx::new(0)))
+    );
+    drop(shared);
+    harness.get_by_role_and_label(Role::Button, dismiss);
+}
 
 #[test]
 fn session_inspection_uses_the_loaded_recording() {
