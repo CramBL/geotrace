@@ -39,7 +39,8 @@ fn query_results_go_stale_when_the_filter_changes() {
     let first_row = harness::topmost_point_row(&harness).1;
     let stale_after_run = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("run produced matches")
         .stale;
@@ -55,7 +56,8 @@ fn query_results_go_stale_when_the_filter_changes() {
     harness.run_steps(3);
     let matches_stale = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("results kept while stale")
         .stale;
@@ -71,7 +73,8 @@ fn query_results_go_stale_when_the_filter_changes() {
     harness.run_steps(3);
     let stale_after_revert = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("results kept")
         .stale;
@@ -88,7 +91,8 @@ fn query_results_go_stale_with_the_query_window_closed() {
     harness.run_steps(3);
     let stale_after_closing = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("closing the window keeps the results")
         .stale;
@@ -104,7 +108,8 @@ fn query_results_go_stale_with_the_query_window_closed() {
     harness.run_steps(3);
     let matches_stale = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("results kept while stale")
         .stale;
@@ -117,9 +122,13 @@ fn query_results_go_stale_with_the_query_window_closed() {
 #[test]
 fn a_query_completes_with_the_query_window_closed() {
     let mut harness = ui_tests::app_with_query_window_open();
+    harness.get_by_label("Query history").click();
+    harness.run_steps(3);
+    harness.get_by_label("No queries run yet");
     harness
         .state_mut()
-        .query_window
+        .editor_query
+        .session_mut()
         .set_text("points | where velocity > 1 km/h".to_owned());
     harness.run_steps(3);
     let max_passes = harness.ctx.options(|options| options.max_passes);
@@ -128,7 +137,7 @@ fn a_query_completes_with_the_query_window_closed() {
         .options_mut(|options| options.max_passes = NonZeroUsize::MIN);
     harness.get_by_role_and_label(Role::Button, "Run").click();
     harness.step();
-    assert!(harness.state().query_window.matches().is_none());
+    assert!(harness.state().editor_query.session().matches().is_none());
     harness.state_mut().query_window.open = false;
     harness
         .ctx
@@ -137,9 +146,13 @@ fn a_query_completes_with_the_query_window_closed() {
     test_util::harness::step_until_query_result(&mut harness);
 
     assert!(!harness.state().query_window.open);
-    let matches = harness.state().query_window.matches().unwrap();
+    let matches = harness.state().editor_query.session().matches().unwrap();
     assert_eq!(matches.run, 1);
     assert!(!matches.stale);
+
+    harness.state_mut().query_window.open = true;
+    harness.run_steps(3);
+    harness.get_by_label_contains("Match 1");
 }
 
 #[test]
@@ -174,7 +187,7 @@ fn replacing_a_recording_in_place_marks_its_query_results_stale() {
     app.on_track_indices_changed();
     harness.run_steps(2);
 
-    let matches = harness.state().query_window.matches().unwrap();
+    let matches = harness.state().editor_query.session().matches().unwrap();
     assert_eq!(matches.run, 1);
     assert!(matches.stale);
     let window = harness.get_by_role_and_label(Role::Window, QUERY_WINDOW_TITLE);
@@ -232,7 +245,15 @@ fn renaming_a_recording_identity_keeps_its_query_results_current() {
         shared.loaded_files.view().get(0).unwrap().identity() == Some("after")
     }));
 
-    assert!(!harness.state().query_window.matches().unwrap().stale);
+    assert!(
+        !harness
+            .state()
+            .editor_query
+            .session()
+            .matches()
+            .unwrap()
+            .stale
+    );
 }
 
 /// Gives every loaded track interference query values: installs a scheduler
@@ -306,7 +327,8 @@ fn query_results_over_archived_interference_stay_fresh() {
     {
         let app = harness.state_mut();
         app.query_window.open = true;
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | where velocity > 1 km/h".to_owned());
     }
     harness.run_steps(3);
@@ -323,7 +345,8 @@ fn query_results_over_archived_interference_stay_fresh() {
     assert!(
         !harness
             .state()
-            .query_window
+            .editor_query
+            .session()
             .matches()
             .expect("run produced matches")
             .stale,
@@ -414,7 +437,8 @@ fn query_matches_on_snap_error_after_a_run() {
     {
         let app = harness.state_mut();
         app.query_window.open = true;
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | where snap_error >= 2 m | draw".to_owned());
     }
     harness.run_steps(3);
@@ -425,7 +449,8 @@ fn query_matches_on_snap_error_after_a_run() {
     harness.run_steps(3);
     let matches = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("run produced results");
     assert!(!matches.stale, "fresh results are not stale");
@@ -443,7 +468,8 @@ fn query_matches_on_snap_error_after_a_run() {
     assert!(
         harness
             .state()
-            .query_window
+            .editor_query
+            .session()
             .matches()
             .expect("results kept while stale")
             .stale,
@@ -487,7 +513,7 @@ fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibil
         shared.loaded_files.files(),
         shared.tree.visibility(),
         &shared.filter,
-        app.query_window.matches(),
+        app.editor_query.session().matches(),
         shared.tree.generated_marker_visibility(),
         shared.tree.event_marker_visibility(),
     )
@@ -632,7 +658,8 @@ fn the_plot_cursor_over_a_hidden_stretch_selects_the_nearest_present_fix() {
         .expect("the visible runner-up is selected");
     let query = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("the hide query ran");
     assert!(!query.is_hidden(track, pi.as_usize()));
@@ -1344,7 +1371,8 @@ fn copying_a_query_result_writes_a_tab_separated_table() {
     let copied = harness.copied_text().expect("the app copied text");
     let matches = harness
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("the run produced matches");
     let matched_points: usize = matches.draws.first().map_or(0, |layer| {
@@ -1703,7 +1731,8 @@ fn query_match_row_hover_highlights_the_match() {
     {
         let app = harness.state_mut();
         app.query_window.open = true;
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | where velocity > 1 km/h".to_owned());
     }
     harness.run_steps(3);
@@ -1767,7 +1796,7 @@ fn snapshot_app_query_window() {
     }
     let app = harness.inner.state_mut();
     app.query_window.open = true;
-    app.query_window.set_text(
+    app.editor_query.session_mut().set_text(
         "points\n| window 10\n| where avg(velocity) > 25 km/h # demo\n| table time, velocity"
             .to_owned(),
     );
@@ -1783,7 +1812,7 @@ fn snapshot_app_query_window() {
 
     let match_count: usize = {
         let app = harness.inner.state();
-        app.query_window.matches().map_or(0, |m| {
+        app.editor_query.session().matches().map_or(0, |m| {
             m.draws
                 .iter()
                 .flat_map(|d| d.ranges.values())
@@ -1815,7 +1844,9 @@ fn snapshot_app_query_matches_window() {
     );
     let app = harness.inner.state_mut();
     app.query_window.open = true;
-    app.query_window.set_text(TWO_MATCH_QUERY.to_owned());
+    app.editor_query
+        .session_mut()
+        .set_text(TWO_MATCH_QUERY.to_owned());
     harness.inner.run_steps(5);
 
     harness
@@ -1852,7 +1883,7 @@ fn snapshot_app_query_editor_light() {
     app.query_window.open = true;
     // Exercises every token class: keywords, numeric literals, a unit,
     // identifiers, and a comment.
-    app.query_window.set_text(
+    app.editor_query.session_mut().set_text(
         "points\n| window 10\n| where avg(velocity) > 25 km/h # keep the fast bits\n| table time, velocity"
             .to_owned(),
     );
@@ -1882,7 +1913,8 @@ fn snapshot_app_query_match_hover() {
     }
     let app = harness.inner.state_mut();
     app.query_window.open = true;
-    app.query_window
+    app.editor_query
+        .session_mut()
         .set_text("points | window 10 | where avg(velocity) > 25 km/h".to_owned());
     harness.inner.run_steps(5);
 
@@ -1930,7 +1962,8 @@ fn snapshot_app_query_channel_source() {
     }
     let app = harness.inner.state_mut();
     app.query_window.open = true;
-    app.query_window
+    app.editor_query
+        .session_mut()
         .set_text("@accel | where @accel.x > 1 g".to_owned());
     harness.inner.run_steps(5);
 
@@ -1983,7 +2016,7 @@ fn snapshot_app_query_points_with_channel() {
     app.query_window.open = true;
     // Hard-maneuver detection: the fixture's baseline norm sits near 1 g
     // (gravity on z), the crafted stretches reach ~1.8 g.
-    app.query_window.set_text(
+    app.editor_query.session_mut().set_text(
         "points | window 10 | where max(norm(@accel)) > 1.2 g | table time, velocity".to_owned(),
     );
     harness.inner.run_steps(5);
@@ -1999,7 +2032,8 @@ fn snapshot_app_query_points_with_channel() {
     let matches = harness
         .inner
         .state()
-        .query_window
+        .editor_query
+        .session()
         .matches()
         .expect("the run produced matches")
         .clone();
@@ -2043,7 +2077,7 @@ fn snapshot_app_query_match_samples() {
     }
     let app = harness.inner.state_mut();
     app.query_window.open = true;
-    app.query_window.set_text(
+    app.editor_query.session_mut().set_text(
         "points | window 1 | where max(@accel.x) > 1 g | table time, max(@accel.x)".to_owned(),
     );
     harness.inner.run_steps(5);
@@ -2098,7 +2132,7 @@ fn snapshot_query_pipeline() {
         app.query_window.open = true;
         // Hide the slow stretches, then outline the fast and the very-fast
         // survivors in two colors.
-        app.query_window.set_text(
+        app.editor_query.session_mut().set_text(
             "points | where velocity < 20 km/h | hide\n\n\
              points | where velocity > 30 km/h | draw\n\n\
              points | where velocity > 80 km/h | draw"
@@ -2117,7 +2151,8 @@ fn snapshot_query_pipeline() {
         let matches = harness
             .inner
             .state()
-            .query_window
+            .editor_query
+            .session()
             .matches()
             .expect("the pipeline produced a result");
         assert!(

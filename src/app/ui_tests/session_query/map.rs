@@ -591,7 +591,7 @@ fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
         Reply::MapPresentationQueued,
     );
     harness.run_steps(2);
-    assert!(harness.state().query_window.matches().is_none());
+    assert!(harness.state().editor_query.session().matches().is_none());
     let toggle = harness
         .ctx
         .memory(|memory| memory.area_rect(egui::Id::unique(gt_map::DISPLAY_TOGGLE_BUTTON_AREA_ID)))

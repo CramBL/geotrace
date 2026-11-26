@@ -38,10 +38,10 @@ use super::value_bar::{ColumnValueRange, RunColumnRanges, ValueBar};
 
 /// What the results tab writes back to the app: the cross-highlight its rows
 /// drive, the point a click pins, and what to frame the map on.
-pub(super) struct ResultsOutputs<'a, 'b> {
-    pub(super) highlight: &'a mut MapHighlight,
-    pub(super) requests: &'a mut PointClickRequests<'b>,
-    pub(super) reveal: &'a mut Option<MatchRevealTarget>,
+pub(in crate::app) struct ResultsOutputs<'a, 'b> {
+    pub(in crate::app) highlight: &'a mut MapHighlight,
+    pub(in crate::app) requests: &'a mut PointClickRequests<'b>,
+    pub(in crate::app) reveal: &'a mut Option<MatchRevealTarget>,
 }
 
 /// What the results tab keeps between frames: the order of the matches table,

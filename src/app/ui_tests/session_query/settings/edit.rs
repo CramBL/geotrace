@@ -28,7 +28,11 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
         .loaded_files
         .data_generation();
     let draft = "points | where eph < 20 m";
-    harness.state_mut().query_window.set_text(draft.to_owned());
+    harness
+        .state_mut()
+        .editor_query
+        .session_mut()
+        .set_text(draft.to_owned());
     let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
     let request = Request::SetSetting(SetSetting {
         key,
@@ -61,7 +65,7 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
             .slip_elevation_mask_deg,
         18.5
     );
-    assert_eq!(app.query_window.text(), draft);
+    assert_eq!(app.editor_query.session().text(), draft);
     assert!(!app.query_window.open);
     assert!(!app.settings_open);
 

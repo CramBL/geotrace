@@ -324,7 +324,7 @@ fn count_sample_hover_highlights_its_associated_fix_through_map_policy(
             shared.loaded_files.files(),
             shared.tree.visibility(),
             &shared.filter,
-            app.query_window.matches(),
+            app.editor_query.session().matches(),
             shared.tree.generated_marker_visibility(),
             shared.tree.event_marker_visibility(),
         )

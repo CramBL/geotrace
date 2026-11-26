@@ -2,10 +2,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingData};
-use gt_query::ChannelSchema;
 use gt_query_run::{
-    CheckRefresh, JammingValues, QuerySession, RunDependencies, RunInputs, RunOutcome,
-    SnapErrorValues,
+    JammingValues, QuerySession, RunDependencies, RunInputs, RunOutcome, SnapErrorValues,
 };
 use gt_side_panel::TreeState;
 use gt_types::Generation;
@@ -65,18 +63,6 @@ impl BackgroundQuery {
         self.last_freshness_check = None;
     }
 
-    pub(super) fn set_text(&mut self, text: String) {
-        self.session.set_text(text);
-    }
-
-    pub(super) fn text_mut(&mut self) -> &mut String {
-        self.session.text_mut()
-    }
-
-    pub(super) fn sync_checks(&mut self, schema: &ChannelSchema) -> CheckRefresh {
-        self.session.sync_checks(schema)
-    }
-
     pub(super) fn receive_outcome(&mut self) -> bool {
         let Some(worker) = &self.worker else {
             return false;
@@ -100,6 +86,10 @@ impl BackgroundQuery {
 
     pub(super) fn session(&self) -> &QuerySession {
         &self.session
+    }
+
+    pub(super) fn session_mut(&mut self) -> &mut QuerySession {
+        &mut self.session
     }
 }
 

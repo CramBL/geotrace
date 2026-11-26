@@ -158,7 +158,15 @@ fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
         Reply::MapPresentationQueued
     );
     harness.step();
-    assert!(harness.state().query_window.matches().unwrap().stale);
+    assert!(
+        harness
+            .state()
+            .editor_query
+            .session()
+            .matches()
+            .unwrap()
+            .stale
+    );
     let middle_track = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
     let fresh_point = MapElementRef::Fix(FixRef::new(middle_track, PointIdx::new(0)));
     assert!(

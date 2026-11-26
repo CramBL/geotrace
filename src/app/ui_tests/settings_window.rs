@@ -736,7 +736,8 @@ fn query_history_persists_across_settings_roundtrip() {
     {
         let app = harness.state_mut();
         app.query_window.open = true;
-        app.query_window
+        app.editor_query
+            .session_mut()
             .set_text("points | where velocity > 1 km/h".to_owned());
     }
     harness.run_steps(3);

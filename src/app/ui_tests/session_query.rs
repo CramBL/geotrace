@@ -96,11 +96,11 @@ fn pending_run_input_leaves_a_session_draft_unrun() {
     };
     press_run(&mut harness);
     harness.run_steps(2);
-    let window = &harness.state().query_window;
-    assert!(window.open);
-    assert_eq!(window.text(), draft);
-    assert!(window.history().is_empty());
-    assert!(window.matches().is_none());
+    let app = harness.state();
+    assert!(app.query_window.open);
+    assert_eq!(app.editor_query.session().text(), draft);
+    assert!(app.query_window.history().is_empty());
+    assert!(app.editor_query.session().matches().is_none());
 
     press_run(&mut harness);
     test_util::harness::step_until_query_result(&mut harness);
@@ -111,10 +111,10 @@ fn pending_run_input_leaves_a_session_draft_unrun() {
 fn a_session_draft_opens_the_query_editor_with_diagnostics_and_previous_results() {
     let mut harness = ui_tests::app_with_query_window_open();
     ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h | hide");
-    let window = &mut harness.state_mut().query_window;
-    let previous = window.matches().unwrap().clone();
-    let history_revision = window.history_revision();
-    window.open = false;
+    let app = harness.state_mut();
+    let previous = app.editor_query.session().matches().unwrap().clone();
+    let history_revision = app.query_window.history_revision();
+    app.query_window.open = false;
     harness.step();
 
     let draft = "# Første\r\n\r\npoints | where speed > 10 km/h";
@@ -130,11 +130,12 @@ fn a_session_draft_opens_the_query_editor_with_diagnostics_and_previous_results(
     harness.run_steps(3);
     harness.get_by_role_and_label(Role::Window, "Query");
     harness.get_by_label_contains("unknown metric");
-    let window = &harness.state().query_window;
-    assert_eq!(window.text(), draft);
-    assert_eq!(window.matches(), Some(&previous));
-    assert_eq!(window.history_revision(), history_revision);
-    assert!(harness.state().session_query.retained_reply().is_none());
+    let app = harness.state();
+    let query = app.editor_query.session();
+    assert_eq!(query.text(), draft);
+    assert_eq!(query.matches(), Some(&previous));
+    assert_eq!(app.query_window.history_revision(), history_revision);
+    assert!(app.session_query.retained_reply().is_none());
 }
 
 #[test]
@@ -143,15 +144,16 @@ fn an_editor_run_finishes_after_a_session_draft_replaces_the_text() {
     let running = "points | where eph < 20 m | draw";
     harness
         .state_mut()
-        .query_window
+        .editor_query
+        .session_mut()
         .set_text(running.to_owned());
     harness.run_steps(3);
     harness.get_by_role_and_label(Role::Button, "Run").click();
     harness.step();
-    let window = &harness.state().query_window;
-    assert!(window.matches().is_none());
-    assert_eq!(window.history()[0].text, running);
-    let history_revision = window.history_revision();
+    let app = harness.state();
+    assert!(app.editor_query.session().matches().is_none());
+    assert_eq!(app.query_window.history()[0].text, running);
+    let history_revision = app.query_window.history_revision();
 
     let draft = "points | where velocity > 999 km/h | hide";
     assert_eq!(
@@ -164,11 +166,13 @@ fn an_editor_run_finishes_after_a_session_draft_replaces_the_text() {
         Reply::QueryDraftQueued
     );
     test_util::harness::step_until_query_result(&mut harness);
-    let window = &harness.state().query_window;
-    assert_eq!(window.text(), draft);
-    assert_eq!(window.history_revision(), history_revision);
-    assert_eq!(window.matches().unwrap().draws.len(), 1);
-    assert!(window.matches().unwrap().hidden.is_empty());
+    let app = harness.state();
+    let query = app.editor_query.session();
+    assert_eq!(query.text(), draft);
+    assert_eq!(app.query_window.history_revision(), history_revision);
+    let matches = query.matches().unwrap();
+    assert_eq!(matches.draws.len(), 1);
+    assert!(matches.hidden.is_empty());
 }
 
 #[test]
@@ -180,7 +184,15 @@ fn editor_and_session_results_refresh_when_enabled_tracks_change() {
     let job = session::start_query(&mut harness, text);
     let completed = session::wait_for_query_to_stop(&mut harness, job);
     assert!(matches!(completed, QueryJobState::Completed { .. }));
-    assert!(!harness.state().query_window.matches().unwrap().stale);
+    assert!(
+        !harness
+            .state()
+            .editor_query
+            .session()
+            .matches()
+            .unwrap()
+            .stale
+    );
     let other_file = FileIdx::new(1);
     harness
         .state_mut()
@@ -193,7 +205,15 @@ fn editor_and_session_results_refresh_when_enabled_tracks_change() {
             false,
         );
     harness.step();
-    assert!(!harness.state().query_window.matches().unwrap().stale);
+    assert!(
+        !harness
+            .state()
+            .editor_query
+            .session()
+            .matches()
+            .unwrap()
+            .stale
+    );
     assert_eq!(
         harness.state().session_query.retained_reply(),
         Some(Reply::QueryJob {
@@ -213,7 +233,13 @@ fn editor_and_session_results_refresh_when_enabled_tracks_change() {
             .toggle_file_check(other_file);
         harness.step();
         assert_eq!(
-            harness.state().query_window.matches().unwrap().stale,
+            harness
+                .state()
+                .editor_query
+                .session()
+                .matches()
+                .unwrap()
+                .stale,
             expected_stale
         );
         let state = if expected_stale {
@@ -235,7 +261,13 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
     let mut harness = ui_tests::app_with_query_window_open();
     let editor_text = "points | where eph < 20 m";
     ui_tests::run_query(&mut harness, editor_text);
-    let editor_matches = harness.state().query_window.matches().unwrap().clone();
+    let editor_matches = harness
+        .state()
+        .editor_query
+        .session()
+        .matches()
+        .unwrap()
+        .clone();
     let history_revision = harness.state().query_window.history_revision();
 
     let first = session::start_query(&mut harness, "points | where velocity > 1 km/h | hide");
@@ -243,10 +275,11 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
         session::wait_for_query_to_stop(&mut harness, first),
         session::completed_single_track_query(1)
     );
-    let window = &harness.state().query_window;
-    assert_eq!(window.text(), editor_text);
-    assert_eq!(window.matches(), Some(&editor_matches));
-    assert_eq!(window.history_revision(), history_revision);
+    let app = harness.state();
+    let query = app.editor_query.session();
+    assert_eq!(query.text(), editor_text);
+    assert_eq!(query.matches(), Some(&editor_matches));
+    assert_eq!(app.query_window.history_revision(), history_revision);
 
     harness
         .state_mut()

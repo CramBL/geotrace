@@ -197,7 +197,11 @@ fn app_with_query_window_open() -> Harness<'static, App> {
 
 /// Run a query through the Run button and wait for its result.
 fn run_query(harness: &mut Harness<App>, text: &str) {
-    harness.state_mut().query_window.set_text(text.to_owned());
+    harness
+        .state_mut()
+        .editor_query
+        .session_mut()
+        .set_text(text.to_owned());
     harness.run_steps(3);
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")

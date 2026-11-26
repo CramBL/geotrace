@@ -198,9 +198,14 @@ fn pasting_into_a_focused_field_reaches_the_field_and_loads_no_log() {
 
     assert_eq!(harness.state().logs.len(), 0);
     assert!(
-        harness.state().query_window.text().contains("navsyncd"),
+        harness
+            .state()
+            .editor_query
+            .session()
+            .text()
+            .contains("navsyncd"),
         "the paste reached the editor, got {:?}",
-        harness.state().query_window.text()
+        harness.state().editor_query.session().text()
     );
 }
 
