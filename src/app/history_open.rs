@@ -462,17 +462,27 @@ impl App {
         {
             self.remove_confirmed_tracks_from_view(removal);
         }
-        if let history_db::DbOp::TracksDeleted {
-            snapshot_updates, ..
-        } = op
-            && !snapshot_updates.is_empty()
-        {
+        let snapshot_updates = match op {
+            history_db::DbOp::TracksDeleted {
+                snapshot_updates, ..
+            } => snapshot_updates.as_slice(),
+            history_db::DbOp::IdentityRenamed {
+                outcome: Some(outcome),
+                ..
+            } => outcome.snapshot_updates(),
+            _ => &[],
+        };
+        if !snapshot_updates.is_empty() {
             let layouts_to_read = {
                 let SharedAppState {
                     loaded_files, tree, ..
                 } = &mut *self.shared.borrow_mut();
                 let adopted = loaded_files.apply_track_snapshot_updates(snapshot_updates);
-                tree.sync_after_track_purges(loaded_files.view(), snapshot_updates, &adopted)
+                tree.sync_after_track_snapshot_updates(
+                    loaded_files.view(),
+                    snapshot_updates,
+                    &adopted,
+                )
             };
             for layout in &layouts_to_read {
                 self.read_recording_ui_state_if_unobserved(Some(layout));
@@ -483,18 +493,6 @@ impl App {
             Ok(()) => {
                 let mut loading_the_recording_again = false;
                 match op {
-                    // Keep loaded recordings pointing at the renamed identity
-                    // so later history operations on them still resolve.
-                    history_db::DbOp::IdentityRenamed {
-                        old,
-                        new,
-                        outcome: Some(_),
-                    } => {
-                        self.shared
-                            .borrow_mut()
-                            .loaded_files
-                            .rename_identity(old, new);
-                    }
                     history_db::DbOp::TracksUnshelved { db_ref, .. } => {
                         loading_the_recording_again =
                             self.reload_the_recording_if_it_is_loaded(db_ref);
@@ -502,7 +500,7 @@ impl App {
                     history_db::DbOp::TracksShelved { .. }
                     | history_db::DbOp::TracksDeleted { .. }
                     | history_db::DbOp::RecordingsDeleted { .. }
-                    | history_db::DbOp::IdentityRenamed { outcome: None, .. } => {}
+                    | history_db::DbOp::IdentityRenamed { .. } => {}
                 }
                 self.toasts
                     .info(mutation_toast(op, loading_the_recording_again));

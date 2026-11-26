@@ -649,6 +649,34 @@ fn two_verified_copies_of_a_recording_store_edits_to_both_tracks() {
 }
 
 #[test]
+fn an_earlier_visibility_read_keeps_the_pending_write() {
+    let loaded = stored_recording(&[1]);
+    let layout = stored_layout(&loaded);
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(loaded.view());
+    tree.apply_stored_hidden_tracks(layout.clone(), BTreeSet::new());
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+
+    tree.hide_track(track);
+    assert_eq!(
+        pending_hidden_tracks(&mut tree),
+        vec![(db_ref(), BTreeSet::from([1]))]
+    );
+    tree.toggle_track_check(track);
+    assert_eq!(
+        pending_hidden_tracks(&mut tree),
+        vec![(db_ref(), BTreeSet::new())]
+    );
+    tree.hide_track(track);
+    tree.apply_stored_hidden_tracks(layout, BTreeSet::from([1]));
+
+    assert_eq!(
+        pending_hidden_tracks(&mut tree),
+        vec![(db_ref(), BTreeSet::from([1]))]
+    );
+}
+
+#[test]
 fn the_last_visibility_edit_to_a_stored_track_survives_a_pending_read() {
     let mut loaded = stored_recording(&[1, 2]);
     let history = loaded.view().get(0).unwrap().history().clone();

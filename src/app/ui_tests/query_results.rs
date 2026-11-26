@@ -9,7 +9,7 @@ use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use gt_jam::wire::HexObservation;
 use gt_loaded_files::FileHistory;
-use gt_store::{EnvironmentArchive, JamStore, RecordingMeta};
+use gt_store::{EnvironmentArchive, JamStore};
 use gt_test_utils::{
     By, CROSS_BACKEND_COLOR_TOLERANCE, DEMO_BYTES, HarnessInteraction as _, TestHarness, fixtures,
 };
@@ -26,6 +26,7 @@ use crate::app::query;
 use crate::app::query_run::QuerySeries;
 use crate::app::test_util;
 use crate::app::test_util::harness::{self, QUERY_WINDOW_TITLE, ResultsTable, TestDroppedFile};
+use crate::app::test_util::recordings;
 use crate::app::ui_tests::{self, ACCEL_HIGH_RANGES, MANY_MATCH_QUERY};
 
 /// Query results gray out when the data they were computed from changes -
@@ -176,27 +177,20 @@ fn replacing_a_recording_in_place_marks_its_query_results_stale() {
 
 #[test]
 fn renaming_a_recording_identity_keeps_its_query_results_current() {
-    let mut harness = ui_tests::app_with_query_window_open();
-    {
-        let mut shared = harness.state_mut().shared.borrow_mut();
-        let files = &mut shared.loaded_files;
-        let file = files.get(0).unwrap().clone();
-        files.replace_file(
-            0,
-            file,
-            FileHistory::recording("before".to_owned(), RecordingMeta::default(), None),
-        );
-    }
+    let (mut harness, _dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    harness.state().history.open(recording.clone());
+    assert!(harness.step_until(|harness| !harness.state().shared.borrow().loaded_files.is_empty()));
+    harness.state_mut().query_window.open = true;
     ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
-    {
-        let mut shared = harness.state_mut().shared.borrow_mut();
-        let files = &mut shared.loaded_files;
-        let generation = files.generation();
-        files.rename_identity("before", "after");
-        assert_eq!(files.view().get(0).unwrap().identity(), Some("after"));
-        assert_ne!(files.generation(), generation);
-    }
-    harness.run_steps(2);
+    harness
+        .state()
+        .history
+        .rename_identity(recording.identity, "after".to_owned());
+    assert!(harness.step_until(|harness| {
+        let shared = harness.state().shared.borrow();
+        shared.loaded_files.view().get(0).unwrap().identity() == Some("after")
+    }));
 
     assert!(!harness.state().query_window.matches().unwrap().stale);
 }
