@@ -569,6 +569,7 @@ fn recording_tracks(
         Request::GetRecording(GetRecording {
             recording,
             after: None,
+            stored_track_start: None,
             limit: None,
         }),
     ) else {

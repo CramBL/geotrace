@@ -746,6 +746,7 @@ async fn a_recording_with_oversized_sdk_metadata_fits_in_a_single_entry_page() {
     let first = GetRecording {
         recording: recording_id,
         after: None,
+        stored_track_start: None,
         limit: Some(NonZeroUsize::MIN),
     };
     let Reply::Recording { details } =
@@ -933,6 +934,7 @@ fn inspection_pages_tracks_and_rejects_old_session_and_track_references() {
     let mut args = GetRecording {
         recording: id,
         after: None,
+        stored_track_start: None,
         limit: Some(NonZeroUsize::MAX),
     };
     let view = Inspection::new(files.view(), "{filename}", id.session);
@@ -1146,6 +1148,7 @@ fn point_pages_keep_recorded_order_and_missing_values() {
         view.execute(InspectionRequest::GetRecording(GetRecording {
             recording,
             after: None,
+            stored_track_start: None,
             limit: None,
         }))
     else {

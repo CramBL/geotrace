@@ -24,6 +24,7 @@ use crate::app::{App, ui_tests};
 
 mod background;
 mod history;
+mod inspection;
 mod map;
 mod notices;
 mod plot;

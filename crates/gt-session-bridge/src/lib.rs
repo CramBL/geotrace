@@ -18,7 +18,8 @@ pub use crate::history::{
 };
 pub use crate::inspection::{
     Inspection, InspectionRequest, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE, MapBounds,
-    PointDetails, Position, RangeDetails, RecordingDetails, TrackDetails,
+    PointDetails, Position, RangeDetails, RecordingDetails, StoredTrackPage, StoredTrackRow,
+    StoredTrackState, TrackDetails, TrackInspectionState, TrackPageState, TrackTreeState,
 };
 pub use crate::metrics::{
     ChannelComponent, ChannelDefinition, ChannelEntry, MetricDefinition, Metrics,

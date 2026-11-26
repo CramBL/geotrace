@@ -196,6 +196,20 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     );
     assert!(tool.pointer("/inputSchema/properties/after").is_some());
     assert!(tool.pointer("/inputSchema/properties/limit").is_some());
+    let recording_tool = tools
+        .iter()
+        .find(|tool| tool.get("name") == Some(&json!("get_recording")))
+        .unwrap();
+    assert!(
+        recording_tool
+            .pointer("/inputSchema/properties/after")
+            .is_some()
+    );
+    assert!(
+        recording_tool
+            .pointer("/inputSchema/properties/stored_track_start")
+            .is_some()
+    );
     let query_tool = tools
         .iter()
         .find(|tool| tool.get("name") == Some(&json!("check_query")))

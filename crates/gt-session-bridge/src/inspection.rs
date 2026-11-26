@@ -1,7 +1,10 @@
 use std::num::NonZeroUsize;
 
 use chrono::{DateTime, Utc};
-use gt_loaded_files::{ListRecordings as ListLoadedRecordings, LoadedFilesView, RecordingSummary};
+use gt_history_types::{StoredTrackSnapshot, TrackState};
+use gt_loaded_files::{
+    ListRecordings as ListLoadedRecordings, LoadedFileEntry, LoadedFilesView, RecordingSummary,
+};
 use gt_types::{GeoBounds, GpsTime, LoadedTrack, NavPoint, PointIdx, SysTime, TrackIdx, TrackRef};
 use serde::{Deserialize, Serialize};
 use uom::si::length::meter;
@@ -28,15 +31,29 @@ pub struct Inspection<'a> {
     files: LoadedFilesView<'a>,
     name_template: &'a str,
     session: Uuid,
+    tree: Option<&'a dyn Fn(TrackRef) -> Option<TrackTreeState>>,
 }
 
 impl<'a> Inspection<'a> {
+    fn current_snapshot(entry: LoadedFileEntry<'a>) -> Option<&'a StoredTrackSnapshot> {
+        entry
+            .history()
+            .track_snapshot()
+            .filter(|snapshot| snapshot.is_current_with_membership())
+    }
+
     pub fn new(files: LoadedFilesView<'a>, name_template: &'a str, session: Uuid) -> Self {
         Self {
             files,
             name_template,
             session,
+            tree: None,
         }
+    }
+
+    pub fn with_track_tree(mut self, tree: &'a dyn Fn(TrackRef) -> Option<TrackTreeState>) -> Self {
+        self.tree = Some(tree);
+        self
     }
 
     pub fn execute(&self, request: InspectionRequest) -> Result<Reply, ErrorCode> {
@@ -51,9 +68,15 @@ impl<'a> Inspection<'a> {
             InspectionRequest::GetRecording(args) => self
                 .recording_details(args)
                 .map(|details| Reply::Recording { details }),
-            InspectionRequest::GetTrack(args) => self.track(args.track).map(|track| Reply::Track {
-                details: TrackDetails::new(track),
-            }),
+            InspectionRequest::GetTrack(args) => {
+                let (address, entry, track) = self.track(args.track)?;
+                Ok(Reply::Track {
+                    details: TrackDetails::new(
+                        track,
+                        self.track_status(address, track, Self::current_snapshot(entry)),
+                    ),
+                })
+            }
             InspectionRequest::ListMetrics(args) => Ok(Reply::Metrics {
                 page: Metrics::from_files(self.files.files(), args),
             }),
@@ -80,6 +103,7 @@ impl<'a> Inspection<'a> {
         GetRecording {
             recording,
             after,
+            stored_track_start,
             limit,
         }: GetRecording,
     ) -> Result<RecordingDetails, ErrorCode> {
@@ -88,7 +112,7 @@ impl<'a> Inspection<'a> {
             if after.recording != recording {
                 return Err(ErrorCode::StaleTrack);
             }
-            self.track(after)?;
+            after.resolve(self.files, self.session)?;
             after.index + 1
         } else {
             0
@@ -98,14 +122,22 @@ impl<'a> Inspection<'a> {
             limit.get().min(MAX_TRACKS_PER_PAGE)
         });
         let end = start.saturating_add(limit).min(count);
-        let tracks: Vec<_> = (start..end)
-            .filter_map(|index| {
-                let track = self
-                    .files
-                    .session_track_ref(TrackRef::new(entry.file_index(), TrackIdx::new(index)))?;
-                Some(TrackReference::new(self.session, track))
-            })
-            .collect();
+        let snapshot = Self::current_snapshot(entry);
+        let mut tracks = Vec::with_capacity(end - start);
+        let mut track_states = Vec::with_capacity(end - start);
+        for (index, track) in (start..end).zip(entry.file().tracks.iter().skip(start)) {
+            let address = TrackRef::new(entry.file_index(), TrackIdx::new(index));
+            let reference = self
+                .files
+                .session_track_ref(address)
+                .ok_or(ErrorCode::StaleTrack)?;
+            tracks.push(TrackReference::new(self.session, reference));
+            track_states.push(TrackPageState {
+                index,
+                track_number: track.metadata.index,
+                state: self.track_status(address, track, snapshot),
+            });
+        }
         let next_after = if end < count {
             tracks.last().copied()
         } else {
@@ -118,8 +150,30 @@ impl<'a> Inspection<'a> {
                 self.name_template,
             ),
             tracks,
+            track_states,
             next_after,
+            stored_tracks: snapshot
+                .map(|snapshot| StoredTrackPage::new(snapshot, stored_track_start, limit)),
         })
+    }
+
+    fn track_status(
+        &self,
+        address: TrackRef,
+        track: &LoadedTrack,
+        snapshot: Option<&StoredTrackSnapshot>,
+    ) -> TrackInspectionState {
+        let stored_state = track
+            .metadata
+            .index
+            .checked_sub(1)
+            .and_then(|row| snapshot?.rows().get(row))
+            .filter(|range| range.state != TrackState::Deleted)
+            .map(|range| range.state.into());
+        TrackInspectionState {
+            tree: self.tree.and_then(|tree| tree(address)),
+            stored_state,
+        }
     }
 
     fn range(
@@ -131,7 +185,7 @@ impl<'a> Inspection<'a> {
             limit,
         }: GetRangeDetails,
     ) -> Result<RangeDetails, ErrorCode> {
-        let track = self.track(track)?;
+        let (_, _, track) = self.track(track)?;
         let start = start.unwrap_or_default();
         let end = end.unwrap_or(track.points.len());
         if end > track.points.len() {
@@ -154,11 +208,20 @@ impl<'a> Inspection<'a> {
         })
     }
 
-    fn track(&self, reference: TrackReference) -> Result<&'a LoadedTrack, ErrorCode> {
+    fn track(
+        &self,
+        reference: TrackReference,
+    ) -> Result<(TrackRef, LoadedFileEntry<'a>, &'a LoadedTrack), ErrorCode> {
         let address = reference.resolve(self.files, self.session)?;
-        address
-            .resolve(self.files.files())
-            .ok_or(ErrorCode::StaleTrack)
+        let entry = self
+            .files
+            .entry_for(address.fi)
+            .ok_or(ErrorCode::StaleTrack)?;
+        let track = address
+            .index
+            .get(&entry.file().tracks)
+            .ok_or(ErrorCode::StaleTrack)?;
+        Ok((address, entry, track))
     }
 }
 
@@ -166,7 +229,79 @@ impl<'a> Inspection<'a> {
 pub struct RecordingDetails {
     pub recording: Recording,
     pub tracks: Vec<TrackReference>,
+    pub track_states: Vec<TrackPageState>,
     pub next_after: Option<TrackReference>,
+    pub stored_tracks: Option<StoredTrackPage>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TrackPageState {
+    pub index: usize,
+    pub track_number: usize,
+    #[serde(flatten)]
+    pub state: TrackInspectionState,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TrackInspectionState {
+    pub tree: Option<TrackTreeState>,
+    pub stored_state: Option<StoredTrackState>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TrackTreeState {
+    pub enabled: bool,
+    pub selected: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoredTrackState {
+    Deleted,
+    Live,
+    Shelved,
+}
+
+impl From<TrackState> for StoredTrackState {
+    fn from(value: TrackState) -> Self {
+        match value {
+            TrackState::Deleted => Self::Deleted,
+            TrackState::Live => Self::Live,
+            TrackState::Shelved => Self::Shelved,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredTrackPage {
+    pub rows: Vec<StoredTrackRow>,
+    pub next_start: Option<NonZeroUsize>,
+}
+
+impl StoredTrackPage {
+    fn new(snapshot: &StoredTrackSnapshot, start: Option<NonZeroUsize>, limit: usize) -> Self {
+        let rows = snapshot.rows();
+        let start = (start.unwrap_or(NonZeroUsize::MIN).get() - 1).min(rows.len());
+        let end = start.saturating_add(limit).min(rows.len());
+        Self {
+            rows: (start + 1..=end)
+                .zip(rows.iter().skip(start))
+                .map(|(track_number, row)| StoredTrackRow {
+                    track_number,
+                    state: row.state.into(),
+                })
+                .collect(),
+            next_start: (end < rows.len())
+                .then(|| NonZeroUsize::new(end + 1))
+                .flatten(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredTrackRow {
+    pub track_number: usize,
+    pub state: StoredTrackState,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -180,10 +315,12 @@ pub struct TrackDetails {
     pub invalid_position_count: usize,
     pub satellite_report_count: usize,
     pub fix_loss_count: Option<u32>,
+    #[serde(flatten)]
+    pub state: TrackInspectionState,
 }
 
 impl TrackDetails {
-    fn new(track: &LoadedTrack) -> Self {
+    fn new(track: &LoadedTrack, state: TrackInspectionState) -> Self {
         let metadata = &track.metadata;
         let geometry = track.geometry.measured();
         Self {
@@ -196,6 +333,7 @@ impl TrackDetails {
             invalid_position_count: metadata.invalid_position_count,
             satellite_report_count: metadata.satellite_report_count,
             fix_loss_count: metadata.fix_stats.map(|stats| stats.fix_loss_count),
+            state,
         }
     }
 }

@@ -128,10 +128,25 @@ Each page contains at most 100 recordings, which is the default limit.
 Use the returned `next_after` as `after` to continue, and stop when `next_after` is null.
 
 Pass a recording's returned `id` as `recording` to `get_recording`.
-It returns the recording summary and up to 100 track references per page.
+It returns the recording summary and up to 100 loaded track references in loaded order.
 Recording summaries set `metadata_truncated` to true when the bridge shortens text metadata for the reply.
 Pass its `next_after` as `after` to continue.
+Match each `track_states` entry to its track reference by `index`.
 Pass a track reference as `track` to `get_track` for its recorded time range and counts, or to `get_range_details` for points in recorded order.
+Both inspection tools report the track's checkbox and row selection as `tree.enabled` and `tree.selected`.
+These values describe the desktop track tree independently of time filters and map display categories.
+`stored_state` reports `live` or `shelved` when GeoTrace has a current History membership observation for the track.
+A null `tree` or `stored_state` marks unavailable state.
+
+`get_recording` also returns `stored_tracks` with a separate page in one-based stored track number order.
+The stored rows include `live`, `shelved`, and `deleted` states, including shelved tracks outside the loaded set.
+Stored row numbers are separate from loaded track `index` values and cannot be passed as track references.
+Pass `stored_tracks.next_start` as `stored_track_start` to continue these pages independently of `after`.
+Stop when `stored_tracks.next_start` is null.
+The requested `limit` applies to each page, with a maximum of 100 rows per page.
+`stored_tracks` is null when GeoTrace lacks a current checked History observation.
+A storage change can invalidate that observation until GeoTrace obtains a new one.
+
 `get_track` reports distance and bounds from the map geometry when available.
 Longitude bounds extend east from `longitude_start_deg` by `longitude_span_deg`, including across the antimeridian.
 `get_range_details` accepts a zero-based inclusive `start` and exclusive `end`.

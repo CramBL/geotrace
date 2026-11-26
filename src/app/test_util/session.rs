@@ -20,6 +20,11 @@ pub fn app_with_bridge() -> (Harness<'static, App>, TestEndpoint) {
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(harness::transient_app);
+    let endpoint = self::install_bridge(&mut harness);
+    (harness, endpoint)
+}
+
+pub fn install_bridge(harness: &mut Harness<'_, App>) -> TestEndpoint {
     let endpoint = TestEndpoint::new().unwrap();
     let ctx = harness.ctx.clone();
     harness.state_mut().session_bridge = Some(
@@ -27,7 +32,7 @@ pub fn app_with_bridge() -> (Harness<'static, App>, TestEndpoint) {
             .start_server(move || ctx.request_repaint())
             .unwrap(),
     );
-    (harness, endpoint)
+    endpoint
 }
 
 pub fn exchange_payload(
@@ -147,6 +152,7 @@ pub fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {
         Request::GetRecording(GetRecording {
             recording: page.recordings[0].id,
             after: None,
+            stored_track_start: None,
             limit: None,
         }),
     ) else {
