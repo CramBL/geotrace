@@ -1,4 +1,5 @@
-use egui::{Align2, Area, AreaState, Window};
+use egui::collapsing_header::CollapsingState;
+use egui::{Align2, Area, AreaState, LayerId, Order, Window};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ToolWindowSizing {
@@ -16,6 +17,14 @@ pub struct ToolWindow<'a> {
     pub resizable: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ToolWindowRaise {
+    AlreadyFrontmost,
+    Queued,
+    WaitingForLayout,
+    WaitingForPointer,
+}
+
 impl ToolWindowSizing {
     pub fn constrain_size(self, viewport: egui::Rect, requested_size: egui::Vec2) -> egui::Vec2 {
         let maximum = viewport.size()
@@ -31,6 +40,64 @@ impl ToolWindow<'_> {
     pub fn transfer_pointer_drag(ctx: &egui::Context, window_id: egui::Id) {
         // egui 0.36 uses this private title-bar ID for pointer deltas before area restoration.
         ctx.set_dragged_id(window_id.with(EGUI_TITLE_DRAG_ID));
+    }
+
+    pub fn expand(ctx: &egui::Context, window_id: egui::Id) -> bool {
+        let Some(mut state) = CollapsingState::load(ctx, window_id.with(EGUI_COLLAPSE_ID)) else {
+            return false;
+        };
+        if state.is_open() {
+            return false;
+        }
+        state.set_open(true);
+        state.store(ctx);
+        true
+    }
+
+    pub fn raise(ctx: &egui::Context, window_id: egui::Id) -> ToolWindowRaise {
+        match Self::is_frontmost_after_layout(ctx, window_id) {
+            Some(true) => return ToolWindowRaise::AlreadyFrontmost,
+            None => return ToolWindowRaise::WaitingForLayout,
+            Some(false) => {}
+        }
+        let (pointer_down, pointer_transition) = ctx.input(|input| {
+            (
+                input.pointer.any_down(),
+                input.pointer.any_pressed() || input.pointer.any_released(),
+            )
+        });
+        if pointer_down || pointer_transition {
+            if !pointer_down {
+                ctx.request_repaint();
+            }
+            return ToolWindowRaise::WaitingForPointer;
+        }
+        ctx.move_to_top(LayerId::new(Order::Middle, window_id));
+        ctx.request_repaint();
+        ToolWindowRaise::Queued
+    }
+
+    pub fn is_frontmost_after_layout(ctx: &egui::Context, window_id: egui::Id) -> Option<bool> {
+        let target = LayerId::new(Order::Middle, window_id);
+        ctx.memory(|memory| {
+            let areas = memory.areas();
+            if !areas.visible_last_frame(&target) {
+                return None;
+            }
+            let mut frontmost = target;
+            for layer in memory.layer_ids().filter(|layer| {
+                layer.order == target.order
+                    && areas.is_visible(layer)
+                    && areas.parent_layer(*layer).is_none()
+            }) {
+                // egui also raises newly visible windows at the end of the pass.
+                if !areas.visible_last_frame(&layer) {
+                    return None;
+                }
+                frontmost = layer;
+            }
+            Some(frontmost == target)
+        })
     }
 
     /// egui preserves subsequent user geometry. Short content can reduce the initial height.
@@ -135,4 +202,7 @@ impl ToolWindow<'_> {
 }
 
 const INITIAL_CENTER_ID: &str = "initial-center";
+
+// egui uses this suffix for the window's collapse state.
+const EGUI_COLLAPSE_ID: &str = "collapsing";
 const EGUI_TITLE_DRAG_ID: &str = "__title_click";

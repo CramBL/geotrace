@@ -27,6 +27,7 @@ mod history;
 mod inspection;
 mod map;
 mod notices;
+mod panels;
 mod plot;
 mod processing;
 mod recordings;

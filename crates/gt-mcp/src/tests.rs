@@ -11,13 +11,14 @@ use gt_session_bridge::{
     GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
     HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings,
     MAX_RECORDING_BATCH, MAX_VISIBILITY_TRACKS, ManageRecordings, Metrics, NumericObservation,
-    OpenHistoryRecording, OpenPoint, PointDetails, QueryCounts, QueryJobId, QueryJobRequest,
-    QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
-    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText,
-    QueryValidation, RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply,
-    Request, SetSetting, SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey,
-    SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
-    TrackVisibilityAction, TrackVisibilityResult,
+    OpenHistoryRecording, OpenPanel, OpenPoint, PointDetails, QueryCounts, QueryJobId,
+    QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest,
+    QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
+    QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget, Recording,
+    RecordingReference, Recordings, Reply, Request, SessionPanel, SetSetting, SetTrackVisibility,
+    SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
+    SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference, TrackVisibilityAction,
+    TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -34,6 +35,54 @@ use super::{
     ASYNC_RESULT_WAIT, Bridge, COMPANION_NAME, Companion, START_DESKTOP, STATUS_POLL_INTERVAL,
     VERSION,
 };
+
+#[tokio::test]
+async fn open_panel_validates_panel_arguments_before_requesting_the_desktop() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|request| match request {
+        Request::OpenPanel(OpenPanel::History {}) => Ok(Reply::PanelOpenQueued {
+            panel: SessionPanel::History,
+        }),
+        Request::OpenPanel(OpenPanel::SkyTrails { track }) => {
+            assert_eq!(*track, self::track_reference());
+            Ok(Reply::from(ErrorCode::NoSkyTrailReports))
+        }
+        _ => panic!("unexpected desktop request"),
+    }));
+    client.initialize().await;
+    let track = self::track_reference();
+    client
+        .send_tool(2, "open_panel", json!({"panel": "history"}))
+        .await;
+    let history = client.receive().await;
+    assert_eq!(
+        history.pointer("/result/structuredContent"),
+        Some(&json!({"status": "panel_open_queued", "panel": "history"}))
+    );
+    client
+        .send_tool(
+            3,
+            "open_panel",
+            json!({"panel": "sky_trails", "track": track}),
+        )
+        .await;
+    let no_reports = client.receive().await;
+    assert_eq!(
+        no_reports.pointer("/result/content/0/text"),
+        Some(&json!(
+            "The track has no satellite azimuth and elevation reports for Sky trails."
+        ))
+    );
+    for (id, arguments) in (4..).zip([
+        json!({"panel": "history", "track": track}),
+        json!({"panel": "sky_trails"}),
+    ]) {
+        client.send_tool(id, "open_panel", arguments).await;
+        let result = client.receive().await;
+        assert_eq!(result.pointer("/result/isError"), Some(&json!(true)));
+    }
+    drop(client);
+    worker.await.unwrap();
+}
 
 #[tokio::test]
 async fn set_track_visibility_checks_bounds_and_returns_the_actual_reply() {
@@ -224,6 +273,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             "list_recordings",
             "manage_recordings",
             "open_history_recording",
+            "open_panel",
             "open_point",
             "open_query",
             "open_setting",

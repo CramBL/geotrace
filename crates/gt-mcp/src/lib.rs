@@ -7,8 +7,9 @@ use std::time::Duration;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
     GetRecording, GetTrack, HistoryOpenState, ListHistoryRecordings, ListMetrics, ListRecordings,
-    ManageRecordings, OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryJobState, QueryText,
-    Reply, Request, SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
+    ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, QueryJobRequest, QueryJobState,
+    QueryText, Reply, Request, SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap,
+    ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -233,6 +234,18 @@ impl Companion {
     }
 
     #[tool(
+        description = "Open or raise History, Log viewer, Plot, Query, Settings, or Sky trails. For Sky trails, supply a current track with satellite positions.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn open_panel(&self, Parameters(args): Parameters<OpenPanel>) -> CallToolResult {
+        self.inspect(Request::OpenPanel(args)).await
+    }
+
+    #[tool(
         description = "Center the map on a visible recorded point and open its point information.",
         annotations(
             destructive_hint = false,
@@ -353,6 +366,7 @@ impl Companion {
             Ok(
                 reply @ (Reply::FilesQueued { .. }
                 | Reply::MapPresentationQueued
+                | Reply::PanelOpenQueued { .. }
                 | Reply::PlotPresentationQueued
                 | Reply::ProcessingApplied
                 | Reply::QueryDraftQueued
@@ -470,6 +484,9 @@ impl Companion {
             Request::ManageRecordings(ManageRecordings::Unload { .. }) => {
                 matches!(reply, Reply::RecordingsUnloaded { .. })
             }
+            Request::OpenPanel(args) => {
+                matches!(reply, Reply::PanelOpenQueued { panel } if *panel == args.panel())
+            }
             Request::OpenPoint(_) | Request::ShowOnMap(_) => {
                 matches!(reply, Reply::MapPresentationQueued)
             }
@@ -529,6 +546,9 @@ impl Companion {
             }
             ErrorCode::NoLoadedNavPoints => {
                 "Load a recording with navigation points before applying processing."
+            }
+            ErrorCode::NoSkyTrailReports => {
+                "The track has no satellite azimuth and elevation reports for Sky trails."
             }
             ErrorCode::NoVisibleMapGeometry => {
                 "The selected points have no visible geometry under the current map settings."

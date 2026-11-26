@@ -183,6 +183,7 @@ impl App {
             Request::OpenHistoryRecording(args) => self
                 .open_session_history_recording(session, args)
                 .map(|operation| Reply::HistoryOpen { operation }),
+            Request::OpenPanel(args) => self.open_session_panel(session, args),
             Request::OpenPoint(args) => {
                 let presentation = self.session_open_point(session, args)?;
                 self.shared.borrow_mut().queue_session_map(presentation);

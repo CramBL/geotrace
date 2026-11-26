@@ -65,6 +65,7 @@ impl PendingTrackDataDetach {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.complete_session_panel_raise();
         self.begin_shutdown_if_requested(ctx);
         self.apply_finished_background_work(ctx);
         self.drive_shutdown(ctx);
@@ -177,6 +178,7 @@ impl eframe::App for App {
             }
         }
 
+        self.apply_session_panel_reveals(ui.ctx());
         self.toasts.show(ui.ctx());
 
         self.sync_settings_autosave();
@@ -392,10 +394,7 @@ impl App {
                         .on_hover_text("Browse and re-open previously recorded sessions")
                         .clicked()
                     {
-                        self.history_window.open = !self.history_window.open;
-                        if self.history_window.open {
-                            self.invalidate_history_listing();
-                        }
+                        self.set_history_window_open(!self.history_window.open);
                     }
 
                     self.log_viewer.toolbar_button_ui(ui);

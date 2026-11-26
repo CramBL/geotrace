@@ -21,14 +21,7 @@ impl App {
                 &shared.recording_name_template,
             ),
             open_panels: SessionPanel::iter()
-                .filter(|panel| match panel {
-                    SessionPanel::History => self.history_window.open,
-                    SessionPanel::LogViewer => self.log_viewer.open,
-                    SessionPanel::Plot => self.plot_is_visible(),
-                    SessionPanel::Query => self.query_window.open,
-                    SessionPanel::Settings => self.settings_open,
-                    SessionPanel::SkyTrails => self.sky_trails_window.is_open(),
-                })
+                .filter(|&panel| self.session_panel_is_open(panel))
                 .collect(),
             time_filter: shared.filter.time_window().into(),
             map: SessionMapState {

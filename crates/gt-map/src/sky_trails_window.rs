@@ -76,6 +76,10 @@ impl Default for SkyTrailsWindow {
 }
 
 impl SkyTrailsWindow {
+    pub fn window_id() -> egui::Id {
+        egui::Id::unique(Some(SKY_TRAILS_WINDOW_TITLE))
+    }
+
     /// Drop the window's `TrackRef`-keyed state after track indices shift
     /// (a removal or re-segmentation), so it never shows stale trails or
     /// cross-highlights the wrong point. The window closes.
@@ -100,19 +104,18 @@ impl SkyTrailsWindow {
         );
     }
 
-    /// Open the window per `request`: on its track, and scrubbed to its
-    /// instant when it carries one (opened from a clicked track point).
-    ///
-    /// Re-opening the same track keeps the scrubber, filter and playback speed
-    /// where they were, so jumping to a new instant does not reset the rest of
-    /// the window.
-    pub fn open(&mut self, request: SkyTrailsRequest) {
+    /// A request for the current track preserves the filter and playback speed.
+    /// A request with an instant pauses playback and sets the scrubber.
+    /// Returns whether the window opened or changed tracks.
+    pub fn open(&mut self, request: SkyTrailsRequest) -> bool {
+        let opened_or_changed_track = !self.open || self.track != Some(request.track);
         self.open_track(request.track);
         if let Some(at) = request.at {
             self.pending_scrub_to = Some(at);
             // Opening at an instant pauses playback.
             self.playing = false;
         }
+        opened_or_changed_track
     }
 
     /// Open the window on `track`, resetting the scrubber and filter when it
@@ -193,7 +196,8 @@ impl SkyTrailsWindow {
         let mut open = self.open;
         // A stable, title-derived id (like the query and history windows) so
         // the floating position persists when the window re-targets a track.
-        Window::new("Sky trails")
+        Window::new(SKY_TRAILS_WINDOW_TITLE)
+            .id(Self::window_id())
             .open(&mut open)
             .resizable(true)
             .default_size(DEFAULT_WINDOW_SIZE)
@@ -207,6 +211,8 @@ impl SkyTrailsWindow {
         self.open
     }
 }
+
+const SKY_TRAILS_WINDOW_TITLE: &str = "Sky trails";
 
 /// The window's per-frame render inputs: the extracted trails, the mutable
 /// scrubber/filter state, and where the scrubbed point is written.

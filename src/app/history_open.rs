@@ -782,6 +782,13 @@ impl App {
         self.history_window.invalidate_shelf_track_table();
     }
 
+    pub(super) fn set_history_window_open(&mut self, open: bool) {
+        if open && !self.history_window.open {
+            self.invalidate_history_listing();
+        }
+        self.history_window.open = open;
+    }
+
     fn apply_history_listing_response(
         &mut self,
         request: ListRequestId,

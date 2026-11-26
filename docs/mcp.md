@@ -7,6 +7,7 @@ Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-clie
 | Tool | Use |
 |---|---|
 | `get_session_state` | Read a summary of the current desktop session. |
+| `open_panel` | Open or raise a desktop panel. |
 | `list_recordings` | List loaded recordings and get their references. |
 | `manage_recordings` | Open local recordings or logs, or unload recordings from this session. |
 | `get_recording` | Read a recording summary, loaded track references, and stored track rows. |
@@ -53,6 +54,16 @@ A filter can hide a point while the pin remains.
 `query.job` appears as a session-bound job handle when one exists for the caller, or null otherwise.
 The `completed` phase records that the run finished.
 Use `get_query_status` with the job handle to check result freshness.
+
+Pass one of the names listed for `open_panels` to `open_panel`, for example `{"panel":"query"}`.
+For `sky_trails`, include a current `track` reference from `get_recording`.
+GeoTrace checks that the track has satellite azimuth and elevation reports before opening Sky trails.
+Supply only `panel` for the other panels.
+GeoTrace returns `panel_open_queued` after recording the panel choice.
+GeoTrace brings a floating panel to the front after layout.
+For Plot, it makes the docked pane visible.
+Opening Query preserves its draft and results.
+Opening Settings keeps its current page.
 
 ## Recordings
 

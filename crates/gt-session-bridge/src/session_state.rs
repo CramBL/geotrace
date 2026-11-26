@@ -7,7 +7,7 @@ use gt_ui_types::DisplayCategory;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::protocol::{self, OpenPoint, Recordings};
+use crate::protocol::{self, OpenPoint, Recordings, TrackReference};
 use crate::query_job::QueryJobId;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -41,6 +41,32 @@ pub enum SessionPanel {
     Query,
     Settings,
     SkyTrails,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(extend("type" = "object")))]
+#[serde(tag = "panel", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OpenPanel {
+    History {},
+    LogViewer {},
+    Plot {},
+    Query {},
+    Settings {},
+    SkyTrails { track: TrackReference },
+}
+
+impl OpenPanel {
+    pub fn panel(self) -> SessionPanel {
+        match self {
+            Self::History {} => SessionPanel::History,
+            Self::LogViewer {} => SessionPanel::LogViewer,
+            Self::Plot {} => SessionPanel::Plot,
+            Self::Query {} => SessionPanel::Query,
+            Self::Settings {} => SessionPanel::Settings,
+            Self::SkyTrails { .. } => SessionPanel::SkyTrails,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

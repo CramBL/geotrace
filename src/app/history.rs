@@ -487,6 +487,10 @@ struct RenameEdit {
 }
 
 impl HistoryWindow {
+    pub(super) fn window_id() -> egui::Id {
+        egui::Id::unique(Some(HISTORY_WINDOW_TITLE))
+    }
+
     pub fn new() -> Self {
         Self {
             open: false,
@@ -620,7 +624,7 @@ impl HistoryWindow {
         }
 
         ToolWindow {
-            id: egui::Id::unique(Some(HISTORY_WINDOW_TITLE)),
+            id: Self::window_id(),
             title: HISTORY_WINDOW_TITLE,
             viewport: ctx.content_rect(),
             sizing: HISTORY_WINDOW_SIZING,

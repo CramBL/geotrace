@@ -171,6 +171,10 @@ pub(super) struct AttachmentToLoad {
 }
 
 impl LogViewerWindow {
+    pub(super) fn window_id() -> egui::Id {
+        egui::Id::unique(Some(LOG_VIEWER_TITLE))
+    }
+
     pub(super) fn new() -> Self {
         Self {
             open: false,
@@ -202,14 +206,22 @@ impl LogViewerWindow {
             .on_hover_text(hover)
             .clicked()
         {
-            self.open = !self.open;
-            if self.open
-                && let Some(id) = self.selected
-            {
-                self.restored_logs.acknowledge(id);
-                self.reveal_selected_tab = true;
+            if self.open {
+                self.open = false;
+            } else {
+                self.open_window();
             }
         }
+    }
+
+    pub(super) fn open_window(&mut self) {
+        if !self.open
+            && let Some(id) = self.selected
+        {
+            self.restored_logs.acknowledge(id);
+            self.reveal_selected_tab = true;
+        }
+        self.open = true;
     }
 
     /// Shows `notice` in the viewer until the user dismisses it, opening the
@@ -325,6 +337,7 @@ impl LogViewerWindow {
         let mut open = self.open;
         let mut unload = None;
         let window = Window::new(LOG_VIEWER_TITLE)
+            .id(Self::window_id())
             .open(&mut open)
             .default_width(DEFAULT_WINDOW_WIDTH_PX)
             .default_height(520.0)
