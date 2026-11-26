@@ -934,7 +934,7 @@ impl App {
     /// A recording without nav points has no track structure to re-segment and
     /// is left unchanged.
     fn apply_resegmentation(&mut self) {
-        if !self.has_loaded_nav_points() {
+        if self.shutdown.has_begun() || !self.has_loaded_nav_points() {
             return;
         }
         let config = self.processing_config;

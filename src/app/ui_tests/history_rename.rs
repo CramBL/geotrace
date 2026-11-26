@@ -1,15 +1,19 @@
+use std::sync::Once;
 use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_loaded_files::{FileHistory, RecordingLoadOrigin};
+use gt_pending_writes::WriteKind;
 use gt_side_panel::{CheckState, TreeState};
 use gt_store::{
     DatabaseRef, HistoryAccess, HistoryDatabase as _, HistoryRenameOutcome,
     ReadOnlyHistoryDatabase as _, RecordingUiState, Store, StoredTrackSnapshot, TrackRange,
     TrackState, UiStateVersionReporter,
 };
-use gt_test_utils::{HarnessInteraction as _, recording_fixtures};
+use gt_test_utils::{HarnessInteraction as _, history_fixtures, recording_fixtures};
 use gt_types::{FileIdx, TrackIdx, TrackRef};
+use parking_lot::Mutex;
 use rstest::rstest;
 
 use crate::app::association_batches::RecordingOperationOrigin;
@@ -78,6 +82,31 @@ fn saved_visibility(store: &Store, recording: &DatabaseRef) -> RecordingUiState 
         .unwrap()
         .recording_ui_state(recording, &UiStateVersionReporter::default())
         .unwrap()
+}
+
+fn wait_for_recording_at_identity(store: &Store, identity: &str) -> DatabaseRef {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let found = {
+            let _access = HistoryAccess::lock();
+            store
+                .open_recordings_read_only()
+                .unwrap()
+                .unwrap()
+                .list_recordings()
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.db_ref.identity == identity)
+        };
+        if let Some(entry) = found {
+            return entry.db_ref;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "History did not publish the rename"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn open_recording(harness: &mut Harness<'_, App>, recording: &DatabaseRef) {
@@ -402,6 +431,360 @@ fn processing_after_history_moves_a_recording_clears_its_stored_visibility() {
             &[CheckState::On, CheckState::On],
         )],
     );
+}
+
+#[derive(Clone, Copy)]
+enum RenameBeforeShutdown {
+    Completed,
+    OlderVisibilityRead,
+    Replaced,
+}
+
+struct ShutdownVisibilityLog;
+
+static SHUTDOWN_VISIBILITY_MESSAGES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+impl log::Log for ShutdownVisibilityLog {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() == log::Level::Error
+            && (metadata.target().ends_with("::recording_ui_state")
+                || metadata.target().ends_with("::history_db"))
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            SHUTDOWN_VISIBILITY_MESSAGES
+                .lock()
+                .push(record.args().to_string());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+impl ShutdownVisibilityLog {
+    fn capture() {
+        static INSTALLED: Once = Once::new();
+        INSTALLED.call_once(|| {
+            log::set_logger(&Self).unwrap();
+            log::set_max_level(log::LevelFilter::Error);
+        });
+    }
+
+    fn assert_reported_once(expected: &str) {
+        assert_eq!(
+            SHUTDOWN_VISIBILITY_MESSAGES
+                .lock()
+                .iter()
+                .filter(|message| message.as_str() == expected)
+                .count(),
+            1,
+        );
+    }
+}
+
+#[rstest]
+#[case::completed(RenameBeforeShutdown::Completed, &[])]
+#[case::older_read_and_later_checkbox(RenameBeforeShutdown::OlderVisibilityRead, &[2])]
+#[case::replaced(RenameBeforeShutdown::Replaced, &[1])]
+fn shutdown_persists_processing_visibility_for_the_checked_rename_successor(
+    #[case] timing: RenameBeforeShutdown,
+    #[case] expected_hidden: &[u64],
+) {
+    let (mut harness, dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    let store = Store::open_in(dir.path());
+    store
+        .open_recordings()
+        .unwrap()
+        .set_recording_ui_state(
+            &recording,
+            &RecordingUiState::with_hidden_track_numbers([1]),
+            &UiStateVersionReporter::default(),
+        )
+        .unwrap();
+    self::open_recording(&mut harness, &recording);
+    let app = harness.state_mut();
+    let predecessor = recordings::worker_track_snapshot(&app.history, &recording);
+    if matches!(timing, RenameBeforeShutdown::OlderVisibilityRead) {
+        app.history.load_recording_ui_state(recording.clone());
+    }
+    app.history
+        .rename_identity(recording.identity, "renamed".to_owned());
+    let destination = self::wait_for_recording_at_identity(&store, "renamed");
+    assert!(!predecessor.layout().is_current());
+    if matches!(timing, RenameBeforeShutdown::Replaced) {
+        ShutdownVisibilityLog::capture();
+        self::replace_renamed_recording(&store, &destination);
+        app.history.load_recording_ui_state(destination.clone());
+    }
+
+    app.apply_resegmentation();
+    let first = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    assert_eq!(
+        app.shared.borrow().tree.track_node(first).unwrap().check,
+        CheckState::On
+    );
+    if matches!(timing, RenameBeforeShutdown::OlderVisibilityRead) {
+        let second = TrackRef::new(first.fi, TrackIdx::new(1));
+        app.shared.borrow_mut().tree.hide_track(second);
+    }
+    app.begin_shutdown();
+    assert!(!app.pending_writes.is_idle());
+    harness::finish_shutdown_without_painting(&mut harness);
+    assert_eq!(
+        self::saved_visibility(&store, &destination),
+        RecordingUiState::with_hidden_track_numbers(expected_hidden.iter().copied())
+    );
+    if matches!(timing, RenameBeforeShutdown::Replaced) {
+        ShutdownVisibilityLog::assert_reported_once(&format!(
+            "Could not save track visibility for {destination} before shutdown"
+        ));
+    }
+}
+
+fn replace_renamed_recording(store: &Store, destination: &DatabaseRef) {
+    let replacement = recordings::bytes_starting_at(1_750_000_000, 20);
+    let replacement_meta = gt_store::extract_meta(&replacement).unwrap();
+    let mut db = store.open_recordings().unwrap();
+    db.replace_recording_in_place(
+        destination,
+        &replacement_meta,
+        &ui_tests::two_live_track_ranges(),
+        recordings::segmentation(),
+        &replacement,
+    )
+    .unwrap();
+    db.set_recording_ui_state(
+        destination,
+        &RecordingUiState::with_hidden_track_numbers([1]),
+        &UiStateVersionReporter::default(),
+    )
+    .unwrap();
+}
+
+enum PendingVisibilityEdit {
+    Hide,
+    HideWithNewerVisibility,
+    ShowWithNewerVisibility,
+}
+
+#[rstest]
+#[case::current_version(PendingVisibilityEdit::Hide)]
+#[case::hide_with_newer_version(PendingVisibilityEdit::HideWithNewerVisibility)]
+#[case::show_with_newer_version(PendingVisibilityEdit::ShowWithNewerVisibility)]
+fn shutdown_reads_successor_visibility_for_a_checkbox_edit_without_a_baseline(
+    #[case] edit: PendingVisibilityEdit,
+) {
+    let (mut harness, dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    let store = Store::open_in(dir.path());
+    store
+        .open_recordings()
+        .unwrap()
+        .set_recording_ui_state(
+            &recording,
+            &RecordingUiState::with_hidden_track_numbers([1, 7]),
+            &UiStateVersionReporter::default(),
+        )
+        .unwrap();
+    let app = harness.state_mut();
+    let predecessor = recordings::worker_track_snapshot(&app.history, &recording);
+    self::load_disk_copy_before_history_replies(app, &predecessor);
+    let second = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
+    {
+        let mut shared = app.shared.borrow_mut();
+        assert!(
+            shared
+                .tree
+                .hidden_track_numbers_for_layout(predecessor.layout())
+                .is_none()
+        );
+        if matches!(edit, PendingVisibilityEdit::ShowWithNewerVisibility) {
+            let first = TrackRef::new(second.fi, TrackIdx::new(0));
+            shared.tree.hide_track(first);
+            shared.tree.toggle_track_check(first);
+        } else {
+            shared.tree.hide_track(second);
+        }
+    }
+    app.history
+        .rename_identity(recording.identity, "renamed".to_owned());
+    let destination = self::wait_for_recording_at_identity(&store, "renamed");
+    assert!(!predecessor.is_current());
+    let newer_state = (!matches!(edit, PendingVisibilityEdit::Hide)).then(|| {
+        ShutdownVisibilityLog::capture();
+        let path = store.recordings_path();
+        history_fixtures::set_newer_visibility_version(&path, &destination);
+        history_fixtures::raw_visibility_version_and_tracks(&path, &destination)
+    });
+
+    app.begin_shutdown();
+    harness::finish_shutdown_without_painting(&mut harness);
+
+    if let Some(before) = newer_state {
+        self::assert_newer_visibility_was_preserved(&store, &destination, &before);
+    } else {
+        assert_eq!(
+            self::saved_visibility(&store, &destination),
+            RecordingUiState::with_hidden_track_numbers([1, 2, 7])
+        );
+    }
+}
+
+#[test]
+fn an_admitted_visibility_write_preserves_the_newer_version_on_shutdown() {
+    let (mut harness, dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    let store = Store::open_in(dir.path());
+    store
+        .open_recordings()
+        .unwrap()
+        .set_recording_ui_state(
+            &recording,
+            &RecordingUiState::with_hidden_track_numbers([1, 7]),
+            &UiStateVersionReporter::default(),
+        )
+        .unwrap();
+    self::open_recording(&mut harness, &recording);
+    ShutdownVisibilityLog::capture();
+    let path = store.recordings_path();
+    history_fixtures::set_newer_visibility_version(&path, &recording);
+    let before = history_fixtures::raw_visibility_version_and_tracks(&path, &recording);
+    {
+        let _access = HistoryAccess::lock();
+        let app = harness.state_mut();
+        let second = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
+        app.shared.borrow_mut().tree.hide_track(second);
+        app.store_the_hidden_tracks_the_user_changed();
+        assert!(
+            app.pending_writes
+                .snapshot()
+                .running
+                .iter()
+                .any(|write| write.kind == WriteKind::RecordingDatabase)
+        );
+        app.begin_shutdown();
+    }
+    harness::finish_shutdown_without_painting(&mut harness);
+
+    self::assert_newer_visibility_was_preserved(&store, &recording, &before);
+    drop(harness);
+    let reopened = self::reopen_recordings_with_checks(
+        &store,
+        &[(recording, &[CheckState::On, CheckState::On])],
+    );
+    let shared = reopened.state().shared.borrow();
+    let entry = shared.loaded_files.view().get(0).unwrap();
+    let layout = entry.history().track_snapshot().unwrap().layout();
+    assert!(
+        shared
+            .tree
+            .hidden_track_numbers_for_layout(layout)
+            .is_none()
+    );
+}
+
+fn assert_newer_visibility_was_preserved(
+    store: &Store,
+    recording: &DatabaseRef,
+    before: &(i64, Vec<u64>),
+) {
+    let after =
+        history_fixtures::raw_visibility_version_and_tracks(&store.recordings_path(), recording);
+    assert_eq!(before, &after);
+    let (version, tracks) = after;
+    assert_eq!(tracks, [1, 7]);
+    ShutdownVisibilityLog::assert_reported_once(&format!(
+        "Could not save track visibility for {recording}: UI state version {version} is newer than this build"
+    ));
+}
+
+#[test]
+fn closing_during_a_rename_waits_to_allow_running_in_the_background() {
+    let (mut harness, dir, recording) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    let store = Store::open_in(dir.path());
+    store
+        .open_recordings()
+        .unwrap()
+        .set_recording_ui_state(
+            &recording,
+            &RecordingUiState::with_hidden_track_numbers([1]),
+            &UiStateVersionReporter::default(),
+        )
+        .unwrap();
+    self::open_recording(&mut harness, &recording);
+    self::replies_through_listing(&harness.state().history);
+    let keep_worker_alive = harness.state().history.second_request_sender();
+    {
+        let _access = HistoryAccess::lock();
+        let app = harness.state_mut();
+        assert!(app.pending_writes.is_idle());
+        app.history
+            .rename_identity(recording.identity, "renamed".to_owned());
+        self::wait_for_the_rename_to_start(app);
+        app.apply_resegmentation();
+        app.shared
+            .borrow_mut()
+            .tree
+            .hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+
+        ui_tests::request_window_close(&mut harness);
+        let output = harness::step_minimized_logic(&mut harness);
+        let Some(commands) = output.viewport_commands.get(&egui::ViewportId::ROOT) else {
+            panic!("Expected shutdown viewport commands");
+        };
+        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
+        assert!(!commands.contains(&egui::ViewportCommand::Close));
+        assert!(harness.state().shutdown.has_begun());
+        assert!(!harness.state().history.available());
+        assert!(
+            harness.step_until(|harness| harness.query_by_label("Run in background").is_some())
+        );
+        let button = harness.get_by_label("Run in background");
+        assert!(button.accesskit_node().is_disabled());
+        assert!(!ui_tests::closed_the_window(&harness));
+    }
+    assert!(harness.step_until(|harness| {
+        harness
+            .query_by_label("Run in background")
+            .is_some_and(|button| !button.accesskit_node().is_disabled())
+    }));
+    harness.run_steps(2);
+    harness.get_by_label("Run in background").click();
+    assert!(harness.step_until(ui_tests::closed_the_window));
+    assert!(!harness.state().pending_writes.is_idle());
+
+    drop(keep_worker_alive);
+    assert!(
+        harness
+            .state()
+            .pending_writes
+            .wait_until_idle_for(Duration::from_secs(5))
+    );
+    let destination = self::wait_for_recording_at_identity(&store, "renamed");
+    assert_eq!(
+        self::saved_visibility(&store, &destination),
+        RecordingUiState::with_hidden_track_numbers([2])
+    );
+}
+
+fn wait_for_the_rename_to_start(app: &App) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !app
+        .pending_writes
+        .snapshot()
+        .running
+        .iter()
+        .any(|write| write.kind == WriteKind::RecordingDatabase)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "History did not start the rename"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[test]

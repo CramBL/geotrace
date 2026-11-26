@@ -7,7 +7,7 @@ use gt_session_bridge::{
     RecordingReference, Reply,
 };
 use gt_store::{
-    DbError, RecordingDebugTag, RecordingUiState, StoredLayoutRevision, StoredSegmentation,
+    RecordingDebugTag, RecordingUiState, StoredLayoutRevision, StoredSegmentation,
     StoredTrackSnapshot,
 };
 use gt_track_builder::SegmentationConfig;
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::App;
 use super::association_batches::RecordingOperationOrigin;
-use super::history_db::OpenedRecording;
+use super::history_db::{OpenedRecording, RecordingUiStateError};
 use super::history_list::RecordingListing;
 use super::history_open::ResegmentChoice;
 use super::loader::{LoadCompletion, LoadedRecordingResult};
@@ -65,7 +65,7 @@ enum LoadTracks {
 enum DisplayStateUpdate {
     ApplySaved {
         observation: StoredLayoutRevision,
-        state: Result<RecordingUiState, DbError>,
+        state: Result<RecordingUiState, RecordingUiStateError>,
     },
     Clear(StoredLayoutRevision),
     Preserve,
@@ -73,7 +73,7 @@ enum DisplayStateUpdate {
 
 struct SelectedRead {
     observation: StoredTrackSnapshot,
-    visibility: Option<Result<RecordingUiState, DbError>>,
+    visibility: Option<Result<RecordingUiState, RecordingUiStateError>>,
 }
 
 impl SelectedRead {

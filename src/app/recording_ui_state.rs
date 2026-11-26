@@ -12,9 +12,11 @@ use std::fs;
 use std::mem;
 use std::path::Path;
 
-use gt_store::{DatabaseRef, DbError, RecordingUiState, StoredLayoutRevision};
+use gt_side_panel::{ObservedVisibilityWrite, VisibilityStoreReceipt};
+use gt_store::{DatabaseRef, RecordingUiState, StoredLayoutRevision};
 
 use super::App;
+use super::history_db::RecordingUiStateError;
 
 /// One `ui.hidden_tracks` entry of the settings file. An earlier version of
 /// GeoTrace kept the hidden tracks there, before the history database held
@@ -61,12 +63,23 @@ impl App {
     pub(in crate::app) fn apply_the_ui_state_stored_with_a_recording(
         &self,
         observation: StoredLayoutRevision,
-        ui_state: Result<RecordingUiState, DbError>,
+        ui_state: Result<RecordingUiState, RecordingUiStateError>,
     ) {
         let ui_state = match ui_state {
             Ok(ui_state) => ui_state,
-            Err(error) => {
+            Err(RecordingUiStateError::Database(error)) => {
                 log::warn!("Reading the display settings of a recording failed: {error}");
+                return;
+            }
+            Err(error @ RecordingUiStateError::NewerVersion(_)) => {
+                if self
+                    .shared
+                    .borrow_mut()
+                    .tree
+                    .reject_visibility_write_without_baseline(&observation)
+                {
+                    error.report_newer_visibility_write_failure();
+                }
                 return;
             }
         };
@@ -104,19 +117,55 @@ impl App {
     /// Store the hidden tracks of every recording the user changed them for
     /// since this last ran.
     pub(in crate::app) fn store_the_hidden_tracks_the_user_changed(&self) {
-        let changed = self
+        if self.shutdown.has_begun() {
+            return;
+        }
+        for (layout, ui_state, receipt) in self.take_recording_ui_state_writes() {
+            self.history
+                .store_recording_ui_state(layout, ui_state, receipt);
+        }
+    }
+
+    pub(super) fn take_recording_ui_state_writes(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            StoredLayoutRevision,
+            RecordingUiState,
+            Option<VisibilityStoreReceipt>,
+        ),
+    > + use<> {
+        self.shared
+            .borrow_mut()
+            .tree
+            .take_observed_hidden_tracks_to_store()
+            .into_iter()
+            .map(
+                |ObservedVisibilityWrite {
+                     layout,
+                     hidden,
+                     receipt,
+                 }| {
+                    let ui_state = RecordingUiState::with_hidden_track_numbers(
+                        hidden
+                            .into_iter()
+                            .filter_map(|number| u64::try_from(number).ok()),
+                    );
+                    (layout, ui_state, receipt)
+                },
+            )
+    }
+
+    pub(super) fn report_unresolved_visibility_writes(&self) {
+        for layout in self
             .shared
             .borrow_mut()
             .tree
-            .take_observed_hidden_tracks_to_store();
-        for (observation, track_numbers) in changed {
-            self.history.store_recording_ui_state(
-                observation,
-                RecordingUiState::with_hidden_track_numbers(
-                    track_numbers
-                        .into_iter()
-                        .filter_map(|number| u64::try_from(number).ok()),
-                ),
+            .discard_unresolved_visibility_writes()
+        {
+            log::error!(
+                "Could not save track visibility for {} before shutdown",
+                layout.recording()
             );
         }
     }

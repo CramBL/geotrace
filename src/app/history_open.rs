@@ -8,7 +8,7 @@ use gt_pending_writes::{PendingWriteGuard, WriteKind};
 use gt_session_bridge::ErrorCode;
 use gt_store::{
     DatabaseRef, DbError, HistoryEntries, RecordingMeta, StoredFixPlacementRule,
-    StoredTrackSplitRule, TrackState,
+    StoredLayoutRevision, StoredTrackSplitRule, TrackState,
 };
 use gt_ui_components::HeldBodyLines;
 
@@ -16,7 +16,9 @@ use super::anchored_dialog::AnchoredDialogKind;
 use super::association_batches::RecordingOperationOrigin;
 use super::auto_prune::AutoPruneOutcome;
 use super::history::{self, HistoryWindowFrame};
-use super::history_db::{ListRequestId, OpenedRecording, SessionRestoration};
+use super::history_db::{
+    ListRequestId, OpenedRecording, RecordingUiStateError, SessionRestoration,
+};
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadReadRequest, LoadSource};
 use super::loader::{
     AttachedLogRequester, CompletedLoad, LoadCompletion, LoadedRecordingPlacement,
@@ -450,7 +452,11 @@ impl App {
         self.on_track_indices_changed();
     }
 
-    fn apply_mutation_outcome(&mut self, op: &history_db::DbOp, result: &Result<(), DbError>) {
+    pub(super) fn apply_mutation_outcome(
+        &mut self,
+        op: &history_db::DbOp,
+        result: &Result<(), DbError>,
+    ) -> Option<Vec<StoredLayoutRevision>> {
         if let history_db::DbOp::TracksDeleted {
             view_removal: Some(removal),
             ..
@@ -472,30 +478,20 @@ impl App {
             } => outcome.snapshot_updates(),
             _ => &[],
         };
-        if !snapshot_updates.is_empty() {
-            let layouts_to_read = {
-                let SharedAppState {
-                    loaded_files, tree, ..
-                } = &mut *self.shared.borrow_mut();
-                let adopted = loaded_files.apply_track_snapshot_updates(snapshot_updates);
-                tree.sync_after_track_snapshot_updates(
-                    loaded_files.view(),
-                    snapshot_updates,
-                    &adopted,
-                )
-            };
-            for layout in &layouts_to_read {
-                self.read_recording_ui_state_if_unobserved(Some(layout));
-            }
-            self.store_the_hidden_tracks_the_user_changed();
-        }
+        let layouts_to_read = (!snapshot_updates.is_empty()).then(|| {
+            let SharedAppState {
+                loaded_files, tree, ..
+            } = &mut *self.shared.borrow_mut();
+            let adopted = loaded_files.apply_track_snapshot_updates(snapshot_updates);
+            tree.sync_after_track_snapshot_updates(loaded_files.view(), snapshot_updates, &adopted)
+        });
         match result {
             Ok(()) => {
                 let mut loading_the_recording_again = false;
                 match op {
                     history_db::DbOp::TracksUnshelved { db_ref, .. } => {
-                        loading_the_recording_again =
-                            self.reload_the_recording_if_it_is_loaded(db_ref);
+                        loading_the_recording_again = !self.shutdown.has_begun()
+                            && self.reload_the_recording_if_it_is_loaded(db_ref);
                     }
                     history_db::DbOp::TracksShelved { .. }
                     | history_db::DbOp::TracksDeleted { .. }
@@ -509,6 +505,16 @@ impl App {
                 log::error!("History update failed: {e}");
                 self.toasts.error(format!("History update failed: {e}"));
             }
+        }
+        layouts_to_read
+    }
+
+    fn apply_mutation_response(&mut self, op: &history_db::DbOp, result: &Result<(), DbError>) {
+        if let Some(layouts) = self.apply_mutation_outcome(op, result) {
+            for layout in &layouts {
+                self.read_recording_ui_state_if_unobserved(Some(layout));
+            }
+            self.store_the_hidden_tracks_the_user_changed();
         }
     }
 
@@ -620,7 +626,7 @@ impl App {
                 result,
             } => self
                 .open_the_recording_read_from_history(origin, db_ref, placement, settings, result),
-            Response::Mutated { op, result } => self.apply_mutation_outcome(&op, &result),
+            Response::Mutated { op, result } => self.apply_mutation_response(&op, &result),
             Response::PrunePreview(Ok(refs)) => self.history_window.set_prune_preview(refs),
             Response::PrunePreview(Err(e)) => log::error!("Prune preview failed: {e}"),
             Response::AutoPruned(Ok(AutoPruneOutcome::NotNeeded)) => {}
@@ -653,10 +659,22 @@ impl App {
             Response::RecordingUiStateLoaded(Err(error)) => {
                 log::warn!("Reading the display settings of a recording failed: {error}");
             }
+            Response::RecordingUiStateVersionUnsupported { layout, version } => {
+                self.apply_the_ui_state_stored_with_a_recording(
+                    layout,
+                    Err(RecordingUiStateError::NewerVersion(version)),
+                );
+            }
             Response::SessionRecordingRestored(restoration) => {
                 if let Some(restoration) = restoration {
                     self.apply_session_restoration(*restoration);
                 }
+            }
+            Response::ShutdownBarrier(_) => {
+                debug_assert!(
+                    !self.history.available(),
+                    "Shutdown barriers belong to the draining worker"
+                );
             }
             Response::StoredTrackTableLoaded { db_ref, tracks } => {
                 self.history_window.set_shelf_track_table(&db_ref, tracks);

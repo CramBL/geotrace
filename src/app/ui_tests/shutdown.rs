@@ -175,6 +175,7 @@ fn the_normal_ui_paints_until_the_shutdown_window_replaces_it() {
         harness.query_by_label("File").is_some(),
         "the normal UI stopped painting during the grace"
     );
+    assert!(harness.get_by_label("File").accesskit_node().is_disabled());
     assert!(harness.query_by_label("Shutting down").is_none());
     assert!(
         !ui_tests::closed_the_window(&harness),
@@ -587,6 +588,18 @@ fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
     if let Err(panic) = closing_app.join() {
         panic::resume_unwind(panic);
     }
+}
+
+#[test]
+fn shutdown_can_close_after_the_history_worker_disconnects() {
+    let (mut harness, _dir, _recording) =
+        test_util::recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    harness.state_mut().history.disconnect_requests_for_test();
+
+    ui_tests::request_window_close(&mut harness);
+
+    assert!(harness.step_until(ui_tests::closed_the_window));
+    assert!(harness.state().pending_writes.is_idle());
 }
 
 /// A closing app stops requesting snaps: the auto sweep a load armed is
