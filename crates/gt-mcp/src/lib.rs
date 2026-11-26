@@ -2,12 +2,13 @@ use std::env;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
+use std::time::Duration;
 
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
-    GetRecording, GetTrack, ListHistoryRecordings, ListMetrics, ListRecordings,
-    OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryText, Reply, Request, SetSetting,
-    SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
+    GetRecording, GetTrack, HistoryOpenState, ListHistoryRecordings, ListMetrics, ListRecordings,
+    OpenHistoryRecording, OpenPoint, QueryJobRequest, QueryJobState, QueryText, Reply, Request,
+    SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -21,6 +22,7 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt as _, tool, tool_handler, tool_router,
     transport,
 };
+use tokio::time::{self, Instant};
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn run() -> Result<(), Box<dyn Error>> {
@@ -193,7 +195,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Open a recording from list_history_recordings. Poll get_history_open_status and make any track settings choice in GeoTrace.",
+        description = "Open a recording from list_history_recordings. Waits briefly for the result. Poll get_history_open_status if it is pending. Make any track settings choice in GeoTrace.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -244,7 +246,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Run a query in the desktop Query window using the current filter and enabled tracks. Poll the returned job with get_query_status. A busy response identifies the active job.",
+        description = "Run a query in the desktop Query window using the current filter and enabled tracks. Waits briefly for completion. Poll get_query_status if pending. A busy response identifies the active job.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn run_query(&self, Parameters(args): Parameters<QueryText>) -> CallToolResult {
@@ -304,7 +306,16 @@ impl Companion {
 
     async fn inspect(&self, request: Request) -> CallToolResult {
         let checking_query = matches!(&request, Request::CheckQuery(_) | Request::RunQuery(_));
-        let result = match self.bridge.request(&request).await {
+        let wait_deadline = matches!(
+            request,
+            Request::RunQuery(_) | Request::OpenHistoryRecording(_)
+        )
+        .then(|| Instant::now() + ASYNC_RESULT_WAIT);
+        let mut response = self.bridge.request(&request).await;
+        if let (Some(deadline), Ok(reply)) = (wait_deadline, &mut response) {
+            self.wait_for_result(&request, reply, deadline).await;
+        }
+        let result = match response {
             Ok(Reply::Error {
                 code: ErrorCode::ReplyTooLarge,
             }) if checking_query => {
@@ -343,6 +354,61 @@ impl Companion {
             Err(error) => {
                 Self::tool_error(format!("Could not encode the GeoTrace result ({error})."))
             }
+        }
+    }
+
+    async fn wait_for_result(&self, start: &Request, latest: &mut Reply, deadline: Instant) {
+        while let Some(probe) = Self::pending_status_request(start, latest) {
+            let result = tokio::select! {
+                biased;
+                () = time::sleep_until(deadline) => break,
+                result = async {
+                    time::sleep(STATUS_POLL_INTERVAL).await;
+                    self.bridge.request(&probe).await
+                } => result,
+            };
+            let Ok(reply) = result else {
+                break;
+            };
+            let same_operation = match (probe, &reply) {
+                (Request::GetQueryStatus(request), Reply::QueryJob { job }) => {
+                    request.job == job.job
+                }
+                (Request::GetHistoryOpenStatus(request), Reply::HistoryOpen { operation }) => {
+                    request.operation == operation.operation
+                }
+                _ => false,
+            };
+            if !same_operation {
+                break;
+            }
+            *latest = reply;
+        }
+    }
+
+    fn pending_status_request(start: &Request, reply: &Reply) -> Option<Request> {
+        match (start, reply) {
+            (Request::RunQuery(_), Reply::QueryJob { job })
+                if matches!(
+                    job.state,
+                    QueryJobState::Preparing
+                        | QueryJobState::Running { .. }
+                        | QueryJobState::Cancelling
+                ) =>
+            {
+                Some(Request::GetQueryStatus(QueryJobRequest { job: job.job }))
+            }
+            (Request::OpenHistoryRecording(_), Reply::HistoryOpen { operation })
+                if matches!(
+                    operation.state,
+                    HistoryOpenState::Reading | HistoryOpenState::Loading
+                ) =>
+            {
+                Some(Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
+                    operation: operation.operation,
+                }))
+            }
+            _ => None,
         }
     }
 
@@ -560,7 +626,7 @@ impl Bridge {
             #[cfg(test)]
             Self::Fixture(query) => query(request),
             #[cfg(test)]
-            Self::Pending(bridge) => bridge.request().await,
+            Self::Pending(bridge) => bridge.request(request).await,
         }
     }
 }
@@ -568,6 +634,8 @@ impl Bridge {
 const COMPANION_NAME: &str = "geotrace-mcp";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const QUERY_LANGUAGE_URI: &str = "geotrace://query-language";
+const ASYNC_RESULT_WAIT: Duration = Duration::from_secs(1);
+const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const QUERY_LANGUAGE_MIME_TYPE: &str = "text/markdown";
 const START_DESKTOP: &str = "Start GeoTrace with --session-bridge and try again.";
 

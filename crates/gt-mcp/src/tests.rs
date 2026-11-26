@@ -10,13 +10,13 @@ use gt_session_bridge::{
     GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
     HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings,
     MAX_VISIBILITY_TRACKS, Metrics, NumericObservation, OpenHistoryRecording, OpenPoint,
-    PointDetails, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
-    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget,
-    Recording, RecordingReference, Recordings, Reply, Request, SetSetting, SetTrackVisibility,
-    SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit,
-    SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference, TrackVisibilityAction,
-    TrackVisibilityResult,
+    PointDetails, QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
+    QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow,
+    QueryResultSource, QueryResultTime, QueryResults, QueryText, QueryValidation, RangeDetails,
+    RangeTarget, Recording, RecordingReference, Recordings, Reply, Request, SetSetting,
+    SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection,
+    SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
+    TrackVisibilityAction, TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -29,7 +29,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
+use super::{
+    ASYNC_RESULT_WAIT, Bridge, COMPANION_NAME, Companion, START_DESKTOP, STATUS_POLL_INTERVAL,
+    VERSION,
+};
 
 #[tokio::test]
 async fn set_track_visibility_checks_bounds_and_returns_the_actual_reply() {
@@ -406,7 +409,10 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     let job = submitted.pointer("/result/structuredContent/job").unwrap();
     assert_eq!(
         submitted.pointer("/result/structuredContent"),
-        Some(&json!({"job": self::query_job_id(), "status": "preparing"}))
+        Some(&json!({
+            "job": self::query_job_id(), "status": "completed",
+            "queries": [{"matches": 2, "tracks_with_matches": 1, "skipped": 0}]
+        }))
     );
     let status = client
         .exchange(json!({
@@ -417,7 +423,8 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     assert_eq!(
         status.pointer("/result/structuredContent"),
         Some(&json!({
-            "job": job, "status": "running", "tracks_prepared": 2, "track_total": 3
+            "job": job, "status": "completed",
+            "queries": [{"matches": 2, "tracks_with_matches": 1, "skipped": 0}]
         }))
     );
     let cancelled = client
@@ -468,7 +475,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     );
     assert_eq!(
         opened.pointer("/result/structuredContent/state/kind"),
-        Some(&json!("reading"))
+        Some(&json!("ready"))
     );
     let ready = client
         .exchange(json!({
@@ -494,51 +501,262 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
         .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn mcp_cancellation_drops_only_the_targeted_bridge_request() {
-    let (queued, mut replies) = mpsc::channel(1);
+    for admitted in [false, true] {
+        let (queued, mut requests) = mpsc::channel(1);
+        let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+        client.initialize().await;
+        let submitted_at = tokio::time::Instant::now();
+        client
+            .send_tool(2, "run_query", json!({"text": "points | draw"}))
+            .await;
+        let initial = self::next_bridge_exchange(&mut requests).await;
+        assert!(matches!(initial.request, Request::RunQuery(_)));
+        let mut cancelled = if admitted {
+            initial
+                .reply
+                .send(self::query_reply(QueryJobState::Preparing))
+                .unwrap();
+            let probe = self::next_bridge_exchange(&mut requests).await;
+            assert_eq!(
+                probe.request,
+                Request::GetQueryStatus(QueryJobRequest {
+                    job: self::query_job_id()
+                })
+            );
+            probe.reply
+        } else {
+            initial.reply
+        };
+        client
+            .send_tool(3, "open_query", json!({"text": "points | draw"}))
+            .await;
+        let control = self::next_bridge_exchange(&mut requests).await;
+        assert!(matches!(control.request, Request::OpenQuery(_)));
+        client
+            .send(json!({
+                "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 2}
+            }))
+            .await;
+        tokio::time::timeout(STATUS_POLL_INTERVAL, cancelled.closed())
+            .await
+            .expect("MCP cancellation did not close the outstanding bridge response");
+        assert!(submitted_at.elapsed() < ASYNC_RESULT_WAIT);
+        control.reply.send(Reply::QueryDraftQueued).unwrap();
+        let response = client.receive().await;
+        assert_eq!(response.get("id"), Some(&json!(3)));
+        assert_eq!(
+            response.pointer("/result/structuredContent"),
+            Some(&json!({"status": "query_draft_queued"}))
+        );
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hung_status_probe_returns_the_latest_job_within_the_original_wait_budget() {
+    let (queued, mut requests) = mpsc::channel(1);
     let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
     client.initialize().await;
+    let submitted_at = tokio::time::Instant::now();
     client
-        .send(json!({
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "open_query", "arguments": {"text": "points | draw"}}
-        }))
+        .send_tool(2, "run_query", json!({"text": "points | draw"}))
         .await;
-    let mut cancelled = tokio::time::timeout(Duration::from_secs(2), replies.recv())
-        .await
-        .unwrap()
+    let initial = self::next_bridge_exchange(&mut requests).await;
+    assert!(matches!(initial.request, Request::RunQuery(_)));
+    tokio::time::sleep(ASYNC_RESULT_WAIT / 2).await;
+    initial
+        .reply
+        .send(self::query_reply(QueryJobState::Preparing))
         .unwrap();
-    client
-        .send(json!({
-            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": {"name": "open_query", "arguments": {"text": "points | draw"}}
+
+    let status = Request::GetQueryStatus(QueryJobRequest {
+        job: self::query_job_id(),
+    });
+    let first = self::next_bridge_exchange(&mut requests).await;
+    let first_probe_at = tokio::time::Instant::now();
+    assert_eq!(first.request, status);
+    first
+        .reply
+        .send(self::query_reply(QueryJobState::Running {
+            tracks_prepared: 2,
+            track_total: 3,
         }))
-        .await;
-    let control = tokio::time::timeout(Duration::from_secs(2), replies.recv())
-        .await
-        .unwrap()
         .unwrap();
-    client
-        .send(json!({
-            "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 2}
-        }))
-        .await;
-    tokio::time::timeout(Duration::from_secs(2), cancelled.closed())
-        .await
-        .expect("MCP cancellation did not close the outstanding bridge response");
-    control.send(Reply::QueryDraftQueued).unwrap();
+    let hung = self::next_bridge_exchange(&mut requests).await;
+    assert!(first_probe_at.elapsed() >= STATUS_POLL_INTERVAL);
+    assert_eq!(hung.request, status);
     let response = client.receive().await;
-    assert_eq!(response.get("id"), Some(&json!(3)));
+    assert_eq!(response.get("id"), Some(&json!(2)));
     assert_eq!(
         response.pointer("/result/structuredContent"),
-        Some(&json!({"status": "query_draft_queued"}))
+        Some(&json!({
+            "job": self::query_job_id(), "status": "running", "tracks_prepared": 2, "track_total": 3
+        }))
     );
+    assert!(
+        (ASYNC_RESULT_WAIT..ASYNC_RESULT_WAIT + STATUS_POLL_INTERVAL)
+            .contains(&submitted_at.elapsed())
+    );
+    assert!(hung.reply.is_closed());
+    assert!(requests.try_recv().is_err());
     drop(client);
-    tokio::time::timeout(Duration::from_secs(2), worker)
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_history_open_returns_the_desktop_settings_choice_without_waiting_for_it() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|request| match request {
+        Request::GetHistoryOpenStatus(GetHistoryOpenStatus { operation }) => {
+            assert_eq!(*operation, HISTORY_OPEN);
+            Ok(Reply::HistoryOpen {
+                operation: HistoryOpenStatus {
+                    operation: *operation,
+                    state: HistoryOpenState::AwaitingTrackSettings,
+                },
+            })
+        }
+        Request::OpenHistoryRecording(_) => self::history_open_fixture(request),
+        _ => panic!("unexpected History request: {request:?}"),
+    }));
+    client.initialize().await;
+    let submitted_at = tokio::time::Instant::now();
+    client
+        .send_tool(
+            2,
+            "open_history_recording",
+            json!({"recording": Uuid::from_u128(6)}),
+        )
+        .await;
+    let response = client.receive().await;
+    assert_eq!(
+        response.pointer("/result/structuredContent"),
+        Some(&json!({
+            "operation": HISTORY_OPEN, "state": {"kind": "awaiting_track_settings"}
+        }))
+    );
+    assert!(submitted_at.elapsed() < STATUS_POLL_INTERVAL * 2);
+    drop(client);
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn nonpending_start_replies_return_without_a_status_probe() {
+    let (mut client, worker) = Client::start(Bridge::Fixture(|request| match request {
+        Request::RunQuery(_) => Ok(self::query_reply(QueryJobState::Busy)),
+        Request::OpenHistoryRecording(_) => Ok(Reply::HistoryOpen {
+            operation: HistoryOpenStatus {
+                operation: HISTORY_OPEN,
+                state: HistoryOpenState::Failed {
+                    code: ErrorCode::HistoryOpenFailed,
+                },
+            },
+        }),
+        _ => panic!("unexpected status probe: {request:?}"),
+    }));
+    client.initialize().await;
+    let submitted_at = tokio::time::Instant::now();
+    client
+        .send_tool(2, "run_query", json!({"text": "points | draw"}))
+        .await;
+    assert_eq!(
+        client.receive().await.pointer("/result/structuredContent"),
+        Some(&json!({
+            "job": self::query_job_id(), "status": "busy"
+        }))
+    );
+    client
+        .send_tool(
+            3,
+            "open_history_recording",
+            json!({"recording": Uuid::from_u128(6)}),
+        )
+        .await;
+    assert_eq!(
+        client.receive().await.pointer("/result/structuredContent"),
+        Some(&json!({
+            "operation": HISTORY_OPEN, "state": {"kind": "failed", "code": "history_open_failed"}
+        }))
+    );
+    assert!(submitted_at.elapsed() < STATUS_POLL_INTERVAL);
+    drop(client);
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_optional_probe_preserves_the_accepted_handle() {
+    let (queued, mut requests) = mpsc::channel(1);
+    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+    client.initialize().await;
+    let job = self::query_job_id();
+    let mismatched = QueryJobId {
+        id: Uuid::from_u128(9),
+        ..job
+    };
+    for (id, probe_reply) in [
+        None,
+        Some(Reply::from(ErrorCode::Busy)),
+        Some(Reply::QueryJob {
+            job: QueryJobStatus {
+                job: mismatched,
+                state: QueryJobState::Failed,
+            },
+        }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        client
+            .send_tool(id as u64 + 2, "run_query", json!({"text": "points | draw"}))
+            .await;
+        let started = self::next_bridge_exchange(&mut requests).await;
+        assert!(matches!(started.request, Request::RunQuery(_)));
+        started
+            .reply
+            .send(self::query_reply(QueryJobState::Preparing))
+            .unwrap();
+        let probe = self::next_bridge_exchange(&mut requests).await;
+        assert_eq!(
+            probe.request,
+            Request::GetQueryStatus(QueryJobRequest { job })
+        );
+        if let Some(reply) = probe_reply {
+            probe.reply.send(reply).unwrap();
+        } else {
+            drop(probe.reply);
+        }
+        let response = client.receive().await;
+        assert_eq!(
+            response.pointer("/result/structuredContent"),
+            Some(&json!({
+                "job": job, "status": "preparing"
+            }))
+        );
+        assert!(requests.try_recv().is_err());
+    }
+    drop(client);
+    worker.await.unwrap();
+}
+
+async fn next_bridge_exchange(requests: &mut mpsc::Receiver<BridgeExchange>) -> BridgeExchange {
+    tokio::time::timeout(Duration::from_secs(2), requests.recv())
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+}
+
+fn query_reply(state: QueryJobState) -> Reply {
+    Reply::QueryJob {
+        job: QueryJobStatus {
+            job: self::query_job_id(),
+            state,
+        },
+    }
 }
 
 async fn assert_query_reply_shapes(client: &mut Client, expected_validation: &Value) {
@@ -827,15 +1045,13 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
             })
         }
         Request::GetQueryStatus(QueryJobRequest { job }) if *job == self::query_job_id() => {
-            Ok(Reply::QueryJob {
-                job: QueryJobStatus {
-                    job: *job,
-                    state: QueryJobState::Running {
-                        tracks_prepared: 2,
-                        track_total: 3,
-                    },
-                },
-            })
+            Ok(self::query_reply(QueryJobState::Completed {
+                queries: vec![QueryCounts {
+                    matches: 2,
+                    tracks_with_matches: 1,
+                    skipped: 0,
+                }],
+            }))
         }
         Request::CancelQuery(QueryJobRequest { job }) if *job == self::query_job_id() => {
             Ok(Reply::QueryJob {
@@ -1084,14 +1300,33 @@ impl Client {
         let line = format!("{message}\n");
         self.output.write_all(line.as_bytes()).await.unwrap();
     }
+
+    async fn send_tool(&mut self, id: u64, name: &str, arguments: Value) {
+        self.send(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        }))
+        .await;
+    }
 }
 
-pub(super) struct PendingBridge(mpsc::Sender<oneshot::Sender<Reply>>);
+pub(super) struct PendingBridge(mpsc::Sender<BridgeExchange>);
+
+struct BridgeExchange {
+    request: Request,
+    reply: oneshot::Sender<Reply>,
+}
 
 impl PendingBridge {
-    pub(super) async fn request(&self) -> io::Result<Reply> {
+    pub(super) async fn request(&self, request: &Request) -> io::Result<Reply> {
         let (reply, response) = oneshot::channel();
-        self.0.send(reply).await.map_err(io::Error::other)?;
+        self.0
+            .send(BridgeExchange {
+                request: request.clone(),
+                reply,
+            })
+            .await
+            .map_err(io::Error::other)?;
         response.await.map_err(io::Error::other)
     }
 }
