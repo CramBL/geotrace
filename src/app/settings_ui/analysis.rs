@@ -236,7 +236,7 @@ impl AnalysisNumber {
             SettingUnit::Seconds => "s",
         };
         let range = self.range();
-        let response = ui.add(
+        let response = ui.add(super::round_trip_drag_value(
             DragValue::from_get_set(|new| {
                 if let Some(new) = new.filter(|new| new.is_finite()) {
                     self.write(values, new.clamp(*range.start(), *range.end()));
@@ -248,7 +248,7 @@ impl AnalysisNumber {
             .speed(self.speed)
             .fixed_decimals(0)
             .suffix(suffix),
-        );
+        ));
         (response, (self.field)(values).to_bits() != initial)
     }
 

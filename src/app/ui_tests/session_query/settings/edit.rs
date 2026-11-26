@@ -2,6 +2,7 @@ use std::fs;
 
 use chrono::Duration;
 use egui::accesskit::Role;
+use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_pending_writes::WriteAccess;
 use gt_session_bridge::{
@@ -12,9 +13,10 @@ use gt_session_bridge::{
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use rstest::rstest;
 
+use crate::app::settings_ui::search::QUERY_FIELD_ID;
 use crate::app::test_util::harness;
 use crate::app::test_util::session;
-use crate::app::ui_tests;
+use crate::app::{App, ui_tests};
 use crate::settings::Settings;
 
 #[test]
@@ -221,6 +223,95 @@ fn processing_edits_keep_full_precision_and_defer_reprocessing() {
         app.shared.borrow().loaded_files.data_generation(),
         generation
     );
+}
+
+#[rstest]
+#[case::analysis(
+    SettingKey::Analysis(AnalysisSettingKey::ElevationMask),
+    18.5, "20.625", |saved: &Settings| f64::from(saved.analysis.elevation_mask_deg),
+)]
+#[case::processing(
+    SettingKey::Processing(ProcessingSettingKey::ClockDiscontinuitySigmas),
+    9.234_567_890_123, "8.765432109876", |saved: &Settings| saved.processing.clock_discontinuity_sigmas,
+)]
+fn the_numeric_editor_preserves_precision_on_focus_and_save(
+    #[case] key: SettingKey,
+    #[case] initial: f64,
+    #[case] replacement: &str,
+    #[case] saved_number: fn(&Settings) -> f64,
+) {
+    let (mut harness, config_path) = TestHarness::builder().eframe(harness::build_app);
+    let app = &mut harness.inner;
+    app.step();
+    assert!(matches!(
+        session::execute(
+            app,
+            Request::SetSetting(SetSetting {
+                key,
+                value: SettingInput::Number(initial),
+            })
+        ),
+        Reply::Setting { .. }
+    ));
+    assert_eq!(
+        session::execute(app, Request::OpenSetting(SettingSelection { key })),
+        Reply::SettingOpenQueued
+    );
+    app.run_steps(3);
+
+    let drag_id = self::click_numeric_setting(app, initial);
+    app.step();
+    let edit_text = app.get_by(|node| node.is_focused()).value();
+    self::blur_numeric_setting(app);
+    self::assert_numeric_setting(app.state(), key, initial);
+    assert_eq!(edit_text.as_deref(), Some(initial.to_string().as_str()));
+
+    assert_eq!(self::click_numeric_setting(app, initial), drag_id);
+    app.input_mut()
+        .events
+        .push(egui::Event::Text(replacement.to_owned()));
+    app.step();
+    self::blur_numeric_setting(app);
+    let expected = replacement.parse::<f64>().unwrap();
+    self::assert_numeric_setting(app.state(), key, expected);
+    app.state().flush_settings();
+    let saved: Settings = toml::from_str(&fs::read_to_string(config_path).unwrap()).unwrap();
+    assert_eq!(saved_number(&saved), expected);
+}
+
+fn click_numeric_setting(harness: &mut Harness<'_, App>, number: f64) -> egui::Id {
+    let position = harness
+        .query_all_by_role(Role::SpinButton)
+        .find(|node| node.accesskit_node().numeric_value() == Some(number))
+        .unwrap()
+        .rect()
+        .center();
+    harness.click_at(position);
+    let focused = harness.ctx.memory(|memory| memory.focused()).unwrap();
+    assert!(
+        harness
+            .ctx
+            .read_response(focused)
+            .unwrap()
+            .rect
+            .contains(position)
+    );
+    focused
+}
+
+fn blur_numeric_setting(harness: &mut Harness<'_, App>) {
+    let search = egui::Id::unique(QUERY_FIELD_ID);
+    let position = harness.ctx.read_response(search).unwrap().rect.center();
+    harness.click_at(position);
+    harness.step();
+    assert!(harness.ctx.memory(|memory| memory.has_focus(search)));
+}
+
+fn assert_numeric_setting(app: &App, key: SettingKey, expected: f64) {
+    let SettingValue::Number { value, .. } = app.describe_setting(key).value else {
+        panic!("expected a numeric setting");
+    };
+    assert_eq!(value, Some(expected));
 }
 
 #[test]

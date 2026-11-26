@@ -1,5 +1,8 @@
+use std::cell::Cell;
+
 use egui::style::ScrollAnimation;
-use egui::{ScrollArea, Window};
+use egui::text::CCursorRange;
+use egui::{DragValue, ScrollArea, TextEdit, Widget, Window};
 use egui_phosphor::regular::AIRPLANE_TILT as ICON_AIRPLANE_TILT;
 use egui_phosphor::regular::GAUGE as ICON_GAUGE;
 use egui_phosphor::regular::MAGNET as ICON_MAGNET;
@@ -420,6 +423,36 @@ fn theme_pref_from_setting(s: crate::settings::ThemeSetting) -> egui::ThemePrefe
         crate::settings::ThemeSetting::System => egui::ThemePreference::System,
         crate::settings::ThemeSetting::Light => egui::ThemePreference::Light,
         crate::settings::ThemeSetting::Dark => egui::ThemePreference::Dark,
+    }
+}
+
+fn round_trip_drag_value(drag: DragValue<'_>) -> impl Widget + '_ {
+    move |ui: &mut egui::Ui| {
+        // DragValue uses the same auto ID for the button and its text editor.
+        let id = ui.next_auto_id();
+        let ctx = ui.ctx().clone();
+        let enabled = ui.is_enabled();
+        let compact = ui.style().number_formatter.clone();
+        let button_value = Cell::new(None);
+        let response = ui.add(drag.custom_formatter(|value, decimals| {
+            if enabled && ctx.memory(|memory| memory.has_focus(id)) {
+                value.to_string()
+            } else {
+                button_value.set(Some(value));
+                compact.format(value, decimals)
+            }
+        }));
+        // DragValue selects the compact text on click, before the editor shows the full value.
+        if response.clicked()
+            && let Some(value) = button_value.get()
+        {
+            let mut state = TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
+            state
+                .cursor
+                .set_char_range(Some(CCursorRange::select_all_str(&value.to_string())));
+            state.store(ui.ctx(), response.id);
+        }
+        response
     }
 }
 

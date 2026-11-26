@@ -374,26 +374,24 @@ impl ProcessingControl {
                 let enabled = self.enabled(config);
                 let example_sigmas = config.generated_markers.clock_discontinuity_sigmas;
                 let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(example_sigmas);
-                let response = ui.add_enabled(
-                    enabled,
-                    DragValue::from_get_set(|new| {
-                        if enabled && let Some(new) = new.filter(|new| new.is_finite()) {
-                            Self::write_clock_sensitivity(
-                                config,
-                                new.clamp(
-                                    *CLOCK_SENSITIVITY_RANGE.start(),
-                                    *CLOCK_SENSITIVITY_RANGE.end(),
-                                ),
-                            );
-                        }
-                        config.generated_markers.clock_discontinuity_sigmas
-                    })
-                    .range(CLOCK_SENSITIVITY_RANGE)
-                    .clamp_existing_to_range(false)
-                    .speed(0.1)
-                    .fixed_decimals(1)
-                    .suffix("σ"),
-                );
+                let drag = DragValue::from_get_set(|new| {
+                    if enabled && let Some(new) = new.filter(|new| new.is_finite()) {
+                        Self::write_clock_sensitivity(
+                            config,
+                            new.clamp(
+                                *CLOCK_SENSITIVITY_RANGE.start(),
+                                *CLOCK_SENSITIVITY_RANGE.end(),
+                            ),
+                        );
+                    }
+                    config.generated_markers.clock_discontinuity_sigmas
+                })
+                .range(CLOCK_SENSITIVITY_RANGE)
+                .clamp_existing_to_range(false)
+                .speed(0.1)
+                .fixed_decimals(1)
+                .suffix("σ");
+                let response = ui.add_enabled(enabled, super::round_trip_drag_value(drag));
                 ui.ctx()
                     .accesskit_node_builder(response.id, |node| node.set_label(self.label));
                 if enabled {
