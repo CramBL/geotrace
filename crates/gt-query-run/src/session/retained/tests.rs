@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::DateTime;
 use gt_query::QueryMetric;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
@@ -46,6 +48,36 @@ fn retained_results_require_the_completed_recording_generation() {
         session.retained_results(replacement),
         Err(RetainedResultError::Stale)
     ));
+    assert!(matches!(
+        session.displayed_results(replacement),
+        Err(RetainedResultError::Stale)
+    ));
+}
+
+#[test]
+fn display_rows_read_the_original_series_after_a_snap_change() {
+    let mut state = LoadedState::with_channels(Vec::new());
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state
+        .snap_errors
+        .insert(track, Arc::new(vec![Some(2.0), None]));
+    let mut session = QuerySession::new();
+    test_util::run_text(&mut session, &state, "points | table snap_error");
+
+    state
+        .snap_errors
+        .insert(track, Arc::new(vec![Some(9.0), None]));
+    session.refresh_staleness(state.inputs());
+    let files = state.inputs().loaded_files;
+    assert!(matches!(
+        session.retained_results(files),
+        Err(RetainedResultError::Stale)
+    ));
+    let display = session.displayed_results(files).unwrap();
+    let query = display.queries().next().unwrap();
+    let matched = query.matches().next().unwrap();
+    let rows = matched.rows(None).unwrap();
+    assert_eq!(rows.iter().next().unwrap().value(1), Some(2.0));
 }
 
 #[test]

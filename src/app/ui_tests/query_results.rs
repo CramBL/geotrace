@@ -15,7 +15,7 @@ use gt_test_utils::{
 };
 use gt_types::{DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
-use gt_ui_types::{DisplayCategory, MapElementRef, MapEligibility, PointVisibility};
+use gt_ui_types::{DisplayCategory, MapElementRef, MapEligibility, PointVisibility, StaleRunNote};
 use rstest::rstest;
 use uom::si::f64::Length;
 use uom::si::length::kilometer;
@@ -35,6 +35,7 @@ use crate::app::ui_tests::{self, ACCEL_HIGH_RANGES, MANY_MATCH_QUERY};
 fn query_results_go_stale_when_the_filter_changes() {
     let mut harness = ui_tests::app_with_query_window_open();
     ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
+    let first_row = harness::topmost_point_row(&harness).1;
     let stale_after_run = harness
         .state()
         .query_window
@@ -58,6 +59,7 @@ fn query_results_go_stale_when_the_filter_changes() {
         .expect("results kept while stale")
         .stale;
     assert!(matches_stale, "results gray out when the filter changes");
+    assert_eq!(harness::topmost_point_row(&harness).1, first_row);
 
     harness
         .state_mut()
@@ -143,6 +145,7 @@ fn a_query_completes_with_the_query_window_closed() {
 fn replacing_a_recording_in_place_marks_its_query_results_stale() {
     let mut harness = ui_tests::app_with_query_window_open();
     ui_tests::run_query(&mut harness, "points | where velocity > 1 km/h");
+    harness.get_by_label_contains("Match 1");
     let app = harness.state_mut();
     let previous_series = QuerySeries::capture(app);
     {
@@ -173,6 +176,42 @@ fn replacing_a_recording_in_place_marks_its_query_results_stale() {
     let matches = harness.state().query_window.matches().unwrap();
     assert_eq!(matches.run, 1);
     assert!(matches.stale);
+    let window = harness.get_by_role_and_label(Role::Window, QUERY_WINDOW_TITLE);
+    window.get_by_label(&StaleRunNote::RunAgain.to_string());
+    assert!(
+        window
+            .query_all(By::new().label_contains("Match 1"))
+            .next()
+            .is_none()
+    );
+    self::assert_match_controls_hint(&mut harness, &StaleRunNote::RunAgain.to_string());
+}
+
+#[test]
+fn match_controls_explain_a_run_with_zero_matches() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    ui_tests::run_query(&mut harness, "points | where velocity > 1000 km/h");
+    harness.get_by_label("No matches");
+    self::assert_match_controls_hint(&mut harness, "This run matched nothing");
+}
+
+fn assert_match_controls_hint(harness: &mut Harness<'_, App>, hint: &str) {
+    let window = harness.get_by_role_and_label(Role::Window, QUERY_WINDOW_TITLE);
+    let buttons = [
+        window
+            .get_by_role_and_label(Role::Button, ICON_COPY)
+            .rect()
+            .center(),
+        ui_tests::pop_out_button(harness).rect().center(),
+    ];
+    let before = harness.query_all_by_label_contains(hint).count();
+    for button in buttons {
+        harness.hover_at_and_settle(button, 5);
+        assert_eq!(
+            harness.query_all_by_label_contains(hint).count(),
+            before + 1
+        );
+    }
 }
 
 #[test]

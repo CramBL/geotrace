@@ -15,10 +15,11 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::INFO as ICON_INFO;
+use gt_loaded_files::LoadedFilesView;
 use gt_query::{AggregateColumn, ChannelTimeline, Construct, QueryMetric, TableColumn};
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, PointResultValues, PointsResults, QuerySummary, RunResults,
-    TrackProvider,
+    ChannelResults, ChannelTrackResult, PointResultValues, PointsResults, QuerySession,
+    QuerySummary, RunResults, TrackProvider,
 };
 use gt_side_panel::widgets::{self, PointClickRequests};
 use gt_types::{Channel, FixRef, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef};
@@ -383,21 +384,40 @@ pub(super) struct ResultsTables<'a> {
     draws_halos: bool,
     /// Whether the data changed after the run that produced these rows.
     stale: bool,
+    structurally_stale: bool,
 }
 
 impl<'a> ResultsTables<'a> {
-    pub(super) fn of_run(files: &'a [LoadedFile], results: &'a RunResults) -> Self {
-        match results {
-            RunResults::Points(points) => Self::of_points(files, points),
-            RunResults::Channel(channel) => Self::of_channel_samples(files, channel),
-        }
+    pub(super) fn of_session(
+        files: LoadedFilesView<'a>,
+        session: &'a QuerySession,
+    ) -> Option<Self> {
+        let results = session.results()?;
+        let retained = session.displayed_results(files).ok();
+        let structurally_stale = retained.is_none();
+        let matches = retained
+            .as_ref()
+            .map_or_else(MatchRows::default, MatchRows::of_retained);
+        let files = files.files();
+        Some(match results {
+            RunResults::Points(points) => {
+                Self::of_points(files, points, matches, structurally_stale)
+            }
+            RunResults::Channel(channel) => {
+                Self::of_channel_samples(files, channel, matches, structurally_stale)
+            }
+        })
     }
 
     /// The tables of a points run: every query's matches, listing nav points
     /// under the metric columns that query tables.
-    fn of_points(files: &'a [LoadedFile], results: &'a PointsResults) -> Self {
-        let stale = results.matches.stale;
-        let matches = MatchRows::of_points(files, results);
+    fn of_points(
+        files: &'a [LoadedFile],
+        results: &'a PointsResults,
+        matches: MatchRows,
+        structurally_stale: bool,
+    ) -> Self {
+        let stale = results.matches.stale || structurally_stale;
         let tracks: BTreeSet<TrackRef> = matches.rows().iter().map(|row| row.track).collect();
         let queries = results
             .queries
@@ -425,6 +445,7 @@ impl<'a> ResultsTables<'a> {
             row_noun: RowNoun::Point,
             draws_halos: results.matches.has_halos(),
             stale,
+            structurally_stale,
         }
     }
 
@@ -436,8 +457,13 @@ impl<'a> ResultsTables<'a> {
     /// evaluator timed and valued every track's samples in base units, and a
     /// run whose tracks declare incompatible units is rejected by the check
     /// before it gets here.
-    fn of_channel_samples(files: &'a [LoadedFile], channel: &'a ChannelResults) -> Self {
-        let stale = channel.matches.stale;
+    fn of_channel_samples(
+        files: &'a [LoadedFile],
+        channel: &'a ChannelResults,
+        matches: MatchRows,
+        structurally_stale: bool,
+    ) -> Self {
+        let stale = channel.matches.stale || structurally_stale;
         // Samples are timed finer than points, so their times keep the
         // milliseconds the point tables leave out.
         let mut columns = vec![ResultColumn {
@@ -482,12 +508,17 @@ impl<'a> ResultsTables<'a> {
                 columns,
                 reduced_channels: reduced_channels(channel.aggregate_columns.iter()),
             }],
-            matches: MatchRows::of_channel_samples(channel),
+            matches,
             source: RowSource::ChannelSamples { results: channel },
             row_noun: RowNoun::Sample,
             draws_halos: channel.matches.has_halos(),
             stale,
+            structurally_stale,
         }
+    }
+
+    pub(super) fn stale(&self) -> bool {
+        self.stale
     }
 
     /// The matches list, the caption stating the picked match, and that match's
@@ -513,8 +544,6 @@ impl<'a> ResultsTables<'a> {
                 .refresh(self.run, selected.key(), || self.reduced_channels(selected));
         }
         ui.scope(|ui| {
-            // A stale run's rows reference indices that may no longer address
-            // the same data: they are shown, and none of them acts.
             if self.stale {
                 ui.disable();
             }
@@ -557,7 +586,9 @@ impl<'a> ResultsTables<'a> {
     ) {
         self.summary_strip_ui(ui, out.reveal, popped_out);
         let Some(selected) = selected else {
-            ui.label(RichText::new("No matches").weak());
+            if !self.structurally_stale {
+                ui.label(RichText::new("No matches").weak());
+            }
             return;
         };
         ui.add_space(ui.spacing().item_spacing.y);
@@ -703,7 +734,7 @@ impl<'a> ResultsTables<'a> {
         let has_matches = !self.matches.is_empty();
         let response = ui.add_enabled(has_matches, Button::new(ICON_ARROW_SQUARE_OUT).small());
         if !has_matches {
-            response.on_disabled_hover_text("This run matched nothing");
+            response.on_disabled_hover_text(self.unavailable_matches_hint());
         } else if response
             .on_hover_text("Show the matches in a window of their own")
             .clicked()
@@ -783,9 +814,17 @@ impl<'a> ResultsTables<'a> {
         let has_matches = !self.matches.is_empty();
         let response = ui.add_enabled(has_matches, Button::new(ICON_COPY).small());
         if !has_matches {
-            response.on_disabled_hover_text("This run matched nothing");
+            response.on_disabled_hover_text(self.unavailable_matches_hint());
         } else if response.on_hover_text(self.copy_tooltip()).clicked() {
             ui.ctx().copy_text(self.as_tsv());
+        }
+    }
+
+    fn unavailable_matches_hint(&self) -> String {
+        if self.structurally_stale {
+            StaleRunNote::RunAgain.to_string()
+        } else {
+            "This run matched nothing".to_owned()
         }
     }
 

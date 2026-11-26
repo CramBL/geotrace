@@ -7,7 +7,7 @@ use std::ops::Range;
 use chrono::{DateTime, Utc};
 use egui::{Align, Layout};
 use gt_fmt::DurationClockFormat;
-use gt_query_run::{ChannelResults, PointsResults};
+use gt_query_run::{ResultTime, RetainedResults};
 #[cfg(test)]
 use gt_types::{FileIdx, TrackIdx};
 use gt_types::{LoadedFile, TrackRef};
@@ -123,59 +123,38 @@ impl MatchRows {
         }
     }
 
-    /// Every match of a points run, over all of its queries in editor order.
-    pub(super) fn of_points(files: &[LoadedFile], results: &PointsResults) -> Self {
+    pub(super) fn of_retained(results: &RetainedResults<'_>) -> Self {
+        let wall_clock = |time| match time {
+            ResultTime::ChannelSeconds(seconds) => column_format::wall_clock(seconds),
+            ResultTime::PointUtc(time) => Some(time),
+        };
         let mut rows = Vec::new();
-        for (query_index, query) in results.queries.iter().enumerate() {
-            for track_matches in &query.matches {
-                let track = track_matches.track;
-                let points = track.resolve(files).map(|track| track.points.as_slice());
-                let time_of = |index: usize| {
-                    points
-                        .and_then(|points| points.get(index))
-                        .map(|point| point.tpv.time().utc())
-                };
-                for matched in &track_matches.matches {
-                    let range = &matched.rows;
-                    rows.push(MatchRow {
-                        query_index,
-                        number: rows.len() + 1,
-                        track,
-                        start: time_of(range.start),
-                        end: gt_fmt::last_index_of_span(range).and_then(time_of),
-                        duration_secs: track
-                            .resolve(files)
-                            .and_then(|track| gt_fmt::match_duration_seconds(track, range)),
-                        rows: range.clone(),
-                        aggregates: matched.aggregates.clone(),
+        for (query_index, query) in results.queries().enumerate() {
+            for matched in query.matches() {
+                let range = matched.range();
+                let first = matched.first_time();
+                let last = (range.len() > 1).then(|| matched.last_time()).flatten();
+                let duration_secs = first
+                    .zip(last)
+                    .and_then(|(first, last)| match (first, last) {
+                        (ResultTime::ChannelSeconds(first), ResultTime::ChannelSeconds(last)) => {
+                            Some((last - first) as i64)
+                        }
+                        (ResultTime::PointUtc(first), ResultTime::PointUtc(last)) => {
+                            Some((last - first).num_seconds())
+                        }
+                        (ResultTime::ChannelSeconds(_), ResultTime::PointUtc(_))
+                        | (ResultTime::PointUtc(_), ResultTime::ChannelSeconds(_)) => None,
                     });
-                }
-            }
-        }
-        Self::from_rows(rows)
-    }
-
-    /// Every matched stretch of samples of a channel-source run, over its
-    /// tracks in run order.
-    pub(super) fn of_channel_samples(results: &ChannelResults) -> Self {
-        let mut rows = Vec::new();
-        for result in &results.tracks {
-            let times = result.timeline.times.as_slice();
-            for matched in &result.matches {
-                let range = &matched.rows;
-                let first = times.get(range.start).copied();
-                let last = gt_fmt::last_index_of_span(range)
-                    .and_then(|last| times.get(last))
-                    .copied();
                 rows.push(MatchRow {
-                    query_index: 0,
+                    query_index,
                     number: rows.len() + 1,
-                    track: result.track,
-                    start: first.and_then(column_format::wall_clock),
-                    end: last.and_then(column_format::wall_clock),
-                    duration_secs: first.zip(last).map(|(first, last)| (last - first) as i64),
-                    rows: range.clone(),
-                    aggregates: matched.aggregates.clone(),
+                    track: matched.track(),
+                    start: first.and_then(wall_clock),
+                    end: last.and_then(wall_clock),
+                    duration_secs,
+                    rows: range,
+                    aggregates: matched.aggregates().to_vec(),
                 });
             }
         }

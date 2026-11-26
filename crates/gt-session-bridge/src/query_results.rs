@@ -4,7 +4,8 @@ use std::ops::Range;
 use chrono::{DateTime, Utc};
 use gt_query::{AggregateColumn, Quantity, Unit};
 use gt_query_run::{
-    MatchPosition, ResultTime, RetainedQuery, RetainedResultError, RetainedResults, RowColumn,
+    CurrentRetainedResults, MatchPosition, ResultTime, RetainedQuery, RetainedResultError,
+    RowColumn,
 };
 use serde::{Deserialize, Serialize};
 
@@ -82,7 +83,7 @@ pub struct QueryResults {
 
 impl QueryResults {
     pub fn project(
-        results: &RetainedResults<'_>,
+        results: &CurrentRetainedResults<'_>,
         args: GetQueryResults,
     ) -> Result<Self, ErrorCode> {
         let query = results.query(args.query)?;

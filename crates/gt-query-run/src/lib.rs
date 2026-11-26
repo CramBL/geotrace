@@ -43,8 +43,8 @@ pub use results::{
 pub use run::{PreparedRun, RunHandle, RunKind, RunOutcome};
 pub use schema::schema_from_files;
 pub use session::retained::{
-    MatchExtent, MatchPosition, ResultTime, RetainedMatch, RetainedQuery, RetainedResultError,
-    RetainedResults, RetainedRow, RetainedRowIter, RetainedRows, RowColumn,
+    CurrentRetainedResults, MatchExtent, MatchPosition, ResultTime, RetainedMatch, RetainedQuery,
+    RetainedResultError, RetainedResults, RetainedRow, RetainedRowIter, RetainedRows, RowColumn,
 };
 pub use session::{
     CheckRefresh, CheckedQueryText, MIXED_CHANNEL_MESSAGE, QueryProgress, QuerySession,
