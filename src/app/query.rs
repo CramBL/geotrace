@@ -8,6 +8,7 @@ use std::ops::Range;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use egui::collapsing_header::CollapsingState;
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{Area, Button, Frame, Grid, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
@@ -316,6 +317,25 @@ impl QueryWindow {
         self.hover_doc_span = None;
     }
 
+    fn window_id() -> egui::Id {
+        egui::Id::unique(Some("Query"))
+    }
+
+    pub(super) fn reveal_editor(&mut self, ctx: &egui::Context) -> bool {
+        let was_closed = !self.open;
+        self.open = true;
+        if let Some(mut state) = CollapsingState::load(
+            ctx,
+            Self::window_id().with(EGUI_WINDOW_COLLAPSE_STATE_SUFFIX),
+        ) && !state.is_open()
+        {
+            state.set_open(true);
+            state.store(ctx);
+            return true;
+        }
+        was_closed
+    }
+
     pub(super) fn show(
         &mut self,
         ctx: &egui::Context,
@@ -337,6 +357,7 @@ impl QueryWindow {
         let mut open = self.open;
         let mut action = None;
         Window::new("Query")
+            .id(Self::window_id())
             .open(&mut open)
             .default_width(DEFAULT_WINDOW_WIDTH)
             .default_height(DEFAULT_WINDOW_HEIGHT)
@@ -1454,6 +1475,9 @@ const HISTORY_LINE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(48) {
     Some(chars) => chars,
     None => NonZeroUsize::MIN,
 };
+
+// egui uses this suffix for the window's collapse state.
+const EGUI_WINDOW_COLLAPSE_STATE_SUFFIX: &str = "collapsing";
 
 /// Width the query window opens at. It grows only when the user drags it
 /// wider: nothing inside it may widen it, or the window covers the map.

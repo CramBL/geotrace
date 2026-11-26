@@ -12,11 +12,15 @@ use gt_session_bridge::{
 };
 
 use crate::app::App;
-use crate::app::settings_ui::SettingsPage;
+use crate::app::settings_ui::{SettingRevealProgress, SettingsPage};
 use crate::settings::AnalysisSettings;
 
 impl App {
-    pub(super) fn show_analysis_page(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn show_analysis_page(
+        &mut self,
+        ui: &mut egui::Ui,
+        reveal: &mut SettingRevealProgress,
+    ) {
         SettingsPage::Analysis.show_header(ui);
         let mut values = AnalysisSettings::from(&self.shared.borrow().plot_state);
         let mut changed = false;
@@ -30,9 +34,10 @@ impl App {
                         .on_hover_text(control.help);
                     let (input, edited) = control.input.show(ui, &mut values);
                     let input = input.on_hover_text(control.help);
-                    self.reveal_setting_row(
+                    reveal.match_row(
                         ui,
                         SettingKey::Analysis(control.key),
+                        &input,
                         label.rect.union(input.rect),
                     );
                     changed |= edited;

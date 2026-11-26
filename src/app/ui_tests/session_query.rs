@@ -25,6 +25,7 @@ use crate::app::{App, ui_tests};
 mod background;
 mod history;
 mod map;
+mod notices;
 mod plot;
 mod processing;
 mod settings;
@@ -497,6 +498,7 @@ fn mcp_reads_a_desktop_query_until_the_editor_runs_again() {
         session::execute(&mut harness, result_page.clone()),
         Reply::QueryResults { .. }
     ));
+    assert!(session::visible_action_notices(&harness).is_empty());
 
     harness.get_by_role_and_label(Role::Button, "Run").click();
     harness.step();
@@ -594,6 +596,10 @@ fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
         ),
         ErrorCode::QueryResultsUnavailable.into()
     );
+    harness.step();
+    let notices = session::visible_action_notices(&harness);
+    assert_eq!(notices.len(), 4);
+    assert!(notices.contains(&"MCP requested query cancellation"));
 }
 
 #[test]

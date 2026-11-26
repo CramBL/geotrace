@@ -51,6 +51,7 @@ fn session_map_frames_a_range_when_the_map_draws() {
         None
     );
     assert!(harness.query_by_label("Dismiss map presentation").is_none());
+    assert!(session::visible_action_notices(&harness).is_empty());
 
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, true);
@@ -61,6 +62,10 @@ fn session_map_frames_a_range_when_the_map_draws() {
         Some(MatchHighlight::new(track_ref, &(0..33)))
     );
     harness.get_by_label("test.gtd / Track 1 / Points 0 to 32");
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP framed a range on the map"]
+    );
     let framed = harness.state().map.viewport_geo_bounds().unwrap();
     assert!(framed.lat_max - framed.lat_min < initial.lat_max - initial.lat_min);
     let shared = harness.state().shared.borrow();
@@ -572,6 +577,10 @@ fn dismissing_a_presented_point_clears_its_pin() {
     );
     harness.run_steps(2);
     harness.get_by_label("test.gtd / Track 1 / Point 20");
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP centered the map on a point"]
+    );
     assert!(harness.state().shared.borrow().highlight.sticky().is_some());
     harness
         .get_by_role_and_label(Role::Button, "Dismiss map presentation")
@@ -847,6 +856,7 @@ fn session_map_drops_a_queued_range_when_highlights_are_disabled_before_drawing(
         harness.state().shared.borrow().highlight.presented_match,
         None
     );
+    assert!(session::visible_action_notices(&harness).is_empty());
 }
 
 #[rstest]

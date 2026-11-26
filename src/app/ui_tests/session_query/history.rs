@@ -105,6 +105,7 @@ fn a_history_open_reports_the_loaded_recording() {
     let request = Request::OpenHistoryRecording(OpenHistoryRecording {
         recording: page.recordings[0].id,
     });
+    let notice_count = harness.state().toasts.len();
     let accepted = {
         let _access = HistoryAccess::lock();
         let accepted = self::open_status(&session::execute(&mut harness, request.clone()));
@@ -122,6 +123,7 @@ fn a_history_open_reports_the_loaded_recording() {
             ),
             Reply::from(ErrorCode::Busy)
         );
+        assert_eq!(harness.state().toasts.len(), notice_count);
         accepted
     };
     let HistoryOpenState::Ready {
@@ -142,6 +144,11 @@ fn a_history_open_reports_the_loaded_recording() {
     };
     assert_eq!(page.recordings.len(), 1);
     assert_eq!(page.recordings[0].id, recording);
+    harness.run_steps(2);
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP opened a History recording"]
+    );
     let repeated = self::open_status(&session::execute(&mut harness, request));
     assert_eq!(
         self::after_loading(&mut harness, repeated.operation),
@@ -151,6 +158,7 @@ fn a_history_open_reports_the_loaded_recording() {
         }
     );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
+    assert_eq!(harness.state().toasts.len(), notice_count + 1);
 }
 
 #[rstest]

@@ -194,6 +194,7 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
         Reply::PlotPresentationQueued
     );
     harness.step();
+    assert!(!session::visible_action_notices(&harness).contains(&"MCP framed the plot"));
     assert!(
         harness
             .query_by_label("Dismiss plot presentation")
@@ -221,6 +222,10 @@ fn a_query_plot_request_waits_for_a_drawable_pane(#[case] replace_job: bool) {
     }
     harness.set_size(egui::vec2(1024.0, 700.0));
     harness.run_steps(3);
+    assert_eq!(
+        session::visible_action_notices(&harness).contains(&"MCP framed the plot"),
+        !replace_job
+    );
     assert_eq!(
         harness
             .query_by_label_contains("Track 1 / Query 1 match 1")

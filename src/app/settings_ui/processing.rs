@@ -26,20 +26,24 @@ use gt_types::{AssociationConfig, AssociationWindow};
 use crate::app::App;
 use crate::app::loader;
 use crate::app::log_viewer::association_dialog::AUTOMATIC_POSITION_SOURCE_HOVER;
-use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
 use crate::app::settings_ui::label::SettingsLabel;
+use crate::app::settings_ui::{SettingRevealProgress, SettingsPage};
 use crate::settings::{InitialPositionSourcePolicy, ProcessingSettings};
 
 impl App {
     /// Returns `true` in the frame when the user clicks "Apply to loaded data".
-    pub(super) fn show_processing_page(&mut self, ui: &mut egui::Ui) -> bool {
+    pub(super) fn show_processing_page(
+        &mut self,
+        ui: &mut egui::Ui,
+        reveal: &mut SettingRevealProgress,
+    ) -> bool {
         SettingsPage::Processing.show_header(ui);
         Grid::new("settings_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
-                TRACK_SPLIT_GAP.show_row(ui, self);
+                TRACK_SPLIT_GAP.show_row(ui, self, reveal);
 
                 let debug_time_repair_help =
                     "Open debug… splits a recording when timestamps step backwards by at least \
@@ -105,7 +109,7 @@ impl App {
                 ui.end_row();
             });
 
-        self.show_generated_marker_settings(ui);
+        self.show_generated_marker_settings(ui, reveal);
         self.show_processing_apply_and_restore_row(ui)
     }
 
@@ -152,7 +156,11 @@ impl App {
     /// for each automatically-detected marker.  These are produced at
     /// load/segmentation time, so they share the same "Apply to loaded data"
     /// action as the rest of the processing settings.
-    fn show_generated_marker_settings(&mut self, ui: &mut egui::Ui) {
+    fn show_generated_marker_settings(
+        &mut self,
+        ui: &mut egui::Ui,
+        reveal: &mut SettingRevealProgress,
+    ) {
         ui.add_space(12.0);
         ui.separator();
         ui.horizontal(|ui| {
@@ -165,7 +173,7 @@ impl App {
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
                 for control in GENERATED_MARKER_CONTROLS {
-                    control.show_row(ui, self);
+                    control.show_row(ui, self, reveal);
                 }
             });
     }
@@ -344,17 +352,24 @@ impl ProcessingControl {
         }
     }
 
-    fn show_row(&self, ui: &mut egui::Ui, app: &mut App) {
+    fn show_row(&self, ui: &mut egui::Ui, app: &mut App, reveal: &mut SettingRevealProgress) {
         let label = ui
             .label(format!("{} {}", self.icon, self.label))
             .on_hover_text(self.help);
         let input = if let Some(sensitivity) = self.sensitivity() {
             let row = ui.horizontal(|ui| {
-                self.show_input(ui, &mut app.processing_config);
-                sensitivity.show_input(ui, &mut app.processing_config)
+                let toggle = self.show_input(ui, &mut app.processing_config);
+                let sensitivity = sensitivity.show_input(ui, &mut app.processing_config);
+                (toggle, sensitivity)
             });
-            app.reveal_setting_row(ui, SettingKey::Processing(sensitivity.key), row.inner.rect);
-            row.response
+            let (toggle, sensitivity_input) = row.inner;
+            reveal.match_row(
+                ui,
+                SettingKey::Processing(sensitivity.key),
+                &sensitivity_input,
+                sensitivity_input.rect,
+            );
+            toggle
         } else {
             self.show_input(ui, &mut app.processing_config)
         };
@@ -364,7 +379,7 @@ impl ProcessingControl {
         } else {
             input.rect
         };
-        app.reveal_setting_row(ui, SettingKey::Processing(self.key), target);
+        reveal.match_row(ui, SettingKey::Processing(self.key), &input, target);
         ui.end_row();
     }
 

@@ -88,6 +88,19 @@ pub fn execute(harness: &mut Harness<'_, App>, request: Request) -> Reply {
         .unwrap_or_else(Reply::from)
 }
 
+pub fn visible_action_notices<'a>(harness: &'a Harness<'_, App>) -> Vec<&'a str> {
+    harness
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) => Some(text.galley.text()),
+            _ => None,
+        })
+        .filter(|text| text.starts_with("MCP "))
+        .collect()
+}
+
 pub fn first_track_reference(harness: &mut Harness<'_, App>) -> TrackReference {
     let Reply::Recordings { page } = self::execute(
         harness,
