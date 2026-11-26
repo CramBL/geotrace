@@ -646,6 +646,12 @@ impl NavMap {
         self.layer = layer;
     }
 
+    pub fn can_select_layer(&self, layer: MapLayer, satellite: SatelliteLayerAccess) -> bool {
+        layer != MapLayer::Satellite
+            || satellite == SatelliteLayerAccess::WithoutToken
+            || self.has_mapbox_token()
+    }
+
     /// The tile layer picker, rendered by the map's floating control and by the
     /// settings window's Interface page. Entries follow the caller's layout.
     pub fn show_layer_selector(&mut self, ui: &mut egui::Ui, satellite: SatelliteLayerAccess) {
@@ -653,9 +659,7 @@ impl NavMap {
             (MapLayer::OpenStreetMap, ICON_MAP_TRIFOLD, "Map"),
             (MapLayer::Satellite, ICON_GLOBE_HEMISPHERE_WEST, "Satellite"),
         ] {
-            let selectable = layer != MapLayer::Satellite
-                || satellite == SatelliteLayerAccess::WithoutToken
-                || self.has_mapbox_token();
+            let selectable = self.can_select_layer(layer, satellite);
             if ui
                 .add_enabled(
                     selectable,
@@ -664,7 +668,7 @@ impl NavMap {
                 .on_disabled_hover_text(SATELLITE_LAYER_NEEDS_TOKEN)
                 .clicked()
             {
-                self.layer = layer;
+                self.set_layer(layer);
             }
         }
     }

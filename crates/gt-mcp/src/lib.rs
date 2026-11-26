@@ -8,8 +8,8 @@ use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
     GetRecording, GetTrack, HistoryOpenState, ListHistoryRecordings, ListMetrics, ListRecordings,
     ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, QueryJobRequest, QueryJobState,
-    QueryText, Reply, Request, SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap,
-    ShowOnPlot,
+    QueryText, Reply, Request, SetSessionView, SetSetting, SetTrackVisibility, SettingSelection,
+    ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -290,6 +290,21 @@ impl Companion {
     }
 
     #[tool(
+        description = "Change the map base layer, map category visibility, or global UTC time filter. Returns the updated session state.",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_session_view(
+        &self,
+        Parameters(args): Parameters<SetSessionView>,
+    ) -> CallToolResult {
+        self.inspect(Request::SetSessionView(args)).await
+    }
+
+    #[tool(
         description = "Set an Analysis or recording Processing control using its boolean or numeric value in the units from describe_setting. Returns the current setting.",
         annotations(
             destructive_hint = true,
@@ -472,7 +487,9 @@ impl Companion {
             Request::GetQueryResults(_) => matches!(reply, Reply::QueryResults { .. }),
             Request::GetRangeDetails(_) => matches!(reply, Reply::Range { .. }),
             Request::GetRecording(_) => matches!(reply, Reply::Recording { .. }),
-            Request::GetSessionState => matches!(reply, Reply::SessionState { .. }),
+            Request::GetSessionState | Request::SetSessionView(_) => {
+                matches!(reply, Reply::SessionState { .. })
+            }
             Request::GetSettings => matches!(reply, Reply::Settings { .. }),
             Request::GetTrack(_) => matches!(reply, Reply::Track { .. }),
             Request::ListHistoryRecordings(_) => matches!(reply, Reply::HistoryRecordings { .. }),
@@ -503,6 +520,7 @@ impl Companion {
     fn reply_error_message(code: ErrorCode) -> &'static str {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
+            ErrorCode::DuplicateDisplayCategory => "Specify each map display category once.",
             ErrorCode::HistoryListingFailed => {
                 "GeoTrace could not list recording History. Check the History window for details."
             }
@@ -543,6 +561,12 @@ impl Companion {
             }
             ErrorCode::InvalidSettingValue => {
                 "Use a finite value that meets the limits and precision from describe_setting."
+            }
+            ErrorCode::InvalidTimeFilter => {
+                "Set at least one UTC bound. The start must be at or before the end."
+            }
+            ErrorCode::MapboxTokenRequired => {
+                "Enter a Mapbox token in Settings to use the satellite layer."
             }
             ErrorCode::NoLoadedNavPoints => {
                 "Load a recording with navigation points before applying processing."

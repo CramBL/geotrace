@@ -20,6 +20,7 @@ use strum::{EnumCount, IntoEnumIterator};
     serde::Deserialize,
 )]
 #[strum(serialize_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayCategory {
     /// The tracklines.

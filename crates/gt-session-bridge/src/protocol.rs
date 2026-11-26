@@ -22,6 +22,7 @@ use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
 use crate::recording_control::ManageRecordings;
 use crate::session_state::{OpenPanel, SessionPanel, SessionState};
+use crate::session_view::SetSessionView;
 use crate::settings::{SetSetting, SettingInfo, SettingSelection};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -49,6 +50,7 @@ pub enum Request {
     OpenQuery(QueryText),
     OpenSetting(SettingSelection),
     RunQuery(QueryText),
+    SetSessionView(SetSessionView),
     SetSetting(SetSetting),
     SetTrackVisibility(SetTrackVisibility),
     ShowOnMap(ShowOnMap),
@@ -323,6 +325,7 @@ impl From<ErrorCode> for Reply {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Busy,
+    DuplicateDisplayCategory,
     HistoryListingFailed,
     HistoryNotReady,
     HistoryOpenFailed,
@@ -342,6 +345,8 @@ pub enum ErrorCode {
     InvalidRequest,
     InvalidSettingType,
     InvalidSettingValue,
+    InvalidTimeFilter,
+    MapboxTokenRequired,
     NoLoadedNavPoints,
     NoSkyTrailReports,
     NoVisibleMapGeometry,

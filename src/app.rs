@@ -110,6 +110,7 @@ mod session_recordings;
 mod session_state;
 mod session_track_visibility;
 mod session_traffic_window;
+mod session_view;
 mod settings_autosave;
 mod settings_ui;
 pub(crate) mod shutdown;
