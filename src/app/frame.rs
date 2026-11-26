@@ -831,12 +831,7 @@ impl App {
                 .map_matches(s.loaded_files.view());
             s.discard_stale_session_map(&mut self.map, query_matches, &self.editor_query);
 
-            if s.pending_session_plot
-                .as_ref()
-                .is_some_and(|presentation| !presentation.is_current(&s, &self.editor_query))
-            {
-                s.pending_session_plot = None;
-            }
+            s.discard_stale_session_plot(&self.editor_query);
             let plot_hover_scope = match s.highlight.hover {
                 Some(HighlightScope::File { .. })
                 | Some(HighlightScope::Track(_))
@@ -913,6 +908,7 @@ impl App {
             if toggle_plot_request {
                 self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
                 s.pending_session_plot = None;
+                s.presented_session_plot = None;
             }
             // The plot reports the span it drew only after it has drawn, so a
             // view that moved out of the resolved span needs one more frame.

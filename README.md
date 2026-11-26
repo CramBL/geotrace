@@ -222,6 +222,8 @@ A later pin change supersedes a queued point request.
 GeoTrace discards a queued range request if Query highlights is disabled when the map draws.
 Use Query highlights to hide or show an active range.
 GeoTrace clears a `show_on_map` match highlight when its job becomes stale or another job replaces it.
+The map shows which point, range, or query match the request presented.
+Dismiss removes the request's highlight or point information and keeps the current map view.
 
 Pass the same `target` to `show_on_plot` to open the plot and frame the selected timestamps.
 For a channel match, GeoTrace frames the retained sample times and enables the matched channel.
@@ -231,6 +233,8 @@ GeoTrace frames visible timestamps even when a selected metric has missing value
 The `plot_presentation_queued` status acknowledges the request.
 GeoTrace applies a current request on the next frame with a visible plot area.
 With Sync to map enabled, the plot keeps that time range until the map's visible time range changes or the user changes the plot view.
+The plot shows which range or query match it framed.
+Dismiss removes the presentation label and keeps the current time range and enabled series.
 
 Use `get_settings` to list the current values and descriptions for Analysis controls and recording controls on the Processing page.
 Pass a setting's `key` to `describe_setting` for its help, value, and limits, or to `open_setting` to reveal the control in Settings.
