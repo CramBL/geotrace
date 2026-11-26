@@ -101,18 +101,20 @@ impl ReadOnlySysDb {
     /// unindexed recordings are not repaired.
     pub fn open_existing_read_only(path: &Path) -> Result<Self, DbError> {
         let _guard = DB_LOCK.lock();
-        Self::validate_existing(path)?;
+        let file = hdf5::File::open(path).map_err(classify_open_error)?;
+        Self::require_supported_schema(Self::schema_version(&file))?;
         Ok(Self {
             path: path.to_owned(),
         })
     }
 
-    fn validate_existing(path: &Path) -> Result<(), DbError> {
-        let file = hdf5::File::open(path).map_err(classify_open_error)?;
-        let schema_version = file
-            .attr(SCHEMA_VERSION_ATTR)
+    fn schema_version(file: &hdf5::File) -> i64 {
+        file.attr(SCHEMA_VERSION_ATTR)
             .and_then(|a| a.read_scalar::<i64>())
-            .unwrap_or(0);
+            .unwrap_or(0)
+    }
+
+    fn require_supported_schema(schema_version: i64) -> Result<(), DbError> {
         if schema_version > CURRENT_SCHEMA_VERSION {
             return Err(DbError::SchemaTooNew {
                 found: schema_version,
@@ -278,18 +280,24 @@ impl HistoryDatabase for SysDb {
     fn open_or_create(path: &Path) -> Result<Self, DbError> {
         let _guard = DB_LOCK.lock();
         if path.exists() {
-            ReadOnlySysDb::validate_existing(path)?;
-            // A database written by the pure-Rust backend can be read but not
-            // extended by libhdf5. Migrate it to a native file once so inserts
-            // and deletes work.
-            if !crate::copy::is_native_writable(path) {
+            let (schema_version, pending_rename) = {
+                let file = hdf5::File::open(path).map_err(classify_open_error)?;
+                let schema_version = ReadOnlySysDb::schema_version(&file);
+                if schema_version != crate::copy::RENAME_SCHEMA_VERSION {
+                    ReadOnlySysDb::require_supported_schema(schema_version)?;
+                }
+                let pending_rename = crate::copy::validate_pending_renames(&file, schema_version)?;
+                (schema_version, pending_rename)
+            };
+            // A native rename stage requires in-place recovery to preserve hard links.
+            if !pending_rename && !crate::copy::is_native_writable(path) {
                 log::info!(
                     "Migrating history database at {} to the native HDF5 format",
                     path.display()
                 );
                 crate::copy::migrate_to_native(path)?;
             }
-            crate::copy::repair_unindexed_recordings(path)?;
+            crate::copy::repair_unindexed_recordings(path, schema_version)?;
         } else {
             Self::create_new(path)?;
         }
@@ -458,10 +466,30 @@ impl HistoryDatabase for SysDb {
 
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
         let access = HistoryAccess::lock();
-        if old != new {
-            access.invalidate_identity_snapshots(self, [old, new])?;
-        }
-        crate::copy::rename_identity(&self.path, old, new).map_err(Into::into)
+        crate::copy::rename_identity(&self.path, old, new, |by_id, recordings| {
+            let mut expired = recordings.to_vec();
+            expired.extend(
+                access
+                    .observed_recording_addresses(self)?
+                    .into_iter()
+                    .filter(|recording| {
+                        if recordings.contains(recording) {
+                            return false;
+                        }
+                        match crate::copy::recording_has_independent_links(by_id, recording) {
+                            Ok(independent) => !independent,
+                            Err(error) => {
+                                log::warn!(
+                                    "Could not verify recording links for {recording}: {error}"
+                                );
+                                true
+                            }
+                        }
+                    }),
+            );
+            access.invalidate_recording_snapshots(self, &expired)
+        })
+        .map_err(Into::into)
     }
 }
 
