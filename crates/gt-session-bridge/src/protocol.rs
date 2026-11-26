@@ -230,7 +230,7 @@ pub enum Reply {
     MapPresentationQueued,
     Metrics { page: Metrics },
     PlotPresentationQueued,
-    ProcessingQueued,
+    ProcessingApplied,
     QueryCheck { validation: QueryValidation },
     QueryDraftQueued,
     QueryJob { job: QueryJobStatus },

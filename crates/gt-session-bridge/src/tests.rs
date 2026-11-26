@@ -170,13 +170,10 @@ async fn wait_for_request(wakes: &mut mpsc::Receiver<()>) {
 }
 
 fn reply_with_empty_recording_list(server: &mut Server) {
-    assert_eq!(
-        server.dispatch(|request| {
-            assert_eq!(request.request, REQUEST);
-            (EMPTY_RECORDINGS, ())
-        }),
-        Some(())
-    );
+    server.dispatch(|request| {
+        assert_eq!(request.request, REQUEST);
+        EMPTY_RECORDINGS
+    });
 }
 
 #[tokio::test]
@@ -194,6 +191,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
         session: server.session,
         number: files.view().get(0).unwrap().id().into(),
     };
+    let caller = std::thread::current().id();
     let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, &REQUEST), async {
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(1), wakes.recv())
@@ -201,21 +199,17 @@ async fn local_request_dispatches_on_the_calling_thread() {
                 .unwrap(),
             Some(())
         );
-        let effect = server.dispatch(|request| {
+        server.dispatch(|request| {
+            assert_eq!(std::thread::current().id(), caller);
+            assert_eq!(request.session, id.session);
             let Request::ListRecordings(args) = request.request else {
                 panic!("expected a recording list request");
             };
-            let reply = Inspection::new(files.view(), "{title} ({filename})", request.session)
+            Inspection::new(files.view(), "{title} ({filename})", request.session)
                 .execute(InspectionRequest::ListRecordings(args))
-                .unwrap_or_else(Reply::from);
-            (reply, request.session)
+                .unwrap_or_else(Reply::from)
         });
-        assert_eq!(effect, Some(id.session));
-        assert!(
-            server
-                .dispatch::<()>(|_| panic!("unexpected request"))
-                .is_none()
-        );
+        server.dispatch(|_| panic!("unexpected request"));
     });
     assert_eq!(
         reply.unwrap(),
@@ -238,7 +232,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
 }
 
 #[test]
-fn dispatcher_discards_the_effect_when_the_reply_receiver_closes_during_preparation() {
+fn a_command_finishes_when_the_reply_receiver_closes_during_execution() {
     let (sender, pending) = mpsc::channel(1);
     let (reply, receiver) = oneshot::channel();
     sender
@@ -253,16 +247,17 @@ fn dispatcher_discards_the_effect_when_the_reply_receiver_closes_during_preparat
         stop: None,
         worker: None,
     };
-    let effect = server.dispatch(|request| {
+    let mut executed = None;
+    server.dispatch(|request| {
         drop(receiver);
-        assert_eq!(request.request, REQUEST);
-        (Reply::from(ErrorCode::InvalidRequest), request.session)
+        executed = Some(request.request);
+        EMPTY_RECORDINGS
     });
-    assert_eq!(effect, None);
+    assert_eq!(executed, Some(REQUEST));
 }
 
 #[tokio::test]
-async fn dropping_the_client_exchange_discards_the_queued_effect() {
+async fn dropping_the_client_exchange_skips_the_queued_command() {
     let fixture = TestEndpoint::new();
     let listener = fixture.endpoint.bind().unwrap();
     let (sender, pending) = mpsc::channel(1);
@@ -294,11 +289,7 @@ async fn dropping_the_client_exchange_discards_the_queued_effect() {
     .await
     .unwrap();
     assert!(disconnected.is_err());
-    assert!(
-        server
-            .dispatch::<()>(|_| panic!("The bridge dispatched a disconnected request"))
-            .is_none()
-    );
+    server.dispatch(|_| panic!("The bridge dispatched a disconnected request"));
 }
 
 #[test]
@@ -852,16 +843,14 @@ async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
             .await
             .unwrap()
             .unwrap();
-        let effect = server.dispatch(|request| {
+        server.dispatch(|request| {
             let Request::CheckQuery(args) = request.request else {
                 panic!("expected a query check request");
             };
-            let reply = Inspection::new(files.view(), "{filename}", request.session)
+            Inspection::new(files.view(), "{filename}", request.session)
                 .execute(InspectionRequest::CheckQuery(args))
-                .unwrap_or_else(Reply::from);
-            (reply, ())
+                .unwrap_or_else(Reply::from)
         });
-        assert_eq!(effect, Some(()));
     });
     assert_eq!(reply.unwrap(), ErrorCode::ReplyTooLarge.into());
 }

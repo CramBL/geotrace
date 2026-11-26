@@ -1,20 +1,14 @@
 use gt_loaded_files::{LoadedFilesView, RecordingData};
-use gt_query_run::{CheckedQueryText, QuerySession, RunDependencies};
+use gt_query_run::{QuerySession, RunDependencies};
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, Inspection, InspectionRequest, QueryJobId, QueryJobState,
-    QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest, SettingInfo,
-    SettingKey,
+    QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest,
 };
 use gt_types::Generation;
 use uuid::Uuid;
 
-use self::PreparedSessionResponse::{Effect, ReplyOnly};
 use super::App;
 use super::query_run::{BackgroundQuery, CapturedQueryInputs, QuerySeries};
-use super::session_history::{HistoryOpenPreparation, PreparedHistoryOpen};
-use super::session_map::MapPresentation;
-use super::session_plot::PlotPresentation;
-use super::settings_ui::SettingChange;
 
 #[derive(Default)]
 pub(super) struct SessionQuery {
@@ -86,53 +80,38 @@ impl SessionQuery {
             .ok_or(ErrorCode::QueryJobNotFound)
     }
 
-    fn apply_cancellation(&mut self, cancellation: &QueryCancellation) {
-        let job = self.job.as_mut().filter(|job| job.id == cancellation.job);
-        debug_assert!(
-            job.is_some(),
-            "prepared cancellation addresses the retained job"
-        );
-        if let Some(job) = job {
-            job.phase = match cancellation.transition {
-                CancelTransition::BeforeStart => JobPhase::Cancelled,
-                CancelTransition::InFlight => {
-                    job.query.session().cancel_run();
-                    JobPhase::Cancelling
-                }
-            };
-        }
-    }
-
-    fn prepare_submission(
-        &self,
+    fn submit(
+        &mut self,
         files: LoadedFilesView<'_>,
         session: Uuid,
         text: String,
-    ) -> Result<PreparedSessionResponse, ErrorCode> {
+    ) -> Result<Reply, ErrorCode> {
         if let Some(active) = self.active_job() {
-            return Ok(ReplyOnly(Reply::QueryJob {
+            return Ok(Reply::QueryJob {
                 job: QueryJobStatus {
                     job: active.id,
                     state: QueryJobState::Busy,
                 },
-            }));
+            });
         }
         let schema = gt_query_run::schema_from_files(files.files());
         let checked = match QueryPreparation::check(text, schema)? {
             QueryPreparation::Rejected(validation) => {
-                return Ok(ReplyOnly(Reply::QueryCheck { validation }));
+                return Ok(Reply::QueryCheck { validation });
             }
             QueryPreparation::Ready(checked) => checked,
         };
 
-        Ok(Effect(SessionEffect::StartQuery(PreparedQueryJob {
+        let job = self.job.insert(Job {
             id: QueryJobId {
                 session,
                 id: Uuid::new_v4(),
             },
-            checked,
+            query: BackgroundQuery::with_session(checked.into()),
+            phase: JobPhase::Preparing,
             data_generation: files.data_generation(),
-        })))
+        });
+        Ok(job.reply())
     }
 
     fn active_job(&self) -> Option<&Job> {
@@ -142,115 +121,11 @@ impl SessionQuery {
     }
 }
 
-struct PreparedQueryJob {
-    id: QueryJobId,
-    checked: CheckedQueryText,
-    data_generation: Generation<RecordingData>,
-}
-
-struct QueryCancellation {
-    job: QueryJobId,
-    transition: CancelTransition,
-}
-
-enum CancelTransition {
-    BeforeStart,
-    InFlight,
-}
-
 struct Job {
     id: QueryJobId,
     query: BackgroundQuery,
     phase: JobPhase,
     data_generation: Generation<RecordingData>,
-}
-
-enum PreparedSessionResponse {
-    Effect(SessionEffect),
-    ReplyOnly(Reply),
-}
-
-impl PreparedSessionResponse {
-    fn into_handoff(self) -> (Reply, Option<SessionEffect>) {
-        match self {
-            Self::Effect(effect) => (effect.acknowledgement(), Some(effect)),
-            Self::ReplyOnly(reply) => (reply, None),
-        }
-    }
-}
-
-enum SessionEffect {
-    ApplyProcessing,
-    CancelQuery(QueryCancellation),
-    OpenHistory(Box<PreparedHistoryOpen>),
-    OpenQuery(String),
-    OpenSetting(SettingKey),
-    PresentMap(MapPresentation),
-    PresentPlot(PlotPresentation),
-    SetSetting {
-        setting: SettingInfo,
-        change: SettingChange,
-    },
-    StartQuery(PreparedQueryJob),
-}
-
-impl SessionEffect {
-    fn apply(self, app: &mut App) {
-        match self {
-            Self::ApplyProcessing => app.apply_resegmentation(),
-            Self::CancelQuery(cancel) => app.session_query.apply_cancellation(&cancel),
-            Self::OpenHistory(open) => app.accept_history_open(*open),
-            Self::OpenQuery(text) => app.pending_session_query_draft = Some(text),
-            Self::OpenSetting(key) => app.pending_session_setting = Some(key),
-            Self::PresentMap(presentation) => {
-                app.shared.borrow_mut().queue_session_map(presentation)
-            }
-            Self::PresentPlot(presentation) => {
-                app.shared.borrow_mut().pending_session_plot = Some(presentation);
-                app.tiles_tree.tiles.set_visible(app.plot_tile_id, true);
-            }
-            Self::SetSetting { change, .. } => app.apply_setting_change(change),
-            Self::StartQuery(job) => {
-                app.session_query.job = Some(Job {
-                    id: job.id,
-                    query: BackgroundQuery::with_session(job.checked.into()),
-                    phase: JobPhase::Preparing,
-                    data_generation: job.data_generation,
-                });
-            }
-        }
-    }
-
-    fn acknowledgement(&self) -> Reply {
-        match self {
-            Self::ApplyProcessing => Reply::ProcessingQueued,
-            Self::CancelQuery(cancel) => Reply::QueryJob {
-                job: QueryJobStatus {
-                    job: cancel.job,
-                    state: match cancel.transition {
-                        CancelTransition::BeforeStart => QueryJobState::Cancelled,
-                        CancelTransition::InFlight => QueryJobState::Cancelling,
-                    },
-                },
-            },
-            Self::OpenHistory(open) => Reply::HistoryOpen {
-                operation: open.status(),
-            },
-            Self::OpenQuery(_) => Reply::QueryDraftQueued,
-            Self::OpenSetting(_) => Reply::SettingOpenQueued,
-            Self::PresentMap(_) => Reply::MapPresentationQueued,
-            Self::PresentPlot(_) => Reply::PlotPresentationQueued,
-            Self::SetSetting { setting, .. } => Reply::Setting {
-                setting: setting.clone(),
-            },
-            Self::StartQuery(job) => Reply::QueryJob {
-                job: QueryJobStatus {
-                    job: job.id,
-                    state: QueryJobState::Preparing,
-                },
-            },
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -309,16 +184,15 @@ impl Job {
         }
     }
 
-    fn prepare_cancellation(&self) -> Option<QueryCancellation> {
-        let transition = match self.phase {
-            JobPhase::Preparing => CancelTransition::BeforeStart,
-            JobPhase::Started if self.query.session().run_in_flight() => CancelTransition::InFlight,
-            _ => return None,
+    fn cancel(&mut self) {
+        self.phase = match self.phase {
+            JobPhase::Preparing => JobPhase::Cancelled,
+            JobPhase::Started if self.query.session().run_in_flight() => {
+                self.query.session().cancel_run();
+                JobPhase::Cancelling
+            }
+            phase => phase,
         };
-        Some(QueryCancellation {
-            job: self.id,
-            transition,
-        })
     }
 
     fn reply(&self) -> Reply {
@@ -362,12 +236,10 @@ impl App {
     pub(super) fn dispatch_session_request(&mut self, ctx: &egui::Context) {
         self.session_query.poll();
         if let Some(mut bridge) = self.session_bridge.take() {
-            if let Some(effect) = bridge
-                .dispatch(|request| self.prepare_session_request(request).into_handoff())
-                .flatten()
-            {
-                effect.apply(self);
-            }
+            bridge.dispatch(|request| {
+                self.execute_session_request(request)
+                    .unwrap_or_else(Reply::from)
+            });
             self.session_bridge = Some(bridge);
         }
         // Send the job ID before copying the selected tracks.
@@ -386,62 +258,46 @@ impl App {
         self.session_query.job = Some(job);
     }
 
-    #[cfg(test)]
-    pub(super) fn execute_session_request_in_test(
-        &mut self,
-        request: SessionRequest,
-        handed_off: bool,
-    ) -> Reply {
-        let (reply, effect) = self.prepare_session_request(request).into_handoff();
-        if handed_off && let Some(effect) = effect {
-            effect.apply(self);
-        }
-        reply
-    }
-
-    fn prepare_session_request(
+    pub(super) fn execute_session_request(
         &mut self,
         SessionRequest { request, session }: SessionRequest,
-    ) -> PreparedSessionResponse {
+    ) -> Result<Reply, ErrorCode> {
         match request {
             Request::ApplyProcessing(ApplyProcessing {}) => {
                 if self.shutdown_requested() {
-                    Err(ErrorCode::ShuttingDown)
-                } else if !self.has_loaded_nav_points() {
-                    Err(ErrorCode::NoLoadedNavPoints)
-                } else {
-                    Ok(Effect(SessionEffect::ApplyProcessing))
+                    return Err(ErrorCode::ShuttingDown);
                 }
+                if !self.has_loaded_nav_points() {
+                    return Err(ErrorCode::NoLoadedNavPoints);
+                }
+                self.apply_resegmentation();
+                Ok(Reply::ProcessingApplied)
             }
             Request::CancelQuery(args) => self.execute_with_session_query(|app, queries| {
                 let job = queries.job_mut(session, args.job)?;
-                Ok(if let Some(cancellation) = job.prepare_cancellation() {
-                    Effect(SessionEffect::CancelQuery(cancellation))
-                } else {
-                    job.refresh(app);
-                    ReplyOnly(job.reply())
-                })
+                job.cancel();
+                job.refresh(app);
+                Ok(job.reply())
             }),
             Request::CheckQuery(args) => {
                 self.inspect_session_request(session, InspectionRequest::CheckQuery(args))
             }
-            Request::DescribeSetting(args) => Ok(ReplyOnly(Reply::Setting {
+            Request::DescribeSetting(args) => Ok(Reply::Setting {
                 setting: self.describe_setting(args.key),
-            })),
+            }),
             Request::GetHistoryOpenStatus(args) => self
                 .history_open_status(session, args)
-                .map(|operation| ReplyOnly(Reply::HistoryOpen { operation })),
+                .map(|operation| Reply::HistoryOpen { operation }),
             Request::GetQueryResults(args) => self.execute_with_session_query(|app, queries| {
                 let run = queries.result_session(app, session, args.job)?;
                 let shared = app.shared.borrow();
                 let results = run.retained_results(shared.loaded_files.view())?;
-                QueryResults::project(&results, args)
-                    .map(|results| ReplyOnly(Reply::QueryResults { results }))
+                QueryResults::project(&results, args).map(|results| Reply::QueryResults { results })
             }),
             Request::GetQueryStatus(args) => self.execute_with_session_query(|app, queries| {
                 let job = queries.job_mut(session, args.job)?;
                 job.refresh(app);
-                Ok(ReplyOnly(job.reply()))
+                Ok(job.reply())
             }),
             Request::GetRangeDetails(args) => {
                 self.inspect_session_request(session, InspectionRequest::GetRangeDetails(args))
@@ -449,65 +305,61 @@ impl App {
             Request::GetRecording(args) => {
                 self.inspect_session_request(session, InspectionRequest::GetRecording(args))
             }
-            Request::GetSettings => Ok(ReplyOnly(Reply::Settings {
+            Request::GetSettings => Ok(Reply::Settings {
                 settings: self.get_settings(),
-            })),
+            }),
             Request::GetTrack(args) => {
                 self.inspect_session_request(session, InspectionRequest::GetTrack(args))
             }
-            Request::ListHistoryRecordings(args) => {
-                self.list_history_recordings(session, args).map(ReplyOnly)
-            }
+            Request::ListHistoryRecordings(args) => self.list_history_recordings(session, args),
             Request::ListMetrics(args) => {
                 self.inspect_session_request(session, InspectionRequest::ListMetrics(args))
             }
             Request::ListRecordings(args) => {
                 self.inspect_session_request(session, InspectionRequest::ListRecordings(args))
             }
-            Request::OpenHistoryRecording(args) => {
-                self.prepare_history_open(session, args)
-                    .map(|preparation| match preparation {
-                        HistoryOpenPreparation::Pending(operation) => {
-                            ReplyOnly(Reply::HistoryOpen { operation })
-                        }
-                        HistoryOpenPreparation::Start(open) => {
-                            Effect(SessionEffect::OpenHistory(open))
-                        }
-                    })
+            Request::OpenHistoryRecording(args) => self
+                .open_session_history_recording(session, args)
+                .map(|operation| Reply::HistoryOpen { operation }),
+            Request::OpenPoint(args) => {
+                let presentation = self.session_open_point(session, args)?;
+                self.shared.borrow_mut().queue_session_map(presentation);
+                Ok(Reply::MapPresentationQueued)
             }
-            Request::OpenPoint(args) => self
-                .session_open_point(session, args)
-                .map(|presentation| Effect(SessionEffect::PresentMap(presentation))),
-            Request::OpenQuery(args) => Ok(Effect(SessionEffect::OpenQuery(args.text))),
-            Request::OpenSetting(args) => Ok(Effect(SessionEffect::OpenSetting(args.key))),
-            Request::RunQuery(args) => self.session_query.prepare_submission(
+            Request::OpenQuery(args) => {
+                self.pending_session_query_draft = Some(args.text);
+                Ok(Reply::QueryDraftQueued)
+            }
+            Request::OpenSetting(args) => {
+                self.pending_session_setting = Some(args.key);
+                Ok(Reply::SettingOpenQueued)
+            }
+            Request::RunQuery(args) => self.session_query.submit(
                 self.shared.borrow().loaded_files.view(),
                 session,
                 args.text,
             ),
-            Request::SetSetting(args) => {
-                self.prepare_setting_change(args)
-                    .map(|(setting, change)| match change {
-                        Some(change) => Effect(SessionEffect::SetSetting { setting, change }),
-                        None => ReplyOnly(Reply::Setting { setting }),
-                    })
-            }
+            Request::SetSetting(args) => self
+                .set_session_setting(args)
+                .map(|setting| Reply::Setting { setting }),
             Request::ShowOnMap(args) => self.execute_with_session_query(|app, queries| {
-                app.session_show_on_map(queries, session, args)
-                    .map(|presentation| Effect(SessionEffect::PresentMap(presentation)))
+                let presentation = app.session_show_on_map(queries, session, args)?;
+                app.shared.borrow_mut().queue_session_map(presentation);
+                Ok(Reply::MapPresentationQueued)
             }),
             Request::ShowOnPlot(args) => self.execute_with_session_query(|app, queries| {
-                app.session_show_on_plot(queries, session, args)
-                    .map(|presentation| Effect(SessionEffect::PresentPlot(presentation)))
+                let presentation = app.session_show_on_plot(queries, session, args)?;
+                app.shared.borrow_mut().pending_session_plot = Some(presentation);
+                app.tiles_tree.tiles.set_visible(app.plot_tile_id, true);
+                Ok(Reply::PlotPresentationQueued)
             }),
         }
-        .unwrap_or_else(|error| ReplyOnly(error.into()))
     }
 
     fn execute_with_session_query(
         &mut self,
-        execute: impl FnOnce(&mut Self, &mut SessionQuery) -> Result<PreparedSessionResponse, ErrorCode>,
-    ) -> Result<PreparedSessionResponse, ErrorCode> {
+        execute: impl FnOnce(&mut Self, &mut SessionQuery) -> Result<Reply, ErrorCode>,
+    ) -> Result<Reply, ErrorCode> {
         let mut queries = std::mem::take(&mut self.session_query);
         let result = execute(self, &mut queries);
         self.session_query = queries;
@@ -518,7 +370,7 @@ impl App {
         &self,
         session: Uuid,
         request: InspectionRequest,
-    ) -> Result<PreparedSessionResponse, ErrorCode> {
+    ) -> Result<Reply, ErrorCode> {
         let shared = self.shared.borrow();
         Inspection::new(
             shared.loaded_files.view(),
@@ -526,7 +378,6 @@ impl App {
             session,
         )
         .execute(request)
-        .map(ReplyOnly)
     }
 }
 
@@ -545,7 +396,7 @@ mod tests {
     use crate::app::test_util::session::SESSION_ID;
 
     #[test]
-    fn cancellation_signals_the_run_after_reply_handoff() {
+    fn cancellation_signals_the_run_before_replying() {
         let mut harness = Harness::builder().build_eframe(harness::transient_app);
         harness::drop_file_and_wait_for_load(
             &mut harness,
@@ -576,29 +427,18 @@ mod tests {
             phase: JobPhase::Started,
             data_generation,
         });
-        let request = || SessionRequest {
-            session: SESSION_ID,
-            request: Request::CancelQuery(QueryJobRequest { job }),
-        };
         let expected = Reply::QueryJob {
             job: QueryJobStatus {
                 job,
                 state: QueryJobState::Cancelling,
             },
         };
-        let started = app.session_query.retained_reply();
 
-        assert_eq!(
-            app.execute_session_request_in_test(request(), false),
-            expected
-        );
-        assert!(!handle.cancelled());
-        assert_eq!(app.session_query.retained_reply(), started);
-
-        assert_eq!(
-            app.execute_session_request_in_test(request(), true),
-            expected
-        );
+        let reply = app.execute_session_request(SessionRequest {
+            session: SESSION_ID,
+            request: Request::CancelQuery(QueryJobRequest { job }),
+        });
+        assert_eq!(reply, Ok(expected.clone()));
         assert!(handle.cancelled());
         assert_eq!(app.session_query.retained_reply(), Some(expected));
     }

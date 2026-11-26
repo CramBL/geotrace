@@ -10,7 +10,7 @@ use gt_session_bridge::{
     ChannelEntry, ErrorCode, GetQueryResults, NumericObservation, QueryJobId, QueryJobRequest,
     QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition, QueryPageRequest,
     QueryResultPage, QueryResultSource, QueryResultTime, QueryText, QueryValidation, RangeTarget,
-    Reply, Request, SessionRequest, ShowOnMap, ShowOnPlot,
+    Reply, Request, ShowOnMap, ShowOnPlot,
 };
 use gt_test_utils::fixtures;
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
@@ -285,45 +285,29 @@ fn session_query_uses_current_filter_and_visibility_without_changing_the_editor(
 fn session_query_cancellation_drains_the_worker_and_retains_its_job() {
     let mut harness = ui_tests::app_with_a_recording();
     let text = "points | where velocity > 1 km/h";
-    assert!(matches!(
-        harness.state_mut().execute_session_request_in_test(
-            SessionRequest {
-                request: Request::RunQuery(QueryText {
-                    text: text.to_owned()
-                }),
-                session: session::SESSION_ID,
-            },
-            false,
-        ),
-        Reply::QueryJob {
-            job: QueryJobStatus {
-                state: QueryJobState::Preparing,
-                ..
-            }
-        },
-    ));
-    assert!(harness.state().session_query.retained_reply().is_none());
-
-    let job = session::start_query(&mut harness, text);
+    let preparing = session::start_query(&mut harness, text);
     assert_eq!(
-        harness.state_mut().execute_session_request_in_test(
-            SessionRequest {
-                request: Request::CancelQuery(QueryJobRequest { job }),
-                session: session::SESSION_ID,
-            },
-            false,
+        session::query_status(&mut harness, preparing),
+        QueryJobState::Preparing
+    );
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::CancelQuery(QueryJobRequest { job: preparing }),
         ),
         Reply::QueryJob {
             job: QueryJobStatus {
-                job,
+                job: preparing,
                 state: QueryJobState::Cancelled
             },
         },
     );
     assert_eq!(
-        session::query_status(&mut harness, job),
-        QueryJobState::Preparing
+        session::query_status(&mut harness, preparing),
+        QueryJobState::Cancelled
     );
+
+    let job = session::start_query(&mut harness, text);
     let ctx = harness.ctx.clone();
     harness.state_mut().prepare_session_query(&ctx);
     assert_eq!(

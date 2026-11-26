@@ -180,7 +180,7 @@ A start request returns status `busy` and the active job identifier while a job 
 When GeoTrace can start a job, invalid or empty text returns the same validation result as `check_query`.
 
 Pass the returned `job` to `get_query_status` or `cancel_query`.
-GeoTrace passes the job identifier to the bridge before copying the selected track data.
+A successful start returns the registered job identifier with status `preparing`.
 If the connection closes before the reply arrives, retry `run_query` to get the active identifier or start a new job.
 Poll until the status is `completed`, `cancelled`, `failed`, or `stale`.
 Completion reports the match, track, and skipped counts for each query block in input order.
@@ -247,9 +247,10 @@ The `apply` field indicates when GeoTrace uses the setting.
 Use `apply_processing` to rebuild the loaded tracks and generated markers with the current Processing settings, as with Apply to loaded data in Settings.
 Send an empty arguments object or omit the arguments.
 GeoTrace requires a loaded recording with navigation points.
-GeoTrace acknowledges the request with `processing_queued`.
-The app may be busy while it rebuilds the tracks.
-If a read times out, try it again when GeoTrace responds.
+GeoTrace returns `processing_applied` after rebuilding the loaded tracks and generated markers.
+Saving track visibility in History may finish later.
+A timeout can occur during a rebuild.
+GeoTrace finishes a rebuild that has started even if the client disconnects.
 Use `get_recording` to obtain fresh track references and rerun queries against the rebuilt tracks.
 History keeps its stored track layout.
 
@@ -264,7 +265,8 @@ GeoTrace returns up to 32 recordings per page and sets `metadata_truncated` when
 If GeoTrace is preparing History, retry the listing.
 
 Pass a History recording ID as `recording` to `open_history_recording`.
-Poll `get_history_open_status` with the returned `operation` until GeoTrace reports `ready`, `cancelled`, `expired` or `failed`.
+GeoTrace reports the operation's current state, including failure to start a History read.
+Poll `get_history_open_status` with the returned `operation` while the read or load is in progress.
 Use the `recording` reference in a ready result with `get_recording` and other loaded session tools.
 If GeoTrace cannot reproduce the stored track layout, the operation reports `history_track_layout_unavailable`.
 For a recording with stored tracks, the operation expires if local processing changes the loaded track layout.

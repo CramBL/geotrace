@@ -111,17 +111,19 @@ impl Server {
         })
     }
 
-    /// Return the prepared effect after a successful reply send.
-    pub fn dispatch<T>(&mut self, prepare: impl FnOnce(SessionRequest) -> (Reply, T)) -> Option<T> {
-        let pending = self.pending.try_recv().ok()?;
+    /// Skip a queued request if its reply receiver has closed.
+    pub fn dispatch(&mut self, execute: impl FnOnce(SessionRequest) -> Reply) {
+        let Ok(pending) = self.pending.try_recv() else {
+            return;
+        };
         if pending.reply.is_closed() {
-            return None;
+            return;
         }
-        let (reply, effect) = prepare(SessionRequest {
+        let reply = execute(SessionRequest {
             request: pending.request,
             session: self.session,
         });
-        pending.reply.send(reply).is_ok().then_some(effect)
+        drop(pending.reply.send(reply));
     }
 }
 

@@ -7,8 +7,8 @@ use gt_session_bridge::{
     RecordingReference, Reply,
 };
 use gt_store::{
-    DbError, HistoryOpenSelection, RecordingDebugTag, RecordingUiState, StoredLayoutRevision,
-    StoredSegmentation, StoredTrackSnapshot,
+    DbError, RecordingDebugTag, RecordingUiState, StoredLayoutRevision, StoredSegmentation,
+    StoredTrackSnapshot,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_types::{FileSource, Generation};
@@ -24,27 +24,6 @@ use super::loader::{LoadCompletion, LoadedRecordingResult};
 #[derive(Default)]
 pub(super) struct SessionHistory {
     operation: Option<Operation>,
-}
-
-pub(super) enum HistoryOpenPreparation {
-    Pending(HistoryOpenStatus),
-    Start(Box<PreparedHistoryOpen>),
-}
-
-pub(super) struct PreparedHistoryOpen {
-    id: HistoryOpenId,
-    recording: HistoryRecordingId,
-    reuse: Option<ReadyRecording>,
-    selection: HistoryOpenSelection,
-}
-
-impl PreparedHistoryOpen {
-    pub(super) fn status(&self) -> HistoryOpenStatus {
-        HistoryOpenStatus {
-            operation: self.id,
-            state: HistoryOpenState::Reading,
-        }
-    }
 }
 
 struct Operation {
@@ -469,11 +448,11 @@ impl App {
             })
     }
 
-    pub(super) fn prepare_history_open(
+    pub(super) fn open_session_history_recording(
         &mut self,
         session: Uuid,
         request: OpenHistoryRecording,
-    ) -> Result<HistoryOpenPreparation, ErrorCode> {
+    ) -> Result<HistoryOpenStatus, ErrorCode> {
         if self.shutdown_requested() {
             return Err(ErrorCode::ShuttingDown);
         }
@@ -483,9 +462,7 @@ impl App {
         let previous = self.session_history.operation.as_ref();
         if let Some(operation) = previous.filter(|operation| operation.pending()) {
             return if operation.selection == request.recording && operation.id.session == session {
-                Ok(HistoryOpenPreparation::Pending(
-                    operation.status(files.loaded_files.view()),
-                ))
+                Ok(operation.status(files.loaded_files.view()))
             } else {
                 Err(ErrorCode::Busy)
             };
@@ -502,28 +479,10 @@ impl App {
         let selection = self
             .session_history_listing(session)?
             .select_for_open(request.recording)?;
-        Ok(HistoryOpenPreparation::Start(Box::new(
-            PreparedHistoryOpen {
-                id: HistoryOpenId {
-                    session,
-                    id: Uuid::new_v4(),
-                },
-                recording: request.recording,
-                reuse,
-                selection,
-            },
-        )))
-    }
-
-    pub(super) fn accept_history_open(
-        &mut self,
-        PreparedHistoryOpen {
-            id,
-            recording,
-            reuse,
-            selection,
-        }: PreparedHistoryOpen,
-    ) {
+        let id = HistoryOpenId {
+            session,
+            id: Uuid::new_v4(),
+        };
         let reuse_bytes = reuse.as_ref().and_then(|ready| ready.bytes.upgrade());
         let phase = if self.history.open_checked_recording(
             RecordingOperationOrigin::SessionHistory(id),
@@ -534,11 +493,12 @@ impl App {
         } else {
             Phase::Terminal(OpenStop::Failed(ErrorCode::HistoryUnavailable))
         };
-        self.session_history.operation = Some(Operation {
+        let operation = self.session_history.operation.insert(Operation {
             id,
-            selection: recording,
+            selection: request.recording,
             phase,
         });
+        Ok(operation.status(self.shared.borrow().loaded_files.view()))
     }
 
     pub(super) fn history_open_status(

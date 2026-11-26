@@ -8,8 +8,8 @@ use gt_loaded_files::FileHistory;
 use gt_pending_writes::WriteKind;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetRecording, GetTrack, OpenPoint, ProcessingSettingKey,
-    QueryJobState, RangeTarget, RecordingReference, Reply, Request, SessionRequest, SetSetting,
-    SettingInput, SettingKey, SettingSelection, ShowOnMap, ShowOnPlot, TrackReference,
+    QueryJobState, RangeTarget, RecordingReference, Reply, Request, SetSetting, SettingInput,
+    SettingKey, SettingSelection, ShowOnMap, ShowOnPlot, TrackReference,
 };
 use gt_side_panel::{CheckState, TreeState};
 use gt_store::{
@@ -71,7 +71,7 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
     );
     assert_eq!(
         session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
-        Reply::ProcessingQueued
+        Reply::ProcessingApplied
     );
     assert_eq!(
         session::execute(
@@ -96,6 +96,17 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
         }
     );
 
+    let tracks = self::recording_tracks(&mut harness, old_track.recording);
+    let [merged] = tracks.as_slice() else {
+        panic!("expected one merged track");
+    };
+    let Reply::Track { details } =
+        session::execute(&mut harness, Request::GetTrack(GetTrack { track: *merged }))
+    else {
+        panic!("expected the fresh track");
+    };
+    assert_eq!(details.point_count, 20);
+
     harness.step();
     {
         let shared = harness.state().shared.borrow();
@@ -108,16 +119,6 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
             TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
         ));
     }
-    let tracks = self::recording_tracks(&mut harness, old_track.recording);
-    let [merged] = tracks.as_slice() else {
-        panic!("expected one merged track");
-    };
-    let Reply::Track { details } =
-        session::execute(&mut harness, Request::GetTrack(GetTrack { track: *merged }))
-    else {
-        panic!("expected the fresh track");
-    };
-    assert_eq!(details.point_count, 20);
 }
 
 #[test]
@@ -144,7 +145,7 @@ fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
     self::set_track_split_gap(&mut harness, Duration::seconds(30));
     assert_eq!(
         session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
-        Reply::ProcessingQueued
+        Reply::ProcessingApplied
     );
     let fresh = self::recording_tracks(&mut harness, first.recording);
     assert_eq!(fresh.len(), 3);
@@ -190,7 +191,7 @@ fn reprocessing_dismisses_a_gui_pin_before_the_track_index_addresses_another_fix
     self::set_track_split_gap(&mut harness, Duration::seconds(30));
     assert_eq!(
         session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
-        Reply::ProcessingQueued
+        Reply::ProcessingApplied
     );
     assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
     harness.step();
@@ -213,7 +214,7 @@ fn a_later_settings_input_takes_effect_on_the_next_apply() {
         .set_value_accesskit(0.0);
     assert_eq!(
         session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
-        Reply::ProcessingQueued
+        Reply::ProcessingApplied
     );
     harness.run_steps(2);
     assert_eq!(
@@ -271,27 +272,6 @@ fn applying_processing_requires_nav_points_and_preserves_empty_tracks() {
             .data_generation(),
         generation
     );
-}
-
-#[test]
-fn an_apply_without_a_reply_handoff_preserves_loaded_tracks() {
-    let mut harness = ui_tests::app_with_recording_bytes(recording_fixtures::two_track_gtd_bytes());
-    self::set_track_split_gap(&mut harness, Duration::hours(2));
-    let app = harness.state_mut();
-    let generation = app.shared.borrow().loaded_files.data_generation();
-    assert_eq!(
-        app.execute_session_request_in_test(
-            SessionRequest {
-                request: Request::ApplyProcessing(ApplyProcessing {}),
-                session: session::SESSION_ID,
-            },
-            false,
-        ),
-        Reply::ProcessingQueued
-    );
-    let shared = app.shared.borrow();
-    assert_eq!(shared.loaded_files.data_generation(), generation);
-    assert_eq!(shared.loaded_files[0].tracks.len(), 2);
 }
 
 #[test]
@@ -358,7 +338,7 @@ fn applying_processing_to_a_stored_recording_keeps_its_history_track_table() {
     self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(
         session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
-        Reply::ProcessingQueued
+        Reply::ProcessingApplied
     );
     harness.run_steps(3);
     let after = read_history();
@@ -489,7 +469,7 @@ fn processing_visibility_persists_through_shutdown_without_painting(
             .load_recording_ui_state(recording.clone());
         assert_eq!(
             session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
-            Reply::ProcessingQueued
+            Reply::ProcessingApplied
         );
         let app = harness.state_mut();
         let admitted = app

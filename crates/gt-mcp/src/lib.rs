@@ -49,7 +49,7 @@ struct Companion {
 #[tool_router]
 impl Companion {
     #[tool(
-        description = "Apply the current Processing settings to all loaded recordings with navigation points. GeoTrace acknowledges the request with processing_queued.",
+        description = "Rebuild loaded tracks and generated markers with current Processing settings. Returns processing_applied after the rebuild.",
         annotations(
             destructive_hint = true,
             idempotent_hint = false,
@@ -304,7 +304,7 @@ impl Companion {
             Ok(
                 reply @ (Reply::MapPresentationQueued
                 | Reply::PlotPresentationQueued
-                | Reply::ProcessingQueued
+                | Reply::ProcessingApplied
                 | Reply::QueryDraftQueued
                 | Reply::SettingOpenQueued
                 | Reply::Settings { .. }),
@@ -336,7 +336,7 @@ impl Companion {
     )]
     fn accepts_success_reply(request: &Request, reply: &Reply) -> bool {
         match request {
-            Request::ApplyProcessing(_) => matches!(reply, Reply::ProcessingQueued),
+            Request::ApplyProcessing(_) => matches!(reply, Reply::ProcessingApplied),
             Request::CancelQuery(_) | Request::GetQueryStatus(_) => {
                 matches!(reply, Reply::QueryJob { .. })
             }
