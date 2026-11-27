@@ -28,8 +28,8 @@ use walkers::sources::OpenStreetMap;
 use walkers::{HttpTiles, Map, MapMemory, MercatorProjection, Projector, Tiles};
 
 use crate::click_gesture::{
-    ClickSelection, DISAMBIGUATION_POPUP_ID, MapClickContext, MapClickGesture, PINNED_POPUP_ID,
-    PrimaryClickState, PrimaryMapClick,
+    ClickSelection, DISAMBIGUATION_POPUP_ID, MapCameraSnapshot, MapClickContext, MapClickGesture,
+    PINNED_POPUP_ID, PrimaryClickState, PrimaryMapClick,
 };
 use crate::controls::MapPointerSource;
 use crate::event_marker_renderer::EventMarkerRenderer;
@@ -120,6 +120,27 @@ pub enum MapAction {
     ShowOnlyTrack(TrackRef),
     /// Open the sky trails window, per the request's track and instant.
     ShowSkyTrails(SkyTrailsRequest),
+}
+
+#[derive(Clone, Copy)]
+pub struct MapFrameOutcome {
+    pub action: Option<MapAction>,
+    pub interaction: MapFrameInteraction,
+}
+
+#[derive(Clone, Copy)]
+pub enum MapFrameInteraction {
+    /// A camera operation after queued requests and the automatic file fit.
+    NavigateCamera,
+    DismissPoint,
+    None,
+}
+
+#[derive(Clone, Copy)]
+pub enum MapPresentationInput {
+    FrameInteraction,
+    PointerCapture,
+    Ready,
 }
 
 /// Timestamps are egui clock seconds (`InputState::time`), so the pulse is
@@ -461,6 +482,7 @@ pub struct NavMap {
     /// The element that was under the pointer when the last right-click fired.
     /// Held across frames so the context menu can reference it while it is open.
     right_click_ref: Option<MapElementRef>,
+    context_menu_area: Option<egui::Id>,
     /// Recorded elements found under the pointer on the previous frame. The
     /// hover label transition uses this one-frame history.
     hover_candidates: HoverCandidates,
@@ -539,6 +561,7 @@ impl NavMap {
             last_viewport_bounds: None,
             fit_notice: None,
             right_click_ref: None,
+            context_menu_area: None,
             an_egui_popup_was_open_last_frame: false,
             hover_candidates: HoverCandidates::default(),
             disambiguation_candidates: HoverCandidates::default(),
@@ -711,13 +734,85 @@ impl NavMap {
         })
     }
 
-    /// Draw one frame of the map, and return the action the user asked for
-    /// through a context menu or a popup button.
-    pub fn draw(&mut self, ui: &mut egui::Ui, mut ctx: MapDrawContext<'_>) -> Option<MapAction> {
+    pub fn presentation_input(
+        &self,
+        ui: &egui::Ui,
+        sticky: Option<MapElementRef>,
+    ) -> MapPresentationInput {
+        let ctx = ui.ctx();
+        let map_rect = ui.max_rect().intersect(ui.clip_rect());
+        let control_areas = [
+            egui::Id::unique(LAYER_TOGGLE_AREA_ID),
+            egui::Id::unique(DISPLAY_TOGGLE_BUTTON_AREA_ID),
+            egui::Id::unique(DISPLAY_TOGGLE_POPUP_AREA_ID),
+            egui::Id::unique(DISAMBIGUATION_POPUP_ID),
+        ];
+        let owns_area = |layer: egui::LayerId| {
+            control_areas.contains(&layer.id)
+                || self.context_menu_area == Some(layer.id)
+                || sticky
+                    .is_some_and(|point| layer.id == egui::Id::unique((PINNED_POPUP_ID, point)))
+        };
+        let owns_position = |pos| {
+            ctx.layer_id_at(pos).is_some_and(|layer| {
+                owns_area(layer) || (layer == ui.layer_id() && map_rect.contains(pos))
+            })
+        };
+        let owns_widget = |id| {
+            ctx.read_response(id).is_some_and(|response| {
+                owns_area(response.layer_id)
+                    || (response.layer_id == ui.layer_id()
+                        && map_rect.intersects(response.interact_rect))
+            })
+        };
+        let focused = ctx.memory(|memory| memory.focused());
+        let (escape, focused_activation, press_origin, scroll_position) = ui.input(|input| {
+            let activation = input.key_pressed(egui::Key::Enter)
+                || input.key_pressed(egui::Key::Space)
+                || focused.is_some_and(|id| {
+                    input.has_accesskit_action_request(id, egui::accesskit::Action::Click)
+                });
+            let scroll = input.smooth_scroll_delta() != egui::Vec2::ZERO
+                || input.events.iter().any(|event| {
+                    matches!(event, egui::Event::MouseWheel { .. } | egui::Event::Zoom(_))
+                })
+                || input.multi_touch().is_some();
+            (
+                input.key_pressed(egui::Key::Escape),
+                activation,
+                input.pointer.press_origin(),
+                input.pointer.interact_pos().filter(|_| scroll),
+            )
+        });
+        let (dragged, widget_interactions) = ctx.interaction_snapshot(|snapshot| {
+            (
+                snapshot.dragged,
+                [
+                    snapshot.clicked,
+                    snapshot.drag_stopped,
+                    snapshot.long_touched,
+                ],
+            )
+        });
+        if escape
+            || (focused_activation && focused.is_some_and(owns_widget))
+            || scroll_position.is_some_and(owns_position)
+            || widget_interactions.into_iter().flatten().any(owns_widget)
+        {
+            MapPresentationInput::FrameInteraction
+        } else if dragged.map_or_else(|| press_origin.is_some_and(owns_position), owns_widget) {
+            MapPresentationInput::PointerCapture
+        } else {
+            MapPresentationInput::Ready
+        }
+    }
+
+    pub fn draw(&mut self, ui: &mut egui::Ui, mut ctx: MapDrawContext<'_>) -> MapFrameOutcome {
         let now = ui.ctx().input(|i| i.time);
         self.apply_camera_requests(ui, &ctx);
         self.adopt_new_files(ui, &ctx, now);
         self.apply_presentation_camera(ui, &ctx);
+        let camera_before_input = MapCameraSnapshot::of(&self.map_memory);
 
         // Read before the click below can open or close either of them: the
         // hover labels state the popups the frame was drawn under.
@@ -748,12 +843,15 @@ impl NavMap {
 
         let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
 
-        if map_response.clicked_by(PointerButton::Middle)
+        let mut camera_request_applied = if map_response.clicked_by(PointerButton::Middle)
             && ui.input(|input| input.modifiers.is_none())
             && let Some(bbox) = ctx.visible_bounding_box()
         {
             self.fit_to_bounds(map_rect, bbox);
-        }
+            true
+        } else {
+            false
+        };
 
         let selection = self.click_selection(ctx.highlight);
         let classified = self.primary_click.classify(
@@ -776,7 +874,8 @@ impl NavMap {
         let just_opened_disambig = match classified.gesture {
             MapClickGesture::Double { position, restore } => {
                 self.restore_click_selection(restore, ctx.highlight, scope);
-                self.apply_double_click_navigation(map_rect, position, &response_camera, &ctx);
+                camera_request_applied |=
+                    self.apply_double_click_navigation(map_rect, position, &response_camera, &ctx);
                 self.disambiguation_is_open()
             }
             MapClickGesture::Single(click) => self.apply_click(click, &mut ctx, &plan),
@@ -788,6 +887,10 @@ impl NavMap {
         self.show_disambiguation_popup(ui, &mut ctx, scope, just_opened_disambig, &map_response);
 
         let mut action = self.show_context_menu(&map_response, &ctx, hover.primary());
+        let dismiss_point = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        if dismiss_point {
+            ctx.highlight.clear_sticky();
+        }
         if let Some(request) = self.show_pinned_popup(ui, &mut ctx, scope) {
             action = Some(MapAction::ShowSkyTrails(request));
         }
@@ -803,7 +906,19 @@ impl NavMap {
         self.hover_candidates = hover;
         self.an_egui_popup_was_open_last_frame = ui.ctx().any_popup_open();
 
-        action
+        let interaction = if camera_request_applied
+            || MapCameraSnapshot::of(&self.map_memory) != camera_before_input
+        {
+            MapFrameInteraction::NavigateCamera
+        } else if dismiss_point {
+            MapFrameInteraction::DismissPoint
+        } else {
+            MapFrameInteraction::None
+        };
+        MapFrameOutcome {
+            action,
+            interaction,
+        }
     }
 
     fn apply_double_click_navigation(
@@ -812,14 +927,16 @@ impl NavMap {
         pointer: egui::Pos2,
         response_camera: &MapMemory,
         ctx: &MapDrawContext<'_>,
-    ) {
+    ) -> bool {
         match self.controls.double_click {
             DoubleClickBehavior::FitVisible => {
-                if let Some(bbox) = ctx.visible_bounding_box() {
-                    self.fit_to_bounds(map_rect, bbox);
-                }
+                let Some(bbox) = ctx.visible_bounding_box() else {
+                    return false;
+                };
+                self.fit_to_bounds(map_rect, bbox);
+                true
             }
-            DoubleClickBehavior::None => {}
+            DoubleClickBehavior::None => false,
             DoubleClickBehavior::ZoomAndCenter => {
                 let projector = Projector::new(
                     map_rect,
@@ -833,6 +950,7 @@ impl NavMap {
                 if let Err(error) = self.map_memory.set_zoom(zoom) {
                     log::error!("Could not zoom map: {error}");
                 }
+                true
             }
         }
     }
@@ -1247,7 +1365,7 @@ impl NavMap {
         map_rect: egui::Rect,
         ctx: &mut MapDrawContext<'_>,
     ) -> Option<ReferenceDocument> {
-        let layer_toggle = Area::new(egui::Id::unique("map_layer_toggle"))
+        let layer_toggle = Area::new(egui::Id::unique(LAYER_TOGGLE_AREA_ID))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
             .pivot(egui::Align2::RIGHT_BOTTOM)
             .show(ui.ctx(), |ui| {
@@ -1459,6 +1577,7 @@ impl NavMap {
             self.right_click_ref = hover_point_ref;
         }
         let popup = Popup::context_menu(map_response);
+        self.context_menu_area = Some(popup.get_id());
         let Some(point_ref) = self.right_click_ref else {
             if popup.is_open() {
                 Popup::close_id(&map_response.ctx, popup.get_id());
@@ -1513,10 +1632,6 @@ impl NavMap {
         ctx: &mut MapDrawContext<'_>,
         scope: MapPresence<'_>,
     ) -> Option<SkyTrailsRequest> {
-        if ctx.highlight.sticky().is_some() && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
-        {
-            ctx.highlight.clear_sticky();
-        }
         let PinnedPopup::Drawn(sticky_ref) = ctx.highlight.pin_this_frame(scope)? else {
             return None;
         };
@@ -1530,6 +1645,8 @@ impl NavMap {
         )
     }
 }
+
+const LAYER_TOGGLE_AREA_ID: &str = "map_layer_toggle";
 
 /// Default map center: Copenhagen.
 fn default_map_center() -> walkers::Position {

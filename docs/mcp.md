@@ -292,8 +292,9 @@ Pass a `track` and a zero-based `point` index to `open_point` to center the map 
 Both tools use the current filters and visibility and report an error for a target with no visible geometry.
 The `map_presentation_queued` status acknowledges the request.
 GeoTrace applies the request when the map next draws if the recording, filter, query run, and target visibility still permit it.
-A later camera request supersedes a queued request.
-A later pin change supersedes a queued point request.
+A later camera action supersedes a queued presentation.
+Dismissing or changing the point pin supersedes a queued point request.
+GeoTrace can still apply an earlier desktop camera request if it discards the MCP presentation.
 GeoTrace discards a queued range request if Query highlights is disabled when the map draws.
 Use Query highlights to hide or show an active range.
 GeoTrace clears a `show_on_map` match highlight when its job becomes stale or another job replaces it.

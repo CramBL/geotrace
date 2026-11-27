@@ -873,6 +873,7 @@ impl App {
                 };
                 let mut behavior = MainBehavior {
                     map,
+                    queries: &self.editor_query,
                     checked_plot_visibility: s.tree.visibility_generation(),
                     state: &mut s,
                     toasts: &mut self.toasts,

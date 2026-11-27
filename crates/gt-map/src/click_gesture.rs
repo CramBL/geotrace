@@ -50,18 +50,18 @@ struct PendingClick {
     position: egui::Pos2,
     before: ClickSelection,
     after: ClickSelection,
-    camera: ClickCamera,
+    camera: MapCameraSnapshot,
     log_glyph: Option<LogMatchGlyph>,
 }
 
 #[derive(PartialEq)]
-struct ClickCamera {
+pub(crate) struct MapCameraSnapshot {
     center: Option<Position>,
     zoom_bits: u64,
 }
 
-impl ClickCamera {
-    fn of(memory: &MapMemory) -> Self {
+impl MapCameraSnapshot {
+    pub(crate) fn of(memory: &MapMemory) -> Self {
         Self {
             center: memory.detached(),
             zoom_bits: memory.zoom().to_bits(),
@@ -70,7 +70,7 @@ impl ClickCamera {
 }
 
 impl PendingClick {
-    fn matches_view(&self, selection: ClickSelection, camera: &ClickCamera) -> bool {
+    fn matches_view(&self, selection: ClickSelection, camera: &MapCameraSnapshot) -> bool {
         self.after == selection && &self.camera == camera
     }
 
@@ -112,7 +112,7 @@ impl PrimaryClickState {
         camera: &MapMemory,
     ) -> Option<PinRevision> {
         let pending = self.pending.as_ref()?;
-        if !pending.matches_view(selection, &ClickCamera::of(camera)) {
+        if !pending.matches_view(selection, &MapCameraSnapshot::of(camera)) {
             return None;
         }
         pending
@@ -149,7 +149,7 @@ impl PrimaryClickState {
                 confirmed_log: None,
             };
         }
-        let camera = ClickCamera::of(camera);
+        let camera = MapCameraSnapshot::of(camera);
         let now = ui.input(|input| input.time);
         let pending = self
             .pending
