@@ -2989,6 +2989,7 @@ dependencies = [
  "gt-session-bridge",
  "gt-types",
  "rmcp",
+ "rstest",
  "serde_json",
  "tokio",
  "uuid",

@@ -16,13 +16,15 @@ use gt_session_bridge::{
     QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage,
     QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText, QueryValidation,
     RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request,
-    SessionPanel, SessionState, SetSetting, SetTrackVisibility, SettingApply, SettingInfo,
-    SettingInput, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot,
-    StatusWait, TimeRange, TrackReference, TrackVisibilityAction, TrackVisibilityResult,
+    RequestError, SessionPanel, SessionState, SetSetting, SetTrackVisibility, SettingApply,
+    SettingInfo, SettingInput, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap,
+    ShowOnPlot, StatusWait, TimeRange, TrackReference, TrackVisibilityAction,
+    TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
 use rmcp::model::ErrorCode as McpErrorCode;
+use rstest::rstest;
 use serde_json::{Value, json};
 use tokio::io::{
     AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, DuplexStream, Lines, ReadHalf, WriteHalf,
@@ -94,7 +96,7 @@ async fn status_tools_advertise_and_forward_bounded_waits() {
         client.send_tool(id, method, arguments).await;
         let exchange = self::next_bridge_exchange(&mut requests).await;
         assert_eq!(exchange.request, request);
-        exchange.reply.send(reply).unwrap();
+        exchange.reply.send(Ok(reply)).unwrap();
         assert_eq!(
             client.receive().await.pointer("/result/isError"),
             Some(&json!(false))
@@ -840,7 +842,7 @@ async fn mcp_cancellation_drops_only_the_targeted_bridge_request() {
     tokio::time::timeout(Duration::from_secs(2), cancelled.closed())
         .await
         .expect("MCP cancellation did not close the outstanding bridge response");
-    control.reply.send(Reply::QueryDraftOpened).unwrap();
+    control.reply.send(Ok(Reply::QueryDraftOpened)).unwrap();
     let response = client.receive().await;
     assert_eq!(response.get("id"), Some(&json!(3)));
     assert_eq!(
@@ -888,7 +890,7 @@ async fn a_pending_status_finishes_the_original_exchange() {
             initial.request,
             Request::RunQuery(_) | Request::OpenHistoryRecording(_)
         ));
-        initial.reply.send(reply).unwrap();
+        initial.reply.send(Ok(reply)).unwrap();
         let response = tokio::time::timeout(Duration::from_millis(50), client.receive())
             .await
             .expect("a pending status is a complete reply");
@@ -1175,11 +1177,11 @@ async fn assert_processing_requires_empty_arguments(client: &mut Client) {
     assert_eq!(PROCESSING_DISPATCHES.load(Ordering::Relaxed), 2);
 }
 
-fn inspection_fixture(request: &Request) -> io::Result<Reply> {
+fn inspection_fixture(request: &Request) -> Result<Reply, RequestError> {
     match request {
         Request::GetSessionState => serde_json::from_value(self::session_state_fixture())
             .map(|state| Reply::SessionState { state })
-            .map_err(io::Error::other),
+            .map_err(|error| RequestError::BeforeSend(io::Error::other(error))),
         Request::OpenHistoryRecording(_) | Request::GetHistoryOpenStatus(_) => {
             self::history_open_fixture(request)
         }
@@ -1235,7 +1237,7 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
         }) if *track == self::track_reference() && metrics.as_slice() == ["velocity"] => {
             let time = "2026-05-29T18:48:26.125Z"
                 .parse()
-                .map_err(io::Error::other)?;
+                .map_err(|error| RequestError::BeforeSend(io::Error::other(error)))?;
             Ok(Reply::PlotFramed {
                 track: *track,
                 time_range: TimeRange {
@@ -1341,7 +1343,7 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
         Request::ListRecordings(ListRecordings {
             after: None,
             limit: None,
-        }) => Err(ErrorKind::NotFound.into()),
+        }) => Err(RequestError::BeforeSend(ErrorKind::NotFound.into())),
         Request::ListRecordings(ListRecordings {
             after: Some(after),
             limit: Some(NonZeroUsize::MIN),
@@ -1370,7 +1372,7 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                 page: HistoryRecordings {
                     recordings: vec![HistoryRecording {
                         id: serde_json::from_value(json!(Uuid::from_u128(42)))
-                            .map_err(io::Error::other)?,
+                            .map_err(|error| RequestError::BeforeSend(io::Error::other(error)))?,
                         identity: "recorder".to_owned(),
                         title: None,
                         metadata_truncated: false,
@@ -1406,7 +1408,7 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                 next_start: None,
             },
         }),
-        _ => Err(ErrorKind::InvalidInput.into()),
+        _ => Err(RequestError::BeforeSend(ErrorKind::InvalidInput.into())),
     }
 }
 
@@ -1460,7 +1462,7 @@ fn recording_id(number: u64) -> RecordingReference {
     }
 }
 
-fn history_open_fixture(request: &Request) -> io::Result<Reply> {
+fn history_open_fixture(request: &Request) -> Result<Reply, RequestError> {
     match request {
         Request::OpenHistoryRecording(OpenHistoryRecording { recording })
             if serde_json::to_value(recording)
@@ -1489,7 +1491,7 @@ fn history_open_fixture(request: &Request) -> io::Result<Reply> {
                 },
             })
         }
-        _ => Err(ErrorKind::InvalidInput.into()),
+        _ => Err(RequestError::BeforeSend(ErrorKind::InvalidInput.into())),
     }
 }
 
@@ -1599,11 +1601,11 @@ pub(super) struct PendingBridge(mpsc::Sender<BridgeExchange>);
 
 struct BridgeExchange {
     request: Request,
-    reply: oneshot::Sender<Reply>,
+    reply: oneshot::Sender<Result<Reply, RequestError>>,
 }
 
 impl PendingBridge {
-    pub(super) async fn request(&self, request: &Request) -> io::Result<Reply> {
+    pub(super) async fn request(&self, request: &Request) -> Result<Reply, RequestError> {
         let (reply, response) = oneshot::channel();
         self.0
             .send(BridgeExchange {
@@ -1611,9 +1613,150 @@ impl PendingBridge {
                 reply,
             })
             .await
-            .map_err(io::Error::other)?;
-        response.await.map_err(io::Error::other)
+            .map_err(|error| RequestError::BeforeSend(io::Error::other(error)))?;
+        response
+            .await
+            .map_err(|error| RequestError::DuringExchange(io::Error::other(error)))?
     }
+}
+
+#[rstest]
+#[case::connection_refused(ErrorKind::ConnectionRefused, START_DESKTOP)]
+#[case::not_found(ErrorKind::NotFound, START_DESKTOP)]
+#[case::permission_denied(
+    ErrorKind::PermissionDenied,
+    "The GeoTrace session denied access. Run GeoTrace and its companion as the same user."
+)]
+#[case::file_too_large(
+    ErrorKind::FileTooLarge,
+    "The request is too large. Shorten the request and try again."
+)]
+#[case::connect_timed_out(
+    ErrorKind::TimedOut,
+    "Could not connect to GeoTrace in time. Try again."
+)]
+#[case::other(ErrorKind::BrokenPipe, "Could not contact GeoTrace (broken pipe).")]
+#[tokio::test]
+async fn pre_send_bridge_errors_omit_uncertain_mutation_warnings(
+    #[case] kind: ErrorKind,
+    #[case] expected: &str,
+) {
+    let (queued, mut requests) = mpsc::channel(1);
+    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+    client.initialize().await;
+    client.send_tool(2, "apply_processing", json!({})).await;
+    let exchange = self::next_bridge_exchange(&mut requests).await;
+    exchange
+        .reply
+        .send(Err(RequestError::BeforeSend(kind.into())))
+        .unwrap();
+    let result = client.receive().await;
+    assert_eq!(result.pointer("/result/isError"), Some(&json!(true)));
+    assert_eq!(
+        result.pointer("/result/content/0/text"),
+        Some(&json!(expected))
+    );
+    drop(client);
+    worker.await.unwrap();
+}
+
+#[rstest]
+#[case::read_only_timeout(
+    "get_session_state",
+    json!({}),
+    ErrorKind::TimedOut,
+    "GeoTrace did not respond in time. Try again."
+)]
+#[case::read_only_disconnect(
+    "get_session_state",
+    json!({}),
+    ErrorKind::UnexpectedEof,
+    "Lost the connection to GeoTrace (unexpected end of file). Try again."
+)]
+#[case::idempotent_timeout(
+    "set_session_view",
+    json!({"base_layer": "open_street_map"}),
+    ErrorKind::TimedOut,
+    "GeoTrace did not respond in time. GeoTrace may have applied the change. Inspecting state or retrying the same call is safe."
+)]
+#[case::idempotent_disconnect(
+    "open_panel",
+    json!({"panel": "history"}),
+    ErrorKind::ConnectionReset,
+    "Lost the connection to GeoTrace (connection reset) after sending the request. GeoTrace may have applied the change. Inspecting state or retrying the same call is safe."
+)]
+#[case::manage_recordings_open_timeout(
+    "manage_recordings",
+    json!({"action": "open", "paths": ["/data/survey.gtd"]}),
+    ErrorKind::TimedOut,
+    "GeoTrace did not respond in time. GeoTrace may have already started or applied the request. Check list_recordings or get_session_state before retrying."
+)]
+#[case::manage_recordings_unload_disconnect(
+    "manage_recordings",
+    json!({"action": "unload", "recordings": [self::recording_id(7)]}),
+    ErrorKind::UnexpectedEof,
+    "Lost the connection to GeoTrace (unexpected end of file) after sending the request. GeoTrace may have already started or applied the request. Check list_recordings or get_session_state before retrying."
+)]
+#[case::apply_processing_timeout(
+    "apply_processing",
+    json!({}),
+    ErrorKind::TimedOut,
+    "GeoTrace did not respond in time. GeoTrace may have already started or applied the request. Check list_recordings or get_session_state before retrying."
+)]
+#[case::apply_processing_disconnect(
+    "apply_processing",
+    json!({}),
+    ErrorKind::BrokenPipe,
+    "Lost the connection to GeoTrace (broken pipe) after sending the request. GeoTrace may have already started or applied the request. Check list_recordings or get_session_state before retrying."
+)]
+#[case::run_query_timeout(
+    "run_query",
+    json!({"text": "points | draw"}),
+    ErrorKind::TimedOut,
+    "GeoTrace did not respond in time. GeoTrace may have already started the query. Retry run_query to reclaim an active job or start a new one if it already finished."
+)]
+#[case::run_query_disconnect(
+    "run_query",
+    json!({"text": "points | draw"}),
+    ErrorKind::UnexpectedEof,
+    "Lost the connection to GeoTrace (unexpected end of file) after sending the request. GeoTrace may have already started the query. Retry run_query to reclaim an active job or start a new one if it already finished."
+)]
+#[case::open_history_recording_timeout(
+    "open_history_recording",
+    json!({"recording": Uuid::from_u128(6)}),
+    ErrorKind::TimedOut,
+    "GeoTrace did not respond in time. GeoTrace may have already started opening the recording. Check list_recordings, or retry open_history_recording if it is still pending."
+)]
+#[case::open_history_recording_disconnect(
+    "open_history_recording",
+    json!({"recording": Uuid::from_u128(6)}),
+    ErrorKind::ConnectionReset,
+    "Lost the connection to GeoTrace (connection reset) after sending the request. GeoTrace may have already started opening the recording. Check list_recordings, or retry open_history_recording if it is still pending."
+)]
+#[tokio::test]
+async fn exchange_timeouts_and_disconnects_report_retry_guidance_by_request_kind(
+    #[case] tool: &str,
+    #[case] arguments: Value,
+    #[case] kind: ErrorKind,
+    #[case] expected: &str,
+) {
+    let (queued, mut requests) = mpsc::channel(1);
+    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+    client.initialize().await;
+    client.send_tool(2, tool, arguments).await;
+    let exchange = self::next_bridge_exchange(&mut requests).await;
+    exchange
+        .reply
+        .send(Err(RequestError::DuringExchange(kind.into())))
+        .unwrap();
+    let result = client.receive().await;
+    assert_eq!(result.pointer("/result/isError"), Some(&json!(true)));
+    assert_eq!(
+        result.pointer("/result/content/0/text"),
+        Some(&json!(expected))
+    );
+    drop(client);
+    worker.await.unwrap();
 }
 
 const INVALID_QUERY_DRAFT: &str = "# Første\r\n\r\npoints | where speed > 10 km/h";

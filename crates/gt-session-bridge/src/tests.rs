@@ -19,8 +19,8 @@ use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
 use serde_json::{Value, json};
 use strum::IntoEnumIterator as _;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
@@ -33,9 +33,9 @@ use super::{
     ApplyProcessing, ChannelEntry, EXCHANGE_TIMEOUT, ErrorCode, GetRangeDetails, GetRecording,
     GetTrack, Inspection, InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE,
     MAX_TRACKS_PER_PAGE, MAX_VISIBILITY_TRACKS, NumericObservation, OpenPoint, Pending, QueryJobId,
-    QueryText, QueryValidation, Recording, RecordingReference, Recordings, Reply, Request, Server,
-    SessionExchange, SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel,
-    SessionQueryPhase, SessionQueryState, SessionReply, SessionRequest, SessionState,
+    QueryText, QueryValidation, Recording, RecordingReference, Recordings, Reply, Request,
+    RequestError, Server, SessionExchange, SessionMapBounds, SessionMapLayer, SessionMapState,
+    SessionPanel, SessionQueryPhase, SessionQueryState, SessionReply, SessionRequest, SessionState,
     SetTrackVisibility, TrackReference, TrackVisibilityAction, TrafficCapture, TrafficDirection,
     TrafficFrame, VisibilityTrackRefs,
 };
@@ -152,9 +152,10 @@ async fn recording_control_rejects_invalid_batches_before_dispatch() {
     let request = Request::ManageRecordings(ManageRecordings::Open {
         paths: vec![path].try_into().unwrap(),
     });
-    let error = super::request_at(&endpoint.endpoint, &request)
+    let error = super::request_at(&endpoint.endpoint, &request, EXCHANGE_TIMEOUT)
         .await
         .unwrap_err();
+    assert!(matches!(error, RequestError::BeforeSend(_)));
     assert_eq!(error.kind(), ErrorKind::FileTooLarge);
     assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
 }
@@ -520,7 +521,7 @@ async fn a_client_waiting_to_close_does_not_block_another_request() {
     assert_eq!(reply, EMPTY_RECORDINGS);
 
     let (reply, ()) = tokio::join!(
-        super::request_at(&fixture.endpoint, &REQUEST),
+        super::request_at(&fixture.endpoint, &REQUEST, EXCHANGE_TIMEOUT),
         self::dispatch_recording_list(&mut server, &mut wakes)
     );
     assert_eq!(reply.unwrap(), EMPTY_RECORDINGS);
@@ -534,7 +535,7 @@ async fn a_full_app_queue_returns_busy_without_displacing_its_request() {
     let mut first = fixture.send_recording_list().await;
     self::wait_for_request(&mut wakes).await;
 
-    let reply = super::request_at(&fixture.endpoint, &REQUEST)
+    let reply = super::request_at(&fixture.endpoint, &REQUEST, EXCHANGE_TIMEOUT)
         .await
         .unwrap();
     assert_eq!(reply, Reply::from(ErrorCode::Busy));
@@ -572,7 +573,9 @@ async fn excess_connections_close_and_a_completed_exchange_releases_a_slot() {
 
     let request_after_close = async {
         loop {
-            if let Ok(reply) = super::request_at(&fixture.endpoint, &REQUEST).await {
+            if let Ok(reply) =
+                super::request_at(&fixture.endpoint, &REQUEST, EXCHANGE_TIMEOUT).await
+            {
                 return reply;
             }
             tokio::task::yield_now().await;
@@ -634,25 +637,28 @@ async fn local_request_dispatches_on_the_calling_thread() {
         number: files.view().get(0).unwrap().id().into(),
     };
     let caller = std::thread::current().id();
-    let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, &REQUEST), async {
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), wakes.recv())
-                .await
-                .unwrap(),
-            Some(())
-        );
-        server.dispatch(|request| {
-            assert_eq!(std::thread::current().id(), caller);
-            assert_eq!(request.session, id.session);
-            let Request::ListRecordings(args) = request.request else {
-                panic!("expected a recording list request");
-            };
-            Inspection::new(files.view(), "{title} ({filename})", request.session)
-                .execute(InspectionRequest::ListRecordings(args))
-                .unwrap_or_else(Reply::from)
-        });
-        server.dispatch(|_| panic!("unexpected request"));
-    });
+    let (reply, ()) = tokio::join!(
+        super::request_at(&fixture.endpoint, &REQUEST, EXCHANGE_TIMEOUT),
+        async {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(1), wakes.recv())
+                    .await
+                    .unwrap(),
+                Some(())
+            );
+            server.dispatch(|request| {
+                assert_eq!(std::thread::current().id(), caller);
+                assert_eq!(request.session, id.session);
+                let Request::ListRecordings(args) = request.request else {
+                    panic!("expected a recording list request");
+                };
+                Inspection::new(files.view(), "{title} ({filename})", request.session)
+                    .execute(InspectionRequest::ListRecordings(args))
+                    .unwrap_or_else(Reply::from)
+            });
+            server.dispatch(|_| panic!("unexpected request"));
+        }
+    );
     assert_eq!(
         reply.unwrap(),
         Reply::Recordings {
@@ -732,7 +738,7 @@ async fn dropping_the_client_exchange_skips_the_queued_command() {
     });
     let abandon = async {
         tokio::select! {
-            reply = super::request_at(&fixture.endpoint, &request) => {
+            reply = super::request_at(&fixture.endpoint, &request, EXCHANGE_TIMEOUT) => {
                 panic!("The exchange completed before dispatch ({reply:?})");
             }
             queued = wakes.recv() => assert_eq!(queued, Some(())),
@@ -1388,9 +1394,10 @@ async fn oversized_query_requests_fail_before_connecting() {
     let request = Request::CheckQuery(QueryText {
         text: "\n".repeat(MAX_REQUEST_BYTES / 2),
     });
-    let error = super::request_at(&fixture.endpoint, &request)
+    let error = super::request_at(&fixture.endpoint, &request, EXCHANGE_TIMEOUT)
         .await
         .unwrap_err();
+    assert!(matches!(error, RequestError::BeforeSend(_)));
     assert_eq!(error.kind(), ErrorKind::FileTooLarge);
 }
 
@@ -1417,20 +1424,23 @@ async fn query_diagnostics_exceeding_the_frame_limit_return_an_error() {
     let request = Request::CheckQuery(QueryText {
         text: "@accel | where @accel.x > 1 g".to_owned(),
     });
-    let (reply, ()) = tokio::join!(super::request_at(&fixture.endpoint, &request), async {
-        tokio::time::timeout(Duration::from_secs(1), wakes.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        server.dispatch(|request| {
-            let Request::CheckQuery(args) = request.request else {
-                panic!("expected a query check request");
-            };
-            Inspection::new(files.view(), "{filename}", request.session)
-                .execute(InspectionRequest::CheckQuery(args))
-                .unwrap_or_else(Reply::from)
-        });
-    });
+    let (reply, ()) = tokio::join!(
+        super::request_at(&fixture.endpoint, &request, EXCHANGE_TIMEOUT),
+        async {
+            tokio::time::timeout(Duration::from_secs(1), wakes.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            server.dispatch(|request| {
+                let Request::CheckQuery(args) = request.request else {
+                    panic!("expected a query check request");
+                };
+                Inspection::new(files.view(), "{filename}", request.session)
+                    .execute(InspectionRequest::CheckQuery(args))
+                    .unwrap_or_else(Reply::from)
+            });
+        }
+    );
     assert_eq!(reply.unwrap(), ErrorCode::ReplyTooLarge.into());
 }
 
@@ -1727,14 +1737,60 @@ async fn shutdown_disconnects_pending_client_and_releases_endpoint() {
         .await
         .unwrap();
     after_shutdown.unwrap_err();
-    assert_eq!(
-        super::request_at(&fixture.endpoint, &REQUEST)
-            .await
-            .unwrap_err()
-            .kind(),
-        ErrorKind::NotFound
-    );
+    let after_shutdown = super::request_at(&fixture.endpoint, &REQUEST, EXCHANGE_TIMEOUT)
+        .await
+        .unwrap_err();
+    assert!(matches!(after_shutdown, RequestError::BeforeSend(_)));
+    assert_eq!(after_shutdown.kind(), ErrorKind::NotFound);
     drop(Server::bind(fixture.endpoint.clone(), || {}).unwrap());
+}
+
+#[tokio::test]
+async fn transport_errors_distinguish_pre_send_from_exchange_disconnect_and_timeout() {
+    let missing = TestEndpoint::new().unwrap();
+    let missing_error = super::request_at(&missing.endpoint, &REQUEST, EXCHANGE_TIMEOUT)
+        .await
+        .unwrap_err();
+    assert!(matches!(missing_error, RequestError::BeforeSend(_)));
+    assert_eq!(missing_error.kind(), ErrorKind::NotFound);
+
+    let fixture = TestEndpoint::new().unwrap();
+    let listener = fixture.endpoint.bind().unwrap();
+
+    let accept_and_close = async {
+        let mut connection = listener.accept().await.unwrap().unwrap();
+        let received: Request = framing::read(&mut connection.0, MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        assert_eq!(received, REQUEST);
+        drop(connection);
+    };
+    let (disconnect_result, ()) = tokio::join!(
+        super::request_at(&fixture.endpoint, &REQUEST, EXCHANGE_TIMEOUT),
+        accept_and_close
+    );
+    let disconnect_error = disconnect_result.unwrap_err();
+    assert!(matches!(disconnect_error, RequestError::DuringExchange(_)));
+    assert_eq!(disconnect_error.kind(), ErrorKind::UnexpectedEof);
+
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    let accept_and_stall = async {
+        let mut connection = listener.accept().await.unwrap().unwrap();
+        let received: Request = framing::read(&mut connection.0, MAX_REQUEST_BYTES)
+            .await
+            .unwrap();
+        assert_eq!(received, REQUEST);
+        release_rx.await.ok();
+    };
+    let request_and_timeout = async {
+        let result = super::request_at(&fixture.endpoint, &REQUEST, SHORT_EXCHANGE_TIMEOUT).await;
+        release_tx.send(()).ok();
+        result
+    };
+    let (timeout_result, ()) = tokio::join!(request_and_timeout, accept_and_stall);
+    let timeout_error = timeout_result.unwrap_err();
+    assert!(matches!(timeout_error, RequestError::DuringExchange(_)));
+    assert_eq!(timeout_error.kind(), ErrorKind::TimedOut);
 }
 
 proptest! {
@@ -1787,6 +1843,7 @@ const EMPTY_RECORDINGS: Reply = Reply::Recordings {
 };
 
 const BRIDGE_TEST_TIMEOUT: Duration = Duration::from_secs(1);
+const SHORT_EXCHANGE_TIMEOUT: Duration = Duration::from_millis(50);
 const FRAME_TEST_LIMIT: u8 = 32;
 const IDENTITY_NAME_TEMPLATE: &str = "{identity}";
 const JSON_CONTROL_CHARACTER: char = '\x01';

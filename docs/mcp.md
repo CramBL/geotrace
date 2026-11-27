@@ -78,6 +78,19 @@ If a query is still running, call `run_query` to get its new job identifier in t
 | `open_history_recording` | Start opening a recording from History. |
 | `get_history_open_status` | Check a History open and get the loaded recording reference when ready. |
 
+## Connection errors and retries
+
+Failures before the companion sends a request, such as a missing desktop session, permission denial, an oversized request, or a connection timeout, leave GeoTrace unchanged and are safe to retry after resolving the cause.
+A timeout or disconnect after the companion sends a request leaves the outcome uncertain for mutating tools because GeoTrace may have already received and started or applied the request.
+
+Read-only tools (`get_session_state`, `list_recordings`, `get_recording`, `get_track`, `get_range_details`, `list_metrics`, `get_settings`, `describe_setting`, `list_history_recordings`, `get_history_open_status`, `check_query`, `get_query_status`, and `get_query_results`) are safe to retry after any timeout or disconnect.
+For idempotent mutating tools (`cancel_query`, `open_panel`, `open_point`, `open_query`, `open_setting`, `set_session_view`, `set_setting`, `set_track_visibility`, `show_on_map`, and `show_on_plot`), the companion reports that GeoTrace may have applied the change and that inspecting state or retrying the same call is safe.
+For non-idempotent mutating tools, inspect state before retrying:
+
+- `manage_recordings` and `apply_processing`: check `list_recordings` or `get_session_state` before retrying.
+- `run_query`: retry `run_query` to reclaim an active job or start a new one if the run already finished.
+- `open_history_recording`: check `list_recordings`, or retry `open_history_recording` if the open is still pending.
+
 ## Desktop session
 
 Call `get_session_state` without arguments to inspect the running desktop in one request.

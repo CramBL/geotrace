@@ -21,6 +21,7 @@ tokio = { version = "1", features = ["macros", "rt", "time"] }
 [dev-dependencies]
 chrono.workspace = true
 gt-types = { path = "../gt-types" }
+rstest.workspace = true
 tokio = { version = "1", features = ["io-util", "sync", "test-util"] }
 uuid.workspace = true
 
