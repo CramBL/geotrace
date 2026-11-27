@@ -30,7 +30,6 @@ use super::loader::{
     CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, GtdLoadMode,
 };
 use super::log_viewer::{self, LogViewerContext};
-use super::mcp_action_notice::McpActionNotice;
 use super::modals::{SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice};
 use super::panes::MainBehavior;
 use super::query::QueryAction;
@@ -64,6 +63,10 @@ impl PendingTrackDataDetach {
 }
 
 impl eframe::App for App {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        self.session_navigation.observe_raw_input(ctx, input);
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.complete_session_panel_raise();
         self.begin_shutdown_if_requested(ctx);
@@ -184,34 +187,11 @@ impl eframe::App for App {
         self.sync_settings_autosave();
         self.drive_settings_autosave(ui.ctx());
 
-        // Process the current input before replacing the editor text.
-        self.apply_session_window_requests(ui.ctx());
+        self.complete_session_navigation_after_input(ui.ctx());
     }
 }
 
 impl App {
-    fn apply_session_window_requests(&mut self, ctx: &egui::Context) {
-        if let Some(text) = self.pending_session_query_draft.take() {
-            let notice = match (
-                self.query_window.reveal_editor(ctx),
-                self.editor_query.session().text() == text,
-            ) {
-                (true, _) => Some(McpActionNotice::OpenQueryEditor),
-                (false, false) => Some(McpActionNotice::UpdateQueryDraft),
-                (false, true) => None,
-            };
-            self.editor_query.session_mut().set_text(text);
-            if let Some(notice) = notice {
-                notice.enqueue(&mut self.toasts);
-                ctx.request_repaint();
-            }
-        }
-        if let Some(key) = self.pending_session_setting.take() {
-            self.open_setting(key);
-            ctx.request_repaint();
-        }
-    }
-
     pub(super) fn query_filter_active(&self) -> bool {
         self.editor_query
             .session()

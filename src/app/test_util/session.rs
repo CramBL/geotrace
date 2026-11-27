@@ -1,6 +1,8 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use egui_kittest::Harness;
 use gt_session_bridge::test_util::TestEndpoint;
@@ -14,6 +16,7 @@ use gt_test_utils::HarnessInteraction as _;
 use uuid::Uuid;
 
 use crate::app::App;
+use crate::app::session_bridge::SessionBridge;
 
 use super::harness;
 
@@ -54,6 +57,34 @@ pub fn exchange_request(
 ) -> Reply {
     let payload = serde_json::to_vec(request).unwrap();
     serde_json::from_slice(&self::exchange_payload(harness, endpoint, &payload)).unwrap()
+}
+
+pub fn exchange_queued_request(
+    harness: &mut Harness<'_, App>,
+    request: &Request,
+    advance_desktop: impl FnOnce(&mut Harness<'_, App>),
+) -> Reply {
+    assert!(harness.state().session_bridge.server().is_none());
+    let endpoint = TestEndpoint::new().unwrap();
+    let (ready, queued) = mpsc::sync_channel(1);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().session_bridge = SessionBridge::Running(
+        endpoint
+            .start_server(move || {
+                ready.try_send(()).unwrap();
+                ctx.request_repaint();
+            })
+            .unwrap(),
+    );
+    let payload = serde_json::to_vec(request).unwrap();
+    let reply = thread::scope(|scope| {
+        let client = scope.spawn(|| endpoint.exchange_payload(&payload).unwrap());
+        queued.recv_timeout(Duration::from_secs(2)).unwrap();
+        advance_desktop(harness);
+        client.join().unwrap()
+    });
+    harness.state_mut().stop_session_bridge();
+    serde_json::from_slice(&reply).unwrap()
 }
 
 pub fn match_page(page: QueryResultPage) -> (Vec<QueryMatch>, Option<QueryMatchPosition>) {

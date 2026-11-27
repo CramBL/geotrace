@@ -32,9 +32,10 @@ use super::{
     InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE,
     MAX_VISIBILITY_TRACKS, NumericObservation, OpenPoint, Pending, QueryJobId, QueryText,
     QueryValidation, Recording, RecordingReference, Recordings, Reply, Request, Server,
-    SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel, SessionQueryPhase,
-    SessionQueryState, SessionState, SetTrackVisibility, TrackReference, TrackVisibilityAction,
-    TrafficCapture, TrafficDirection, TrafficFrame, VisibilityTrackRefs,
+    SessionExchange, SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel,
+    SessionQueryPhase, SessionQueryState, SessionRequest, SessionState, SetTrackVisibility,
+    TrackReference, TrackVisibilityAction, TrafficCapture, TrafficDirection, TrafficFrame,
+    VisibilityTrackRefs,
 };
 
 impl TestEndpoint {
@@ -682,6 +683,20 @@ async fn dropping_the_client_exchange_skips_the_queued_command() {
         framing::decode::<Request>(frame.payload()).unwrap(),
         request
     );
+}
+
+#[test]
+fn a_received_exchange_skips_execution_after_the_client_disconnects() {
+    let (reply, receiver) = oneshot::channel();
+    let exchange = SessionExchange {
+        request: SessionRequest {
+            request: REQUEST,
+            session: Uuid::nil(),
+        },
+        reply,
+    };
+    drop(receiver);
+    exchange.respond(|_| panic!("The bridge executed a disconnected request"));
 }
 
 #[test]

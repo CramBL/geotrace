@@ -66,7 +66,7 @@ fn an_editor_notice_requires_a_changed_draft_or_an_opened_window() {
     });
     assert_eq!(
         session::execute(&mut harness, first.clone()),
-        Reply::QueryDraftQueued
+        Reply::QueryDraftOpened
     );
     harness.run_steps(2);
     assert_eq!(
@@ -76,7 +76,7 @@ fn an_editor_notice_requires_a_changed_draft_or_an_opened_window() {
     let count = harness.state().toasts.len();
     assert_eq!(
         session::execute(&mut harness, first),
-        Reply::QueryDraftQueued
+        Reply::QueryDraftOpened
     );
     harness.step();
     assert_eq!(harness.state().toasts.len(), count);
@@ -87,7 +87,7 @@ fn an_editor_notice_requires_a_changed_draft_or_an_opened_window() {
                 text: "points | draw".to_owned()
             })
         ),
-        Reply::QueryDraftQueued,
+        Reply::QueryDraftOpened,
     );
     harness.run_steps(2);
     assert!(session::visible_action_notices(&harness).contains(&"MCP updated the query editor"));
@@ -122,7 +122,7 @@ fn an_editor_request_expands_the_query_window(
                 text: text.to_owned()
             })
         ),
-        Reply::QueryDraftQueued | Reply::QueryJob { .. }
+        Reply::QueryDraftOpened | Reply::QueryJob { .. }
     ));
     harness.run_steps(10);
     harness.get_by_role(Role::MultilineTextInput);
@@ -136,19 +136,18 @@ fn a_setting_open_notice_survives_a_repeat_during_window_sizing() {
     harness
         .ctx
         .options_mut(|options| options.max_passes = NonZeroUsize::MIN);
-    let request = Request::OpenSetting(SettingSelection {
-        key: SettingKey::Analysis(AnalysisSettingKey::ElevationMask),
-    });
+    let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
+    let request = Request::OpenSetting(SettingSelection { key });
     assert_eq!(
         session::execute(&mut harness, request.clone()),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.step();
+    assert!(harness.state().setting_to_reveal.is_some());
     assert_eq!(
         session::execute(&mut harness, request),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
-    harness.step();
     assert!(harness.state().setting_to_reveal.is_some());
     assert!(session::visible_action_notices(&harness).is_empty());
 
@@ -188,7 +187,7 @@ fn setting_notices_report_a_value_change_and_a_reveal() {
     let reveal = Request::OpenSetting(SettingSelection { key });
     assert_eq!(
         session::execute(&mut harness, reveal.clone()),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     assert_eq!(harness.state().toasts.len(), count);
     harness.run_steps(3);
@@ -198,7 +197,7 @@ fn setting_notices_report_a_value_change_and_a_reveal() {
     assert!(notices.contains(&"MCP revealed Elevation mask"));
     assert_eq!(
         session::execute(&mut harness, reveal),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.run_steps(2);
     let notices = session::visible_action_notices(&harness);

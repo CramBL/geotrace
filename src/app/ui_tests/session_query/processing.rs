@@ -214,7 +214,7 @@ fn a_later_settings_input_takes_effect_on_the_next_apply() {
     let key = self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.run_steps(5);
     harness

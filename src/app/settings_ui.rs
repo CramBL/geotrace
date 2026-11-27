@@ -13,7 +13,7 @@ use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
 use egui_phosphor::regular::SUN as ICON_SUN;
 use egui_phosphor::regular::WAVES as ICON_WAVES;
 use gt_map::MapLayer;
-use gt_session_bridge::{ErrorCode, SetSetting, SettingInfo, SettingKey};
+use gt_session_bridge::{ErrorCode, Reply, SetSetting, SettingInfo, SettingKey};
 use gt_store::EnvironmentArchive;
 use strum::{EnumIter, IntoEnumIterator};
 
@@ -23,6 +23,7 @@ use self::processing::ProcessingControl;
 use super::App;
 use super::backfill_ui::BackfillReadiness;
 use super::mcp_action_notice::McpActionNotice;
+use super::session_bridge;
 use crate::settings::AnalysisSettings;
 
 mod analysis;
@@ -210,7 +211,10 @@ impl SettingsPage {
 }
 
 impl App {
-    pub(super) fn open_setting(&mut self, key: SettingKey) {
+    pub(super) fn open_session_setting(&mut self, key: SettingKey) -> Result<Reply, ErrorCode> {
+        if self.shutdown_requested() {
+            return Err(ErrorCode::ShuttingDown);
+        }
         let page = SettingsPage::for_setting(key);
         let opened_view = !self.settings_open
             || self.settings_page != page
@@ -220,6 +224,8 @@ impl App {
         self.settings_open = true;
         self.settings_page = page;
         self.setting_to_reveal = Some(SettingReveal { key, opened_view });
+        self.ctx.request_repaint();
+        Ok(Reply::SettingOpened { key })
     }
 
     /// What a download control may do right now. An archive still opening or
@@ -343,22 +349,7 @@ impl App {
     }
 
     fn settings_reveal_can_apply(ui: &egui::Ui) -> bool {
-        let direct_input = ui.input(|input| {
-            input.smooth_scroll_delta() != egui::Vec2::ZERO
-                || input.pointer.any_down()
-                || input.pointer.any_released()
-                || input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Key { pressed: true, .. }
-                            | egui::Event::Text(_)
-                            | egui::Event::Paste(_)
-                            | egui::Event::Ime(_)
-                            | egui::Event::Cut
-                            | egui::Event::AccessKitActionRequest(_)
-                    )
-                })
-        });
+        let direct_input = ui.input(session_bridge::navigation_input_pending);
         let scroll_id = ui.make_persistent_id(egui::IdSalt::new(SETTINGS_SCROLL_AREA_SALT));
         !direct_input
             && ScrollAreaState::load(ui.ctx(), scroll_id).is_none_or(|state| {

@@ -12,7 +12,7 @@ use rstest::rstest;
 use strum::IntoEnumIterator as _;
 
 use crate::app::settings_ui::{self, SettingsPage};
-use crate::app::test_util::session;
+use crate::app::test_util::{harness, session};
 use crate::app::{App, ui_tests};
 
 mod edit;
@@ -65,7 +65,7 @@ fn analysis_settings_report_live_values_and_share_the_control_bounds() {
     let select = SettingSelection { key };
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(select)),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key: select.key }
     );
     harness.run_steps(3);
     assert_eq!(
@@ -128,13 +128,19 @@ fn opening_a_setting_reveals_the_row_after_current_input() {
 
     let key = SettingKey::Analysis(AnalysisSettingKey::MarkBackwardTimeSteps);
     assert_eq!(
-        session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
-        Reply::SettingOpenQueued
+        session::exchange_queued_request(
+            &mut harness,
+            &Request::OpenSetting(SettingSelection { key }),
+            |harness| {
+                harness
+                    .input_mut()
+                    .events
+                    .push(ui_tests::key_press(egui::Key::Escape));
+                harness.step();
+            },
+        ),
+        Reply::SettingOpened { key }
     );
-    harness
-        .input_mut()
-        .events
-        .push(ui_tests::key_press(egui::Key::Escape));
     harness.run_steps(4);
     let row = harness.get_by_label_contains(label).rect();
     assert!(
@@ -143,6 +149,29 @@ fn opening_a_setting_reveals_the_row_after_current_input() {
     );
     assert!(harness.state().settings_open);
     assert_eq!(harness.state().settings_page, SettingsPage::Analysis);
+    assert!(harness.state().setting_to_reveal.is_none());
+}
+
+#[test]
+fn a_setting_reply_confirms_the_selected_page_without_painting() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
+    assert_eq!(
+        session::exchange_queued_request(
+            &mut harness,
+            &Request::OpenSetting(SettingSelection { key }),
+            |harness| {
+                let _ = harness::step_minimized_logic(harness);
+            },
+        ),
+        Reply::SettingOpened { key },
+    );
+    assert!(harness.state().settings_open);
+    assert_eq!(harness.state().settings_page, SettingsPage::Analysis);
+    assert!(harness.state().setting_to_reveal.is_some());
+
+    harness.run_steps(3);
+    harness.get_by_label_contains("Elevation mask");
     assert!(harness.state().setting_to_reveal.is_none());
 }
 
@@ -172,7 +201,7 @@ fn opening_a_setting_raises_the_window_above_overlapping_windows() {
     let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.run_steps(3);
     let target = harness.get_by_label_contains(label).rect().center();
@@ -190,7 +219,7 @@ fn opening_a_setting_raises_the_window_above_overlapping_windows() {
     assert_eq!(harness.ctx.layer_id_at(target), Some(settings));
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.run_steps(3);
     assert_eq!(
@@ -228,7 +257,7 @@ fn a_setting_reveal_reports_an_overlap_over_the_input() {
     let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.run_steps(3);
     assert_eq!(
@@ -260,7 +289,9 @@ fn an_overlap_over_sensitivity_applies_only_to_its_own_reveal(
             &mut harness,
             request(ProcessingSettingKey::ClockDiscontinuitySigmas)
         ),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened {
+            key: SettingKey::Processing(ProcessingSettingKey::ClockDiscontinuitySigmas)
+        }
     );
     harness.run_steps(5);
     assert!(harness.step_until(|harness| session::visible_action_notices(harness).is_empty()));
@@ -291,7 +322,9 @@ fn an_overlap_over_sensitivity_applies_only_to_its_own_reveal(
 
     assert_eq!(
         session::execute(&mut harness, request(key)),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened {
+            key: SettingKey::Processing(key)
+        }
     );
     harness.run_steps(3);
     assert_eq!(session::visible_action_notices(&harness), notices);
@@ -321,12 +354,11 @@ fn a_setting_notice_reports_only_the_requested_scroll(#[case] wheel: bool) {
     let mut harness = self::narrow_scrolled_analysis_page();
     let label = "Elevation mask";
     let before = harness.get_by_label_contains(label).rect();
-    let request = Request::OpenSetting(SettingSelection {
-        key: SettingKey::Analysis(AnalysisSettingKey::ElevationMask),
-    });
+    let key = SettingKey::Analysis(AnalysisSettingKey::ElevationMask);
+    let request = Request::OpenSetting(SettingSelection { key });
     assert_eq!(
         session::execute(&mut harness, request.clone()),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.run_steps(4);
     let after = harness.get_by_label_contains(label).rect();
@@ -346,9 +378,8 @@ fn a_setting_notice_reports_only_the_requested_scroll(#[case] wheel: bool) {
     assert!(settled.min.x > after.min.x);
     assert_eq!(
         session::execute(&mut harness, request),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
-    harness.step();
     if wheel {
         harness
             .input_mut()
@@ -403,9 +434,10 @@ fn a_setting_reveal_waits_for_a_keyboard_edit(
                 key: SettingKey::Analysis(key),
             })
         ),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened {
+            key: SettingKey::Analysis(key)
+        }
     );
-    harness.step();
     harness
         .input_mut()
         .events
@@ -531,7 +563,7 @@ fn opening_a_disabled_processing_control_preserves_settings_and_loaded_data() {
     };
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(select)),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key: select.key }
     );
     assert!(harness.step_until(|harness| {
         harness
@@ -579,7 +611,7 @@ fn opening_the_track_split_gap_reveals_all_duration_fields() {
     let key = SettingKey::Processing(ProcessingSettingKey::TrackSplitGap);
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(SettingSelection { key })),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     assert!(harness.step_until(|harness| {
         let Some(gap_label) = harness.query_by_label_contains("Track split gap") else {
@@ -618,7 +650,7 @@ fn processing_settings_report_edits_with_the_control_bounds() {
     };
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(select)),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key: select.key }
     );
     harness.run_steps(3);
     harness
