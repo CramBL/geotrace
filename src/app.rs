@@ -1173,25 +1173,41 @@ impl App {
                     completed_at: now,
                 },
             ),
+            failed => self.record_failed_load(failed),
+        }
+    }
+
+    fn record_failed_load(&mut self, completion: LoadCompletion) {
+        let failure = match completion {
             LoadCompletion::Recording {
-                result: Err(failure),
-                ..
-            }
-            | LoadCompletion::LooseLog {
-                result: Err(failure),
-                ..
-            }
-            | LoadCompletion::SavedLog {
+                origin,
                 result: Err(failure),
             } => {
-                log::error!(
-                    "Failed to load {:?}: {}",
-                    failure.source.to_string(),
-                    failure.cause
-                );
-                self.load_failures.push(failure);
+                if let RecordingOperationOrigin::Arrival(arrival) = &origin {
+                    self.association_batches
+                        .record_recording_failed(arrival, failure.cause.session_error_code());
+                }
+                failure
             }
-        }
+            LoadCompletion::LooseLog {
+                arrival,
+                result: Err(failure),
+            } => {
+                self.association_batches
+                    .record_log_failed(&arrival, failure.cause.session_error_code());
+                failure
+            }
+            LoadCompletion::SavedLog {
+                result: Err(failure),
+            } => failure,
+            _ => return,
+        };
+        log::error!(
+            "Failed to load {:?}: {}",
+            failure.source.to_string(),
+            failure.cause
+        );
+        self.load_failures.push(failure);
     }
 
     fn integrate_completed_saved_log(
@@ -1302,6 +1318,7 @@ impl App {
                 if let LogPushOutcome::NewlyLoaded(id) = outcome {
                     self.association_batches.register_log(arrival, id);
                 }
+                self.association_batches.record_log_loaded(arrival);
                 outcome
             }
         };

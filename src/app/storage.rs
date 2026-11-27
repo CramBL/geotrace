@@ -34,6 +34,7 @@ use super::archive_recovery::{
     self, ArchiveOpenPlan, ArchiveRecovery, ArchiveUnavailable, InspectedArchives,
     InterruptedDeletePrompts, UnavailableArchives,
 };
+use super::association_batches::AssociationSubmission;
 use super::background_thread;
 #[cfg(test)]
 use super::environment_storage;
@@ -122,6 +123,7 @@ pub(in crate::app) enum QueuedLoad {
 
 pub(in crate::app) struct QueuedArrivalSet {
     pub(in crate::app) files: Vec<QueuedLoad>,
+    pub(in crate::app) submission: Option<AssociationSubmission>,
 }
 
 /// Why the databases are not open yet.
@@ -629,7 +631,7 @@ impl App {
         self.adopt_open_storage(storage);
         self.auto_prune_environment_days();
         for arriving in queued_loads {
-            self.load_arriving_files(arriving.files);
+            self.submit_arriving_files(arriving.files, arriving.submission);
         }
     }
 }

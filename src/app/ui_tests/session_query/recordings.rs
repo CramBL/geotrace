@@ -4,12 +4,16 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
+use gt_session_bridge::test_util::TestSessionReply;
 use gt_session_bridge::{
-    ErrorCode, ListRecordings, ManageRecordings, RecordingReference, Reply, Request,
+    ErrorCode, ListRecordings, MAX_DEFERRED_OPERATION_REPLIES, ManageRecordings, OpenedFile,
+    OpenedFileState, RecordingReference, Reply, Request,
 };
-use gt_store::{HistoryAccess, ReadOnlyHistoryDatabase as _, Store};
+use gt_store::{HistoryAccess, ReadOnlyHistoryDatabase as _, RecordingsHandle, Store};
 use uuid::Uuid;
 
+use crate::app::history_db::HistoryWorker;
+use crate::app::session_bridge::SessionBridge;
 use crate::app::test_util::{harness, recordings, session};
 use crate::app::{App, ui_tests};
 
@@ -23,11 +27,9 @@ fn session_files_use_the_desktop_loader_and_keep_recording_history() {
     let store = Store::open_in(dir.path());
     let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
 
-    let open = self::open_paths(vec![recording.clone(), log, recording.clone()]);
-    assert_eq!(
-        session::execute(&mut harness, open),
-        Reply::FilesQueued { queued_files: 2 }
-    );
+    let open = self::open_paths(vec![recording.clone(), log.clone(), recording.clone()]);
+    let mut reply = session::begin(&mut harness, open);
+    assert_eq!(reply.try_recv().unwrap(), None);
     assert!(harness.state().loader.loading_jobs.is_empty());
     databases
         .send(harness::storage_opened_in(
@@ -36,11 +38,26 @@ fn session_files_use_the_desktop_loader_and_keep_recording_history() {
             &harness.state().pending_writes,
         ))
         .unwrap();
-    self::wait_without_painting(&mut harness, |app| {
-        app.shared.borrow().loaded_files.len() == 1 && app.logs.len() == 1
-    });
-
+    let Reply::FilesOpened { files } = self::wait_for_reply(&mut harness, &mut reply) else {
+        panic!("expected opened file outcomes");
+    };
     let reference = self::loaded_recordings(&mut harness)[0];
+    assert_eq!(
+        files,
+        vec![
+            OpenedFile {
+                path: recording.clone(),
+                state: OpenedFileState::Loaded {
+                    recording: Some(reference),
+                },
+            },
+            OpenedFile {
+                path: log,
+                state: OpenedFileState::Loaded { recording: None },
+            },
+        ]
+    );
+    assert_eq!(harness.state().logs.len(), 1);
     assert!(harness.state().log_viewer.open);
     assert_eq!(
         session::execute(&mut harness, self::unload(vec![reference, reference])),
@@ -56,13 +73,22 @@ fn session_files_use_the_desktop_loader_and_keep_recording_history() {
     }
     assert!(recording.is_file());
 
+    let mut reopen = session::begin(&mut harness, self::open_paths(vec![recording.clone()]));
     assert_eq!(
-        session::execute(&mut harness, self::open_paths(vec![recording])),
-        Reply::FilesQueued { queued_files: 1 }
+        self::wait_for_reply(&mut harness, &mut reopen),
+        Reply::FilesOpened {
+            files: vec![OpenedFile {
+                path: recording,
+                state: OpenedFileState::AwaitingHistoryDecision,
+            }],
+        }
     );
-    self::wait_without_painting(&mut harness, |app| {
-        app.pending_recordings_already_in_history.is_some()
-    });
+    assert!(
+        harness
+            .state()
+            .pending_recordings_already_in_history
+            .is_some()
+    );
     assert!(self::loaded_recordings(&mut harness).is_empty());
 }
 
@@ -113,15 +139,58 @@ fn invalid_file_batches_admit_no_loads_and_shutdown_rejects_new_commands() {
 }
 
 #[test]
-fn a_missing_file_is_queued_and_then_reports_the_desktop_load_failure() {
+fn failed_file_opens_report_per_input_error_codes_and_desktop_failures() {
     let mut harness = ui_tests::app_with_a_recording();
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.log");
-    assert_eq!(
-        session::execute(&mut harness, self::open_paths(vec![missing])),
-        Reply::FilesQueued { queued_files: 1 }
+    let corrupt_gtd = dir.path().join("corrupt.gtd");
+    let empty_log = dir.path().join("empty.log");
+    let unrecognized_log = dir.path().join("unrecognized.log");
+    fs::write(&corrupt_gtd, b"not a gtd recording").unwrap();
+    fs::write(&empty_log, "").unwrap();
+    fs::write(&unrecognized_log, "plain text without timestamps\n").unwrap();
+
+    let mut reply = session::begin(
+        &mut harness,
+        self::open_paths(vec![
+            missing.clone(),
+            corrupt_gtd.clone(),
+            empty_log.clone(),
+            unrecognized_log.clone(),
+        ]),
     );
-    self::wait_without_painting(&mut harness, |app| !app.load_failures.is_empty());
+    assert_eq!(
+        self::wait_for_reply(&mut harness, &mut reply),
+        Reply::FilesOpened {
+            files: vec![
+                OpenedFile {
+                    path: missing,
+                    state: OpenedFileState::Failed {
+                        code: ErrorCode::FileNotFound,
+                    },
+                },
+                OpenedFile {
+                    path: corrupt_gtd,
+                    state: OpenedFileState::Failed {
+                        code: ErrorCode::UnsupportedRecording,
+                    },
+                },
+                OpenedFile {
+                    path: empty_log,
+                    state: OpenedFileState::Failed {
+                        code: ErrorCode::EmptyLogFile,
+                    },
+                },
+                OpenedFile {
+                    path: unrecognized_log,
+                    state: OpenedFileState::Failed {
+                        code: ErrorCode::UnrecognizedLogFormat,
+                    },
+                },
+            ],
+        }
+    );
+    assert!(!harness.state().load_failures.is_empty());
     assert!(harness.state().logs.is_empty());
 }
 
@@ -134,14 +203,110 @@ fn a_separator_spelling_does_not_skip_the_file_path() {
     fs::write(&log, "2026-02-01 14:00:01 host service[1]: ready\n").unwrap();
     let mut with_separator = log.as_os_str().to_owned();
     with_separator.push("/");
-    let request = self::open_paths(vec![PathBuf::from(with_separator), log]);
+    let with_separator = PathBuf::from(with_separator);
+    let request = self::open_paths(vec![with_separator.clone(), log.clone()]);
+    let mut reply = session::begin(&mut harness, request);
     assert_eq!(
-        session::execute(&mut harness, request),
-        Reply::FilesQueued { queued_files: 2 }
+        self::wait_for_reply(&mut harness, &mut reply),
+        Reply::FilesOpened {
+            files: vec![
+                OpenedFile {
+                    path: with_separator,
+                    state: OpenedFileState::Failed {
+                        code: ErrorCode::UnreadableFile,
+                    },
+                },
+                OpenedFile {
+                    path: log,
+                    state: OpenedFileState::Loaded { recording: None },
+                },
+            ],
+        }
     );
-    self::wait_without_painting(&mut harness, |app| {
-        app.logs.len() == 1 && !app.load_failures.is_empty()
+    assert_eq!(harness.state().logs.len(), 1);
+    assert!(!harness.state().load_failures.is_empty());
+}
+
+#[test]
+fn saturated_file_opens_reply_immediately_with_pending_outcomes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pending.gtd");
+    let (mut harness, _databases) = harness::app_with_the_databases_still_opening(&[]);
+    let request = self::open_paths(vec![path.clone()]);
+    let waiting: [_; MAX_DEFERRED_OPERATION_REPLIES] = std::array::from_fn(|_| {
+        let mut reply = session::begin(&mut harness, request.clone());
+        assert_eq!(reply.try_recv().unwrap(), None);
+        reply
     });
+    assert_eq!(
+        harness.state().session_operation_replies.waiting_count(),
+        MAX_DEFERRED_OPERATION_REPLIES
+    );
+    let mut saturated = session::begin(&mut harness, request);
+    assert_eq!(
+        saturated.try_recv().unwrap(),
+        Some(Reply::FilesOpened {
+            files: vec![OpenedFile {
+                path,
+                state: OpenedFileState::Pending,
+            }],
+        })
+    );
+    drop(waiting);
+}
+
+#[test]
+fn a_file_open_wait_publishes_completed_inputs_before_expiring_with_pending_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("service.log");
+    let recording = dir.path().join("slow.gtd");
+    let bytes = recordings::sample_bytes();
+    fs::write(&log, "2026-02-01 14:00:01 host service[1]: ready\n").unwrap();
+    fs::write(&recording, &bytes).unwrap();
+    let store = Store::open_in(dir.path());
+    {
+        let mut db = store.open_recordings().unwrap();
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "slow", &bytes);
+    }
+    let mut harness = ui_tests::app_with_a_recording();
+    let worker = HistoryWorker::spawn(
+        RecordingsHandle::Owner(store.open_recordings().unwrap()),
+        harness.ctx.clone(),
+        harness.state().pending_writes.clone(),
+    );
+    harness.state_mut().install_history_worker(worker);
+    let request = self::open_paths(vec![log.clone(), recording.clone()]);
+    let mut admitted_at = None;
+    let reply = {
+        let _access = HistoryAccess::lock();
+        session::exchange_queued_request(&mut harness, &request, |harness, _| {
+            let app = harness.state_mut();
+            let SessionBridge::Running(server) = &mut app.session_bridge else {
+                panic!("expected a running bridge");
+            };
+            let exchange = server.receive().unwrap();
+            admitted_at = Some(Instant::now());
+            app.respond_to_session_exchange(exchange);
+            self::wait_without_painting(harness, |app| app.logs.len() == 1);
+            harness::step_minimized_logic(harness);
+        })
+    };
+    assert!(admitted_at.unwrap().elapsed() >= Duration::from_secs(1));
+    assert_eq!(
+        reply,
+        Reply::FilesOpened {
+            files: vec![
+                OpenedFile {
+                    path: log,
+                    state: OpenedFileState::Loaded { recording: None },
+                },
+                OpenedFile {
+                    path: recording,
+                    state: OpenedFileState::Pending,
+                },
+            ],
+        }
+    );
 }
 
 #[test]
@@ -207,6 +372,18 @@ fn loaded_recordings(harness: &mut Harness<'_, App>) -> Vec<RecordingReference> 
         .into_iter()
         .map(|recording| recording.id)
         .collect()
+}
+
+fn wait_for_reply(harness: &mut Harness<'_, App>, reply: &mut TestSessionReply) -> Reply {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(result) = reply.try_recv().unwrap() {
+            return result;
+        }
+        assert!(Instant::now() < deadline, "recording operation timed out");
+        harness::step_minimized_logic(harness);
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn wait_without_painting(harness: &mut Harness<'_, App>, ready: impl Fn(&App) -> bool) {

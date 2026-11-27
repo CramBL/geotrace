@@ -9,6 +9,7 @@ use egui_phosphor::regular::{
 use gt_loader::{LoadError, SdkError};
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogParseError, LogText};
+use gt_session_bridge::ErrorCode;
 use gt_store::{DatabaseRef, DbError, LogAttachmentError, LogAttachmentReadError};
 use strum::Display;
 
@@ -188,6 +189,37 @@ impl LoadFailureCause {
                 }
                 _ => LoadFailureKind::ReportUnreadableAttachment,
             },
+        }
+    }
+
+    pub(super) fn session_error_code(&self) -> ErrorCode {
+        match self {
+            Self::LoadRecording(error) => match error.as_ref() {
+                LoadError::Io(io) | LoadError::Sdk(SdkError::Io(io)) => {
+                    if io.kind() == io::ErrorKind::NotFound {
+                        ErrorCode::FileNotFound
+                    } else {
+                        ErrorCode::UnreadableFile
+                    }
+                }
+                _ => ErrorCode::UnsupportedRecording,
+            },
+            Self::OpenStoredRecording(error) => match error.as_ref() {
+                DbError::SchemaTooNew { .. } => ErrorCode::UnsupportedRecording,
+                _ => ErrorCode::HistoryOpenFailed,
+            },
+            Self::ParseLog(LogParseError::Empty) => ErrorCode::EmptyLogFile,
+            Self::ParseLog(LogParseError::NoRecognisedFormat { .. }) => {
+                ErrorCode::UnrecognizedLogFormat
+            }
+            Self::ReadLogAttachment(_) => ErrorCode::UnreadableFile,
+            Self::ReadLogFile(io) => {
+                if io.kind() == io::ErrorKind::NotFound {
+                    ErrorCode::FileNotFound
+                } else {
+                    ErrorCode::UnreadableFile
+                }
+            }
         }
     }
 }

@@ -19,7 +19,9 @@ use gt_store::{
 };
 
 use super::anchored_dialog::AnchoredDialogKind;
-use super::association_batches::{RecordingArrival, RecordingOperationOrigin};
+use super::association_batches::{
+    AssociationSubmission, RecordingArrival, RecordingOperationOrigin,
+};
 use super::storage::{QueuedArrivalSet, QueuedLoad};
 use super::{App, loader, modals};
 
@@ -229,21 +231,46 @@ impl App {
     /// The recordings among them raise a single prompt where history already
     /// holds them: they are looked up in the history database first.
     pub(in crate::app) fn load_arriving_files(&mut self, arriving: Vec<QueuedLoad>) {
+        self.submit_arriving_files(arriving, None);
+    }
+
+    pub(in crate::app) fn submit_arriving_files(
+        &mut self,
+        arriving: Vec<QueuedLoad>,
+        submission: Option<AssociationSubmission>,
+    ) {
         if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
-            queued_loads.push(QueuedArrivalSet { files: arriving });
+            queued_loads.push(QueuedArrivalSet {
+                files: arriving,
+                submission,
+            });
             return;
         }
         if arriving.is_empty() {
             return;
         }
-        let batch = self.association_batches.begin_submission(
-            self.shared
-                .borrow()
-                .loaded_files
-                .view()
-                .entries()
-                .map(|entry| entry.id()),
-        );
+        let batch = match submission {
+            Some(submission) => {
+                self.association_batches.set_initial_candidates(
+                    &submission,
+                    self.shared
+                        .borrow()
+                        .loaded_files
+                        .view()
+                        .entries()
+                        .map(|entry| entry.id()),
+                );
+                submission
+            }
+            None => self.association_batches.begin_submission(
+                self.shared
+                    .borrow()
+                    .loaded_files
+                    .view()
+                    .entries()
+                    .map(|entry| entry.id()),
+            ),
+        };
         let mut recordings = Vec::new();
         for file in arriving {
             match file {
@@ -318,6 +345,10 @@ impl App {
         }
         if already_in_history.is_empty() {
             return;
+        }
+        for recording in &already_in_history {
+            self.association_batches
+                .record_recording_awaiting_history_decision(&recording.from_disk.arrival);
         }
         match &mut self.pending_recordings_already_in_history {
             Some(prompt) => prompt.recordings.extend(already_in_history),

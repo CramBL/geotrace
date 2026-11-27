@@ -11,14 +11,14 @@ use gt_session_bridge::{
     GetQueryStatus, GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState,
     HistoryOpenStatus, HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics,
     ListRecordings, MAX_RECORDING_BATCH, MAX_VISIBILITY_TRACKS, ManageRecordings, Metrics,
-    NumericObservation, OpenHistoryRecording, OpenPanel, PanelOpenState, PointDetails, QueryCounts,
-    QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
-    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
-    QueryResultTime, QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget,
-    Recording, RecordingReference, Recordings, Reply, Request, SessionPanel, SessionState,
-    SetSetting, SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey,
-    SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, StatusWait, TimeRange,
-    TrackReference, TrackVisibilityAction, TrackVisibilityResult,
+    NumericObservation, OpenHistoryRecording, OpenPanel, OpenedFile, OpenedFileState,
+    PanelOpenState, PointDetails, QueryCounts, QueryJobId, QueryJobRequest, QueryJobState,
+    QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn, QueryResultPage,
+    QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText, QueryValidation,
+    RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply, Request,
+    SessionPanel, SessionState, SetSetting, SetTrackVisibility, SettingApply, SettingInfo,
+    SettingInput, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot,
+    StatusWait, TimeRange, TrackReference, TrackVisibilityAction, TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -732,7 +732,14 @@ async fn recording_control_uses_typed_actions_and_reports_their_outcomes() {
     let (mut client, worker) = Client::start(Bridge::Fixture(|request| match request {
         Request::ManageRecordings(ManageRecordings::Open { paths }) => {
             assert_eq!(*paths, vec![PathBuf::from("/test.GTD")].try_into().unwrap());
-            Ok(Reply::FilesQueued { queued_files: 1 })
+            Ok(Reply::FilesOpened {
+                files: vec![OpenedFile {
+                    path: PathBuf::from("/test.GTD"),
+                    state: OpenedFileState::Loaded {
+                        recording: Some(self::recording_id(7)),
+                    },
+                }],
+            })
         }
         Request::ManageRecordings(ManageRecordings::Unload { recordings }) => {
             assert_eq!(*recordings, vec![self::recording_id(7)].try_into().unwrap());
@@ -782,7 +789,16 @@ async fn recording_control_uses_typed_actions_and_reports_their_outcomes() {
     for (arguments, expected) in [
         (
             json!({"action": "open", "paths": ["/test.GTD"]}),
-            json!({"status": "files_queued", "queued_files": 1}),
+            json!({
+                "status": "files_opened",
+                "files": [{
+                    "path": "/test.GTD",
+                    "state": {
+                        "kind": "loaded",
+                        "recording": self::recording_id(7),
+                    }
+                }]
+            }),
         ),
         (
             json!({"action": "unload", "recordings": [self::recording_id(7)]}),

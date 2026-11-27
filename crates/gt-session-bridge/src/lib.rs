@@ -40,7 +40,8 @@ pub use crate::query_results::{
 };
 pub use crate::query_validation::{QueryPreparation, QueryValidation};
 pub use crate::recording_control::{
-    MAX_RECORDING_BATCH, ManageRecordings, RecordingBatch, RecordingBatchSizeError,
+    MAX_RECORDING_BATCH, ManageRecordings, OpenedFile, OpenedFileState, RecordingBatch,
+    RecordingBatchSizeError,
 };
 pub use crate::session_reply::{DeferredSessionReply, SessionReply};
 pub use crate::session_state::{
@@ -359,7 +360,7 @@ struct Pending {
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_ACTIVE_CONNECTIONS: usize = 8;
-/// Reserve half of the active connections for requests outside the query and History waits.
+/// Reserve half of the active connections for requests outside operation waits.
 pub const MAX_DEFERRED_OPERATION_REPLIES: usize = MAX_ACTIVE_CONNECTIONS / 2;
 
 #[cfg(test)]
