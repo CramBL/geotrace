@@ -286,3 +286,33 @@ New writers use GTD v3.
 The compatible application reader is currently in the Unreleased app.
 App 0.19.0 and earlier require GTD v1/v2 files.
 Publish the compatible app reader before the synchronized SDK releases, and record its release version in the [release handoff](../../RELEASES.md#gtd-v3-release-order).
+
+## Bundled raw-text logs
+
+Attach raw UTF-8 text logs (such as `journalctl` or syslog exports) directly inside a `.gtd` file with `BundledLog`.
+Construct one from a string with `BundledLog::new(name, text)`, from raw bytes with `BundledLog::from_utf8_bytes(name, bytes)`, or from disk with `BundledLog::from_file(path)` (which derives the log name from the file name).
+Pass the log to `NavRecorder::add` or `NavRecorder::add_bundled_log`, and read all stored logs back in sorted name order through `NavFile::bundled_logs`.
+
+```rust
+use geotrace_sdk::{BundledLog, NavFile, NavFileBuilder};
+
+let mut recorder = NavFileBuilder::new().open();
+recorder.add(BundledLog::new(
+    "gnss.log",
+    "2024-06-01 09:00:00 gnss: lock acquired\n",
+)?);
+recorder.add_bundled_log(BundledLog::from_file("modem.log")?);
+
+let nav_file = recorder.finish()?;
+nav_file.write_to_file("recording.gtd")?;
+
+let reopened = NavFile::open("recording.gtd")?;
+for log in reopened.bundled_logs() {
+    println!("{} ({} bytes)", log.name(), log.text().len());
+}
+```
+
+Each log is stored as a one-dimensional UTF-8 byte dataset at `/logs/<name>/text`.
+A log name must be non-empty, neither `.` nor `..`, and contain no `/` or nul byte.
+The content must be valid UTF-8 with at least one non-empty line, and at least one of the first ten non-empty lines must begin with a recognised timestamp format (syslog, ISO 8601 with a space, or RFC 3339).
+`NavRecorder::finish` rejects duplicate log names with `BuildError::DuplicateBundledLogName`.

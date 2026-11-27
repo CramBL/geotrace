@@ -250,3 +250,31 @@ New writers use GTD v3.
 The compatible application reader is currently in the Unreleased app.
 App 0.19.0 and earlier require GTD v1/v2 files.
 Publish the compatible app reader before the synchronized SDK releases, and record its release version in the [release handoff](../../RELEASES.md#gtd-v3-release-order).
+
+## Bundled raw-text logs
+
+Attach raw UTF-8 text logs to a builder with `gtd_builder_add_bundled_log()` or `gtd_builder_add_bundled_log_from_file()`.
+Read stored logs back in sorted name order with `gtd_nav_file_bundled_log_count()` and `gtd_nav_file_get_bundled_log()`.
+
+```c
+const char *text = "2024-06-01 09:00:00 gnss: lock acquired\n";
+if (gtd_builder_add_bundled_log(builder, "gnss.log", text, strlen(text)) != GTD_OK) {
+    goto fail;
+}
+if (gtd_builder_add_bundled_log_from_file(builder, "modem.log") != GTD_OK) {
+    goto fail;
+}
+
+size_t count = gtd_nav_file_bundled_log_count(file);
+for (size_t i = 0; i < count; i++) {
+    GtdBundledLogInfo info = {0};
+    if (gtd_nav_file_get_bundled_log(file, i, &info) == GTD_OK) {
+        printf("%s (%zu bytes)\n", info.name, info.text_length);
+    }
+}
+```
+
+The `name` and `text` pointers in `GtdBundledLogInfo` point into the `GtdNavFile` handle and remain valid until `gtd_nav_file_destroy()`.
+`text_length` gives the exact UTF-8 byte length, and a trailing nul byte follows at `text[text_length]`.
+Validation rejects invalid names, invalid UTF-8, empty content, and logs without a recognised timestamp format (syslog, ISO 8601 with a space, or RFC 3339) in the first ten non-empty lines.
+`gtd_builder_finish()` rejects duplicate log names with `GTD_ERR_INVALID_ARGUMENT`.

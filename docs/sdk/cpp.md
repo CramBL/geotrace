@@ -181,3 +181,26 @@ New writers use GTD v3.
 The compatible application reader is currently in the Unreleased app.
 App 0.19.0 and earlier require GTD v1/v2 files.
 Publish the compatible app reader before the synchronized SDK releases, and record its release version in the [release handoff](../../RELEASES.md#gtd-v3-release-order).
+
+## Bundled raw-text logs
+
+Attach raw UTF-8 text logs with `BundledLog`, `FileBuilder::add()`, `FileBuilder::add_bundled_log()`, or `FileBuilder::add_bundled_log_from_file()`.
+Read stored logs back in sorted name order with `NavFile::bundled_log_count()`, `NavFile::bundled_log()`, or `NavFile::try_bundled_log()`.
+
+```cpp
+using namespace geotrace;
+
+FileBuilder builder;
+builder.add(BundledLog{"gnss.log", "2024-06-01 09:00:00 gnss: lock acquired\n"});
+builder.add_bundled_log_from_file("modem.log");
+
+NavFile file = builder.finish();
+for (std::size_t i = 0; i < file.bundled_log_count(); ++i) {
+    BundledLogView log = file.bundled_log(i);
+    std::cout << log.name << " (" << log.text.size() << " bytes)\n";
+}
+```
+
+`BundledLogView` owns copies of `name` and `text`, so it remains valid after `NavFile` is destroyed.
+Validation rejects invalid names, invalid UTF-8, empty content, and logs without a recognised timestamp format (syslog, ISO 8601 with a space, or RFC 3339) in the first ten non-empty lines.
+`FileBuilder::finish()` rejects duplicate log names.
