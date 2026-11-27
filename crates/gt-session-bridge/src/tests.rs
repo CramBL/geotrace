@@ -915,7 +915,11 @@ fn metric_discovery_pages_channel_metadata_and_conflicts() {
 async fn a_recording_with_oversized_sdk_metadata_fits_in_a_single_entry_page() {
     let text = format!("Grøn{JSON_CONTROL_CHARACTER}\"\\🛰").repeat(MAX_REPLY_BYTES / 8);
     let mut files = LoadedFiles::new();
-    let LoadedGtd { file, identity } = self::load_recording_with_metadata(&text);
+    let LoadedGtd {
+        file,
+        identity,
+        bundled_logs: _,
+    } = self::load_recording_with_metadata(&text);
     assert_eq!(file.metadata.title.as_deref(), Some(text.as_str()));
     assert_eq!(file.metadata.device.as_deref(), Some(text.as_str()));
     assert_eq!(identity, text);
@@ -1090,7 +1094,11 @@ async fn a_full_recording_page_with_escaped_metadata_fits_the_frame() {
 #[tokio::test]
 async fn a_full_session_preview_with_escaped_metadata_fits_the_reply_frame() {
     let metadata = format!("{JSON_CONTROL_CHARACTER}\"é📍").repeat(300);
-    let LoadedGtd { mut file, identity } = self::load_recording_with_metadata(&metadata);
+    let LoadedGtd {
+        mut file,
+        identity,
+        bundled_logs: _,
+    } = self::load_recording_with_metadata(&metadata);
     file.metadata.filename = format!("C:\\private\\receiver-{metadata}");
     let start = DateTime::UNIX_EPOCH - TimeDelta::nanoseconds(1);
     let extended_year = Utc.with_ymd_and_hms(10_000, 1, 1, 0, 0, 0).unwrap();
