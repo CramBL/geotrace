@@ -1,9 +1,13 @@
+use std::path::PathBuf;
+
 use chrono::Duration;
-use geotrace_sdk::{Meta, MetaStringWithNul, NavFileBuilder, NavRecorder};
+use geotrace_sdk::{BundledLog, Meta, MetaStringWithNul, NavFileBuilder, NavRecorder};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
+use crate::bundled_log::PyBundledLog;
 use crate::channel::PyChannel;
+use crate::errors;
 use crate::markers::{PyAnnotation, PyEventMarker, PyEventMarkerStyle, SkippableEventMarker};
 use crate::metadata::PyMeta;
 use crate::nav_file::PyNavFile;
@@ -106,8 +110,8 @@ impl PyNavFileBuilder {
         Ok(slf.unbind())
     }
 
-    /// Add a nav fix, satellite report, annotation, event marker, or channel to
-    /// the file.
+    /// Add a nav fix, satellite report, annotation, event marker, channel, or
+    /// bundled log to the file.
     ///
     /// Returns `self` to allow chaining:
     ///
@@ -142,7 +146,43 @@ impl PyNavFileBuilder {
                 AddItem::Channel(c) => {
                     recorder.add_channel(c.borrow().inner.clone());
                 }
+                AddItem::BundledLog(log) => {
+                    recorder.add_bundled_log(log.borrow().inner.clone());
+                }
             }
+        }
+        Ok(slf.unbind())
+    }
+
+    /// Attach a validated raw-text log to the file.
+    ///
+    /// Duplicate log names are rejected by `finish()`. Returns `self` to allow chaining.
+    fn add_bundled_log(slf: Bound<'_, Self>, log: &PyBundledLog) -> PyResult<Py<Self>> {
+        {
+            let mut b = slf.borrow_mut();
+            let recorder = b.ensure_recorder()?;
+            recorder.add_bundled_log(log.inner.clone());
+        }
+        Ok(slf.unbind())
+    }
+
+    /// Read a raw-text log file from `path` and attach it to the file.
+    ///
+    /// The bundled log name is derived from the file name of `path`. Duplicate
+    /// log names are rejected by `finish()`. Returns `self` to allow chaining.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 extracts an owned PathBuf from str, bytes and os.PathLike: &Path has no FromPyObject impl"
+    )]
+    fn add_bundled_log_from_file(slf: Bound<'_, Self>, path: PathBuf) -> PyResult<Py<Self>> {
+        if slf.borrow().is_consumed() {
+            return Err(PyRuntimeError::new_err(BUILDER_CONSUMED));
+        }
+        let log = BundledLog::from_file(&path).map_err(errors::bundled_log_error)?;
+        {
+            let mut b = slf.borrow_mut();
+            let recorder = b.ensure_recorder()?;
+            recorder.add_bundled_log(log);
         }
         Ok(slf.unbind())
     }
@@ -218,6 +258,10 @@ impl PyNavFileBuilder {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err(BUILDER_CONSUMED))
     }
+
+    fn is_consumed(&self) -> bool {
+        self.config.is_none() && self.recorder.is_none()
+    }
 }
 
 /// PyO3 includes this declaration order in argument error messages.
@@ -230,6 +274,7 @@ enum AddItem<'py> {
     Annotation(Bound<'py, PyAnnotation>),
     EventMarker(Bound<'py, PyEventMarker>),
     Channel(Bound<'py, PyChannel>),
+    BundledLog(Bound<'py, PyBundledLog>),
 }
 
 const BUILDER_CONSUMED: &str = "builder already consumed by finish()";

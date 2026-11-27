@@ -304,6 +304,65 @@ class Channel:
     def __eq__(self, other: object) -> bool: ...
 
 @final
+class BundledLog:
+    """A validated raw-text log bundled inside a ``.gtd`` file under
+    ``logs/<name>/text``.
+
+    Constructors reject invalid names, invalid UTF-8, empty content, and logs
+    whose head does not match a recognised timestamp format.
+
+    Args:
+        name: HDF5-safe log name stored under ``logs/<name>``. Must be
+            non-empty, neither ``.`` nor ``..``, and contain no ``/`` or nul
+            byte.
+        text: Raw UTF-8 log text. The first ten non-empty lines must contain at
+            least one recognised timestamp format (syslog, ISO 8601 with a
+            space, or RFC 3339).
+
+    Raises:
+        ValueError: If ``name`` is invalid, ``text`` is empty, or ``text`` has
+            no recognised timestamp format in its head.
+    """
+
+    def __init__(self, name: str, text: str) -> None: ...
+    @staticmethod
+    def from_utf8_bytes(name: str, data: bytes) -> BundledLog:
+        """Create a validated bundled log from a log name and raw UTF-8 bytes.
+
+        Raises:
+            ValueError: If ``name`` is invalid, ``data`` is not valid UTF-8,
+                the decoded text is empty, or the head has no recognised
+                timestamp format.
+        """
+        ...
+
+    @staticmethod
+    def from_file(path: StrPath) -> BundledLog:
+        """Read a raw-text log file from *path*, deriving the log name from its
+        file name.
+
+        Raises:
+            OSError: If reading *path* fails.
+            ValueError: If *path* has no valid UTF-8 file name, the file is not
+                valid UTF-8, the file is empty, or its head has no recognised
+                timestamp format.
+        """
+        ...
+
+    @property
+    def name(self) -> str:
+        """The HDF5-safe log name stored under ``logs/<name>``."""
+        ...
+
+    @property
+    def text(self) -> str:
+        """The raw UTF-8 log text."""
+        ...
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
 class NavFix:
     """A single GPS/GNSS fix: position, optional heading, and optional speed.
 
@@ -931,6 +990,22 @@ class ChannelSequence:
     def __iter__(self) -> Iterator[Channel]: ...
 
 @final
+class BundledLogSequence:
+    """The bundled raw-text logs of a :class:`NavFile`, sorted by name.
+
+    Supports ``len()``, indexing, slicing and iteration, and builds one
+    :class:`BundledLog` per element read. The sequence keeps working after the
+    :class:`NavFile` object is gone.
+    """
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> BundledLog: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[BundledLog]: ...
+    def __iter__(self) -> Iterator[BundledLog]: ...
+
+@final
 class EventMarkerStyleSequence:
     """The per-variant event marker styles of a :class:`NavFile`.
 
@@ -1010,6 +1085,11 @@ class NavFile:
     @property
     def channels(self) -> ChannelSequence:
         """All ad-hoc sensor channels, sorted by name."""
+        ...
+
+    @property
+    def bundled_logs(self) -> BundledLogSequence:
+        """All bundled raw-text logs, sorted by name."""
         ...
 
 @final
@@ -1092,14 +1172,39 @@ class NavFileBuilder:
         | SatelliteObservationReport
         | Annotation
         | EventMarker
-        | Channel,
+        | Channel
+        | BundledLog,
     ) -> NavFileBuilder:
-        """Add a nav fix, satellite report, annotation, event marker, or channel.
+        """Add a nav fix, satellite report, annotation, event marker, channel,
+        or bundled log.
 
         Returns ``self``.
 
         Passing an :class:`EventMarker` whose ``variant_path`` is ``None`` or
         ``event_kind.skip`` is a silent no-op.
+        """
+        ...
+
+    def add_bundled_log(self, log: BundledLog) -> NavFileBuilder:
+        """Attach a validated raw-text log to the file.
+
+        Duplicate log names are rejected by :meth:`finish`. Returns ``self``.
+        """
+        ...
+
+    def add_bundled_log_from_file(self, path: StrPath) -> NavFileBuilder:
+        """Read a raw-text log file from *path* and attach it to the file.
+
+        The bundled log name is derived from the file name of *path*. Duplicate
+        log names are rejected by :meth:`finish`. Returns ``self``.
+
+        Raises:
+            OSError: If reading *path* fails.
+            ValueError: If *path* has no valid UTF-8 file name, the file is not
+                valid UTF-8, the file is empty, or its head has no recognised
+                timestamp format.
+            RuntimeError: If the builder has already been consumed by
+                :meth:`finish`.
         """
         ...
 

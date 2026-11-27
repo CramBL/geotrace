@@ -1,6 +1,18 @@
-use geotrace_sdk::Error;
+use geotrace_sdk::{BundledLogError, Error};
 use pyo3::PyErr;
 use pyo3::exceptions::{PyIOError, PyValueError};
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "map_err supplies an owned SDK error"
+)]
+pub(crate) fn bundled_log_error(e: BundledLogError) -> PyErr {
+    let msg = e.to_string();
+    match e {
+        BundledLogError::Io { .. } => PyIOError::new_err(msg),
+        _ => PyValueError::new_err(msg),
+    }
+}
 
 // Filesystem failures use `OSError`. The exhaustive match classifies every content failure.
 #[expect(
