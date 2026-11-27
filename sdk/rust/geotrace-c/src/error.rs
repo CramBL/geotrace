@@ -152,6 +152,17 @@ pub(crate) fn status_for_variant_path_error(e: &geotrace_sdk::VariantPathError) 
     }
 }
 
+/// Map `BundledLogError::InvalidUtf8` to `GTD_ERR_UTF8`, `BundledLogError::Io` to `GTD_ERR_IO`,
+/// and any other variant to `GTD_ERR_INVALID_ARGUMENT`.
+pub(crate) fn status_for_bundled_log_error(e: &geotrace_sdk::BundledLogError) -> GtdStatus {
+    use geotrace_sdk::BundledLogError;
+    match e {
+        BundledLogError::InvalidUtf8 { .. } => GtdStatus::GTD_ERR_UTF8,
+        BundledLogError::Io { .. } => GtdStatus::GTD_ERR_IO,
+        _ => GtdStatus::GTD_ERR_INVALID_ARGUMENT,
+    }
+}
+
 /// Returns the last error message for the current thread, or NULL if none.
 ///
 /// The pointer is valid until the next SDK call on this thread.

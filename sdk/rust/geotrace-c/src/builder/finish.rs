@@ -28,8 +28,8 @@ use crate::error::{self, GtdStatus};
 /// @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
 /// @return `GTD_ERR_EVENT_MARKERS_OOB` if event markers fall outside the time range (unless lenient).
 /// @return `GTD_ERR_INVALID_CHANNEL` if two channels share a name.
-/// @return `GTD_ERR_INVALID_ARGUMENT` if the timestamp the builder computes for a ghost nav fix
-///         is past the range a timestamp covers.
+/// @return `GTD_ERR_INVALID_ARGUMENT` if two bundled logs share a name, or if the timestamp the
+///         builder computes for a ghost nav fix is past the range a timestamp covers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_finish(
     builder: *mut GtdFileBuilder,

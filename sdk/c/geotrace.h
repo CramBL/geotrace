@@ -793,6 +793,29 @@ typedef void (*GtdLogCallback)(GtdLogLevel level,
                                void *user_data);
 
 /**
+ * Bundled raw-text log returned by `gtd_nav_file_get_bundled_log()`.
+ *
+ * @ref name and @ref text point into the file handle and remain valid until
+ * `gtd_nav_file_destroy()`. The byte after @ref text at offset
+ * @ref text_length is a nul byte. @ref text_length gives the exact UTF-8 byte
+ * length, including any embedded nul bytes.
+ */
+typedef struct {
+    /**
+     * HDF5-safe log name (nul-terminated UTF-8).
+     */
+    const char *name;
+    /**
+     * Raw UTF-8 log text (nul-terminated after @ref text_length bytes).
+     */
+    const char *text;
+    /**
+     * Byte length of @ref text, excluding the trailing nul byte.
+     */
+    size_t text_length;
+} GtdBundledLogInfo;
+
+/**
  * Channel metadata returned by `gtd_nav_file_get_channel()`.
  *
  * Every string pointer points into the file handle and is valid until
@@ -1169,8 +1192,8 @@ double gtd_radians_from_degrees(double degrees);
  * @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
  * @return `GTD_ERR_EVENT_MARKERS_OOB` if event markers fall outside the time range (unless lenient).
  * @return `GTD_ERR_INVALID_CHANNEL` if two channels share a name.
- * @return `GTD_ERR_INVALID_ARGUMENT` if the timestamp the builder computes for a ghost nav fix
- *         is past the range a timestamp covers.
+ * @return `GTD_ERR_INVALID_ARGUMENT` if two bundled logs share a name, or if the timestamp the
+ *         builder computes for a ghost nav fix is past the range a timestamp covers.
  */
 GtdStatus gtd_builder_finish(GtdFileBuilder *builder,
                              GtdNavFile **out);
@@ -1361,6 +1384,51 @@ GtdStatus gtd_builder_add_channel(GtdFileBuilder *builder, const GtdChannel *cha
 GtdStatus gtd_builder_add_channel_with_unit_mode(GtdFileBuilder *builder,
                                                  const GtdChannel *channel,
                                                  uint32_t unit_mode);
+
+/**
+ * Attach a validated raw-text log to the recording.
+ *
+ * @p name becomes the HDF5 group name under `logs/` and must be non-empty,
+ * neither `.` nor `..`, and contain no `/` or nul byte. Duplicate log names
+ * are rejected by `gtd_builder_finish()`.
+ *
+ * @p text is @p text_length bytes of UTF-8 log text. A trailing nul byte is
+ * not required. The first ten non-empty lines must contain at least one
+ * recognised timestamp format (syslog, ISO 8601 with a space, or RFC 3339).
+ *
+ * @param builder     Builder handle.
+ * @param name        Nul-terminated UTF-8 log name.
+ * @param text        Pointer to @p text_length UTF-8 bytes of log text.
+ * @param text_length Byte length of @p text.
+ *
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p builder or @p name is NULL, or if
+ *         @p text is NULL with a non-zero @p text_length.
+ * @return `GTD_ERR_UTF8` if @p name or @p text is not valid UTF-8.
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p name is invalid, @p text is empty,
+ *         or @p text has no recognised timestamp format in its head.
+ */
+GtdStatus gtd_builder_add_bundled_log(GtdFileBuilder *builder,
+                                      const char *name,
+                                      const char *text,
+                                      size_t text_length);
+
+/**
+ * Read a raw-text log file from @p path and attach it to the recording.
+ *
+ * The bundled log name is derived from the file name of @p path. Duplicate log
+ * names are rejected by `gtd_builder_finish()`.
+ *
+ * @param builder Builder handle.
+ * @param path    Nul-terminated UTF-8 file path to read.
+ *
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p builder or @p path is NULL.
+ * @return `GTD_ERR_UTF8` if @p path or the file content is not valid UTF-8.
+ * @return `GTD_ERR_IO` if reading @p path fails.
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p path has no valid file name, the
+ *         file is empty, or the file has no recognised timestamp format in its
+ *         head.
+ */
+GtdStatus gtd_builder_add_bundled_log_from_file(GtdFileBuilder *builder, const char *path);
 
 /**
  * Create a new file builder.
@@ -1616,6 +1684,30 @@ GtdStatus gtd_set_log_level(uint32_t level);
  * a callback already running when this call clears it runs to completion.
  */
 void gtd_clear_log_callback(void);
+
+/**
+ * Return the number of bundled logs in the file.
+ *
+ * @param file File handle. Returns 0 if NULL.
+ */
+size_t gtd_nav_file_bundled_log_count(const GtdNavFile *file);
+
+/**
+ * Fill @p out with the name and text of the bundled log at @p index.
+ *
+ * Bundled logs are sorted by name.
+ *
+ * @param file  File handle.
+ * @param index Zero-based index. Must be less than
+ *              `gtd_nav_file_bundled_log_count(file)`.
+ * @param out   Caller-allocated struct to fill.
+ *
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p file or @p out is NULL.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last bundled log.
+ */
+GtdStatus gtd_nav_file_get_bundled_log(const GtdNavFile *file,
+                                       size_t index,
+                                       GtdBundledLogInfo *out);
 
 /**
  * Return the number of channels in the file.

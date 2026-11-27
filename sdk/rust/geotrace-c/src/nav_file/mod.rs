@@ -10,6 +10,7 @@ use crate::error::{self, GtdStatus};
 use crate::timestamp;
 use metadata::TerminatedMetaValue;
 
+pub use bundled_log::GtdBundledLogInfo;
 pub use channel::GtdChannelInfo;
 pub use event_marker::GtdEventMarkerInfo;
 pub use marker::GtdMarkerInfo;
@@ -18,6 +19,7 @@ pub use navigation::{GtdNavPointInfoV2, GtdNavPointInfoV3};
 pub use satellite_warning::GtdSatelliteWarningInfo;
 pub use style::GtdEventMarkerStyleInfo;
 
+mod bundled_log;
 mod channel;
 mod event_marker;
 mod marker;
@@ -42,6 +44,7 @@ pub struct GtdNavFile {
     sdk_commit_time: GtdTimestamp,
     satellite_warnings: Vec<SatelliteWarning>,
     channel_c_strings: Vec<Result<channel::ChannelCStrings, channel::ChannelStringWithNul>>,
+    bundled_log_buffers: Vec<bundled_log::BundledLogBuffers>,
 }
 
 impl GtdNavFile {
@@ -72,6 +75,11 @@ impl GtdNavFile {
                 .channels()
                 .iter()
                 .map(channel::ChannelCStrings::new)
+                .collect(),
+            bundled_log_buffers: file
+                .bundled_logs()
+                .iter()
+                .map(bundled_log::BundledLogBuffers::new)
                 .collect(),
             file,
         }

@@ -20,6 +20,18 @@ Test(null_guards, builder_null) {
 
     cr_assert_eq(gtd_builder_add_satellite_report(NULL, timestamp, timestamp, NULL, 0),
                  GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_builder_add_bundled_log(NULL, "a.log", "2026-05-29T18:48:24Z ok\n", 24),
+                 GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_builder_add_bundled_log_from_file(NULL, "a.log"), GTD_ERR_NULL_ARGUMENT);
+
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+    cr_assert_eq(gtd_builder_add_bundled_log(builder, NULL, "2026-05-29T18:48:24Z ok\n", 24),
+                 GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_builder_add_bundled_log(builder, "a.log", NULL, 5), GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_builder_add_bundled_log(builder, "a.log", NULL, 0), GTD_ERR_INVALID_ARGUMENT);
+    cr_assert_eq(gtd_builder_add_bundled_log_from_file(builder, NULL), GTD_ERR_NULL_ARGUMENT);
+    gtd_builder_destroy(builder);
 }
 
 Test(null_guards, finish_sets_out_to_null_when_the_builder_is_null) {
@@ -68,6 +80,7 @@ Test(null_guards, nav_file_null) {
     cr_assert_eq(gtd_nav_file_marker_count(NULL), 0);
     cr_assert_eq(gtd_nav_file_event_marker_style_count(NULL), 0);
     cr_assert_eq(gtd_nav_file_satellite_warning_count(NULL), 0);
+    cr_assert_eq(gtd_nav_file_bundled_log_count(NULL), 0);
     cr_assert_null(gtd_nav_file_title(NULL));
     cr_assert_null(gtd_nav_file_device(NULL));
     cr_assert_null(gtd_nav_file_notes(NULL));
@@ -111,6 +124,9 @@ Test(null_guards, nav_file_null) {
 
     GtdChannelInfo channel;
     cr_assert_eq(gtd_nav_file_get_channel(NULL, 0, &channel), GTD_ERR_NULL_ARGUMENT);
+
+    GtdBundledLogInfo bundled_log;
+    cr_assert_eq(gtd_nav_file_get_bundled_log(NULL, 0, &bundled_log), GTD_ERR_NULL_ARGUMENT);
 
     char label[16];
     size_t required = 0;

@@ -6,9 +6,9 @@ use geotrace_sdk::{MetaStringWithNul, NavFileBuilder, NavRecorder, TravelMode};
 
 use crate::error::{self, GtdStatus};
 
-mod finish;
-mod ingest;
-mod lifecycle;
+pub(crate) mod finish;
+pub(crate) mod ingest;
+pub(crate) mod lifecycle;
 mod metadata;
 mod navigation;
 
