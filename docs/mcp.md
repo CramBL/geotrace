@@ -255,9 +255,11 @@ When GeoTrace can start a job, invalid or empty text returns the same validation
 
 Pass the returned `job` to `get_query_status` or `cancel_query`.
 A successful start returns the registered job identifier and the latest status.
-The companion polls within a one-second budget that starts with the request.
+GeoTrace waits up to one second after admitting the request.
+The wait can end sooner near the connection timeout.
 When the job completes in time, `run_query` returns `completed` with the query summaries.
-If the budget expires or a status request fails, the companion returns the latest status it received for that job.
+At expiry, the bridge returns the last status GeoTrace published for that job.
+If four query or History calls are already waiting, GeoTrace returns the current status immediately.
 If the connection closes before the reply arrives, retry `run_query` to get the active identifier or start a new job.
 Poll a pending job until the status is `completed`, `cancelled`, `failed`, or `stale`.
 Completion reports the match, track, and skipped counts for each query block in input order.
@@ -374,9 +376,10 @@ If GeoTrace is preparing History, retry the listing.
 
 Pass a History recording ID as `recording` to `open_history_recording`.
 GeoTrace reports the operation's current state, including failure to start a History read.
-The companion polls within a one-second budget that starts with the request.
+GeoTrace waits up to one second after admitting the request.
+The wait can end sooner near the connection timeout.
 A fast open can return `ready` or `awaiting_track_settings` in the first reply.
-If the budget expires or a status request fails, the companion returns the latest state it received for that operation.
+At expiry, the bridge returns the last status GeoTrace published for that operation.
 Poll `get_history_open_status` with the returned `operation` while the read or load is in progress.
 Use the `recording` reference in a ready result with `get_recording` and other loaded session tools.
 If GeoTrace cannot reproduce the stored track layout, the operation reports `history_track_layout_unavailable`.

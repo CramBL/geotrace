@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind};
 use std::sync::mpsc as startup;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt as _;
 use futures_util::stream::FuturesUnordered;
@@ -42,6 +42,7 @@ pub use crate::query_validation::{QueryPreparation, QueryValidation};
 pub use crate::recording_control::{
     MAX_RECORDING_BATCH, ManageRecordings, RecordingBatch, RecordingBatchSizeError,
 };
+pub use crate::session_reply::{DeferredSessionReply, SessionReply};
 pub use crate::session_state::{
     OpenPanel, PanelOpenState, SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel,
     SessionQueryPhase, SessionQueryState, SessionState, SessionTimeFilter,
@@ -64,6 +65,7 @@ mod query_job;
 mod query_results;
 mod query_validation;
 mod recording_control;
+mod session_reply;
 mod session_state;
 mod session_view;
 mod settings;
@@ -143,7 +145,7 @@ impl Server {
 
     pub fn receive(&mut self) -> Option<SessionExchange> {
         let pending = self.pending.try_recv().ok()?;
-        if pending.reply.is_closed() {
+        if !pending.reply.client_is_waiting() {
             return None;
         }
         Some(SessionExchange {
@@ -171,7 +173,7 @@ pub struct SessionRequest {
 
 pub struct SessionExchange {
     request: SessionRequest,
-    reply: oneshot::Sender<Reply>,
+    reply: SessionReply,
 }
 
 impl SessionExchange {
@@ -180,7 +182,7 @@ impl SessionExchange {
     }
 
     pub fn client_is_waiting(&self) -> bool {
-        !self.reply.is_closed()
+        self.reply.client_is_waiting()
     }
 
     pub fn respond(self, execute: impl FnOnce(SessionRequest) -> Reply) {
@@ -191,19 +193,7 @@ impl SessionExchange {
 
     pub fn into_request(self) -> Option<(SessionRequest, SessionReply)> {
         self.client_is_waiting()
-            .then_some((self.request, SessionReply(self.reply)))
-    }
-}
-
-pub struct SessionReply(oneshot::Sender<Reply>);
-
-impl SessionReply {
-    pub fn client_is_waiting(&self) -> bool {
-        !self.0.is_closed()
-    }
-
-    pub fn send(self, reply: impl Into<Reply>) {
-        drop(self.0.send(reply.into()));
+            .then_some((self.request, self.reply))
     }
 }
 
@@ -276,8 +266,9 @@ async fn serve_connection(
     wake: &impl Fn(),
     capture: Option<ExchangeCapture<'_>>,
 ) {
-    let exchange = self::exchange(&mut connection.0, pending, wake, capture.as_ref());
-    if let Ok(Err(error)) = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange).await {
+    let deadline = Instant::now() + EXCHANGE_TIMEOUT;
+    let exchange = self::exchange(&mut connection.0, pending, wake, capture.as_ref(), deadline);
+    if let Ok(Err(error)) = tokio::time::timeout_at(deadline.into(), exchange).await {
         match error.kind() {
             ErrorKind::BrokenPipe
             | ErrorKind::ConnectionAborted
@@ -294,16 +285,17 @@ async fn exchange(
     pending: &mpsc::Sender<Pending>,
     wake: &impl Fn(),
     capture: Option<&ExchangeCapture<'_>>,
+    deadline: Instant,
 ) -> io::Result<()> {
     let reply = match self::read_request(stream, capture).await {
         Ok(request) => {
-            let (reply, response) = oneshot::channel();
+            let (reply, response) = SessionReply::channel(deadline);
             match pending.try_send(Pending { request, reply }) {
                 Ok(()) => {
                     wake();
                     tokio::select! {
                         incoming = stream.read_u8() => return incoming.map(|_byte| ()),
-                        response = response => response.map_err(io::Error::other)?,
+                        response = async { response.await.map_err(io::Error::other)?.resolve().await } => response?,
                     }
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => Reply::Error {
@@ -360,11 +352,13 @@ async fn read_request(
 
 struct Pending {
     request: Request,
-    reply: oneshot::Sender<Reply>,
+    reply: SessionReply,
 }
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_ACTIVE_CONNECTIONS: usize = 8;
+/// Reserve half of the active connections for requests outside the query and History waits.
+pub const MAX_DEFERRED_OPERATION_REPLIES: usize = MAX_ACTIVE_CONNECTIONS / 2;
 
 #[cfg(test)]
 mod tests;

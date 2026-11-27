@@ -2,7 +2,7 @@ use std::io::ErrorKind;
 use std::mem;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, TimeZone as _, Utc};
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime, Velocity};
@@ -19,8 +19,8 @@ use proptest::{arbitrary, collection, prop_assert_eq, prop_oneof, proptest};
 use serde_json::{Value, json};
 use strum::IntoEnumIterator as _;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
@@ -28,14 +28,14 @@ use super::recording_control::{MAX_RECORDING_BATCH, ManageRecordings};
 use super::test_util::TestEndpoint;
 use super::traffic_capture::{MAX_CAPTURE_BYTES, MAX_CAPTURE_FRAMES};
 use super::{
-    ApplyProcessing, ChannelEntry, ErrorCode, GetRangeDetails, GetRecording, GetTrack, Inspection,
-    InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE, MAX_TRACKS_PER_PAGE,
-    MAX_VISIBILITY_TRACKS, NumericObservation, OpenPoint, Pending, QueryJobId, QueryText,
-    QueryValidation, Recording, RecordingReference, Recordings, Reply, Request, Server,
+    ApplyProcessing, ChannelEntry, EXCHANGE_TIMEOUT, ErrorCode, GetRangeDetails, GetRecording,
+    GetTrack, Inspection, InspectionRequest, ListMetrics, ListRecordings, MAX_POINTS_PER_PAGE,
+    MAX_TRACKS_PER_PAGE, MAX_VISIBILITY_TRACKS, NumericObservation, OpenPoint, Pending, QueryJobId,
+    QueryText, QueryValidation, Recording, RecordingReference, Recordings, Reply, Request, Server,
     SessionExchange, SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel,
-    SessionQueryPhase, SessionQueryState, SessionRequest, SessionState, SetTrackVisibility,
-    TrackReference, TrackVisibilityAction, TrafficCapture, TrafficDirection, TrafficFrame,
-    VisibilityTrackRefs,
+    SessionQueryPhase, SessionQueryState, SessionReply, SessionRequest, SessionState,
+    SetTrackVisibility, TrackReference, TrackVisibilityAction, TrafficCapture, TrafficDirection,
+    TrafficFrame, VisibilityTrackRefs,
 };
 
 impl TestEndpoint {
@@ -607,7 +607,7 @@ async fn local_request_dispatches_on_the_calling_thread() {
 #[test]
 fn a_command_finishes_when_the_reply_receiver_closes_during_execution() {
     let (sender, pending) = mpsc::channel(1);
-    let (reply, receiver) = oneshot::channel();
+    let (reply, receiver) = SessionReply::channel(Instant::now() + EXCHANGE_TIMEOUT);
     sender
         .try_send(Pending {
             request: REQUEST,
@@ -653,6 +653,7 @@ async fn dropping_the_client_exchange_skips_the_queued_command() {
             &sender,
             &|| wake.try_send(()).unwrap(),
             observed.as_ref(),
+            Instant::now() + EXCHANGE_TIMEOUT,
         )
         .await
     };
@@ -687,7 +688,7 @@ async fn dropping_the_client_exchange_skips_the_queued_command() {
 
 #[test]
 fn a_received_exchange_skips_execution_after_the_client_disconnects() {
-    let (reply, receiver) = oneshot::channel();
+    let (reply, receiver) = SessionReply::channel(Instant::now() + EXCHANGE_TIMEOUT);
     let exchange = SessionExchange {
         request: SessionRequest {
             request: REQUEST,

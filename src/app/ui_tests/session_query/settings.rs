@@ -131,7 +131,7 @@ fn opening_a_setting_reveals_the_row_after_current_input() {
         session::exchange_queued_request(
             &mut harness,
             &Request::OpenSetting(SettingSelection { key }),
-            |harness| {
+            |harness, _| {
                 harness
                     .input_mut()
                     .events
@@ -160,7 +160,7 @@ fn a_setting_reply_confirms_the_selected_page_without_painting() {
         session::exchange_queued_request(
             &mut harness,
             &Request::OpenSetting(SettingSelection { key }),
-            |harness| {
+            |harness, _| {
                 let _ = harness::step_minimized_logic(harness);
             },
         ),

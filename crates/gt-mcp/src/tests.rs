@@ -31,10 +31,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use super::{
-    ASYNC_RESULT_WAIT, Bridge, COMPANION_NAME, Companion, START_DESKTOP, STATUS_POLL_INTERVAL,
-    VERSION,
-};
+use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
 
 #[tokio::test]
 async fn open_panel_validates_panel_arguments_before_requesting_the_desktop() {
@@ -701,108 +698,88 @@ async fn recording_control_uses_typed_actions_and_reports_their_outcomes() {
 
 #[tokio::test(start_paused = true)]
 async fn mcp_cancellation_drops_only_the_targeted_bridge_request() {
-    for admitted in [false, true] {
-        let (queued, mut requests) = mpsc::channel(1);
-        let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
-        client.initialize().await;
-        let submitted_at = tokio::time::Instant::now();
-        client
-            .send_tool(2, "run_query", json!({"text": "points | draw"}))
-            .await;
-        let initial = self::next_bridge_exchange(&mut requests).await;
-        assert!(matches!(initial.request, Request::RunQuery(_)));
-        let mut cancelled = if admitted {
-            initial
-                .reply
-                .send(self::query_reply(QueryJobState::Preparing))
-                .unwrap();
-            let probe = self::next_bridge_exchange(&mut requests).await;
-            assert_eq!(
-                probe.request,
-                Request::GetQueryStatus(QueryJobRequest {
-                    job: self::query_job_id()
-                })
-            );
-            probe.reply
-        } else {
-            initial.reply
-        };
-        client
-            .send_tool(3, "open_query", json!({"text": "points | draw"}))
-            .await;
-        let control = self::next_bridge_exchange(&mut requests).await;
-        assert!(matches!(control.request, Request::OpenQuery(_)));
-        client
-            .send(json!({
-                "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 2}
-            }))
-            .await;
-        tokio::time::timeout(STATUS_POLL_INTERVAL, cancelled.closed())
-            .await
-            .expect("MCP cancellation did not close the outstanding bridge response");
-        assert!(submitted_at.elapsed() < ASYNC_RESULT_WAIT);
-        control.reply.send(Reply::QueryDraftOpened).unwrap();
-        let response = client.receive().await;
-        assert_eq!(response.get("id"), Some(&json!(3)));
-        assert_eq!(
-            response.pointer("/result/structuredContent"),
-            Some(&json!({"status": "query_draft_opened"}))
-        );
-        drop(client);
-        tokio::time::timeout(Duration::from_secs(2), worker)
-            .await
-            .unwrap()
-            .unwrap();
-    }
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_hung_status_probe_returns_the_latest_job_within_the_original_wait_budget() {
     let (queued, mut requests) = mpsc::channel(1);
     let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
     client.initialize().await;
-    let submitted_at = tokio::time::Instant::now();
     client
         .send_tool(2, "run_query", json!({"text": "points | draw"}))
         .await;
     let initial = self::next_bridge_exchange(&mut requests).await;
     assert!(matches!(initial.request, Request::RunQuery(_)));
-    tokio::time::sleep(ASYNC_RESULT_WAIT / 2).await;
-    initial
-        .reply
-        .send(self::query_reply(QueryJobState::Preparing))
-        .unwrap();
+    let mut cancelled = initial.reply;
 
-    let status = Request::GetQueryStatus(QueryJobRequest {
-        job: self::query_job_id(),
-    });
-    let first = self::next_bridge_exchange(&mut requests).await;
-    let first_probe_at = tokio::time::Instant::now();
-    assert_eq!(first.request, status);
-    first
-        .reply
-        .send(self::query_reply(QueryJobState::Running {
-            tracks_prepared: 2,
-            track_total: 3,
+    client
+        .send_tool(3, "open_query", json!({"text": "points | draw"}))
+        .await;
+    let control = self::next_bridge_exchange(&mut requests).await;
+    assert!(matches!(control.request, Request::OpenQuery(_)));
+    client
+        .send(json!({
+            "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 2}
         }))
-        .unwrap();
-    let hung = self::next_bridge_exchange(&mut requests).await;
-    assert!(first_probe_at.elapsed() >= STATUS_POLL_INTERVAL);
-    assert_eq!(hung.request, status);
+        .await;
+    tokio::time::timeout(Duration::from_secs(2), cancelled.closed())
+        .await
+        .expect("MCP cancellation did not close the outstanding bridge response");
+    control.reply.send(Reply::QueryDraftOpened).unwrap();
     let response = client.receive().await;
-    assert_eq!(response.get("id"), Some(&json!(2)));
+    assert_eq!(response.get("id"), Some(&json!(3)));
     assert_eq!(
         response.pointer("/result/structuredContent"),
-        Some(&json!({
-            "job": self::query_job_id(), "status": "running", "tracks_prepared": 2, "track_total": 3
-        }))
+        Some(&json!({"status": "query_draft_opened"}))
     );
-    assert!(
-        (ASYNC_RESULT_WAIT..ASYNC_RESULT_WAIT + STATUS_POLL_INTERVAL)
-            .contains(&submitted_at.elapsed())
-    );
-    assert!(hung.reply.is_closed());
-    assert!(requests.try_recv().is_err());
+    drop(client);
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pending_status_finishes_the_original_exchange() {
+    let (queued, mut requests) = mpsc::channel(1);
+    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+    client.initialize().await;
+    for (id, name, arguments, reply, expected) in [
+        (
+            2,
+            "run_query",
+            json!({"text": "points | draw"}),
+            self::query_reply(QueryJobState::Running {
+                tracks_prepared: 2,
+                track_total: 3,
+            }),
+            json!({
+                "job": self::query_job_id(), "status": "running", "tracks_prepared": 2, "track_total": 3
+            }),
+        ),
+        (
+            3,
+            "open_history_recording",
+            json!({"recording": Uuid::from_u128(6)}),
+            Reply::HistoryOpen {
+                operation: HistoryOpenStatus {
+                    operation: HISTORY_OPEN,
+                    state: HistoryOpenState::Loading,
+                },
+            },
+            json!({"operation": HISTORY_OPEN, "state": {"kind": "loading"}}),
+        ),
+    ] {
+        client.send_tool(id, name, arguments).await;
+        let initial = self::next_bridge_exchange(&mut requests).await;
+        assert!(matches!(
+            initial.request,
+            Request::RunQuery(_) | Request::OpenHistoryRecording(_)
+        ));
+        initial.reply.send(reply).unwrap();
+        let response = tokio::time::timeout(Duration::from_millis(50), client.receive())
+            .await
+            .expect("a pending status is a complete reply");
+        assert_eq!(response.get("id"), Some(&json!(id)));
+        assert_eq!(
+            response.pointer("/result/structuredContent"),
+            Some(&expected)
+        );
+        assert!(requests.try_recv().is_err());
+    }
     drop(client);
     worker.await.unwrap();
 }
@@ -810,16 +787,12 @@ async fn a_hung_status_probe_returns_the_latest_job_within_the_original_wait_bud
 #[tokio::test(start_paused = true)]
 async fn a_history_open_returns_the_desktop_settings_choice_without_waiting_for_it() {
     let (mut client, worker) = Client::start(Bridge::Fixture(|request| match request {
-        Request::GetHistoryOpenStatus(GetHistoryOpenStatus { operation }) => {
-            assert_eq!(*operation, HISTORY_OPEN);
-            Ok(Reply::HistoryOpen {
-                operation: HistoryOpenStatus {
-                    operation: *operation,
-                    state: HistoryOpenState::AwaitingTrackSettings,
-                },
-            })
-        }
-        Request::OpenHistoryRecording(_) => self::history_open_fixture(request),
+        Request::OpenHistoryRecording(_) => Ok(Reply::HistoryOpen {
+            operation: HistoryOpenStatus {
+                operation: HISTORY_OPEN,
+                state: HistoryOpenState::AwaitingTrackSettings,
+            },
+        }),
         _ => panic!("unexpected History request: {request:?}"),
     }));
     client.initialize().await;
@@ -838,7 +811,7 @@ async fn a_history_open_returns_the_desktop_settings_choice_without_waiting_for_
             "operation": HISTORY_OPEN, "state": {"kind": "awaiting_track_settings"}
         }))
     );
-    assert!(submitted_at.elapsed() < STATUS_POLL_INTERVAL * 2);
+    assert_eq!(submitted_at.elapsed(), Duration::ZERO);
     drop(client);
     worker.await.unwrap();
 }
@@ -881,62 +854,7 @@ async fn nonpending_start_replies_return_without_a_status_probe() {
             "operation": HISTORY_OPEN, "state": {"kind": "failed", "code": "history_open_failed"}
         }))
     );
-    assert!(submitted_at.elapsed() < STATUS_POLL_INTERVAL);
-    drop(client);
-    worker.await.unwrap();
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_failed_optional_probe_preserves_the_accepted_handle() {
-    let (queued, mut requests) = mpsc::channel(1);
-    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
-    client.initialize().await;
-    let job = self::query_job_id();
-    let mismatched = QueryJobId {
-        id: Uuid::from_u128(9),
-        ..job
-    };
-    for (id, probe_reply) in [
-        None,
-        Some(Reply::from(ErrorCode::Busy)),
-        Some(Reply::QueryJob {
-            job: QueryJobStatus {
-                job: mismatched,
-                state: QueryJobState::Failed,
-            },
-        }),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        client
-            .send_tool(id as u64 + 2, "run_query", json!({"text": "points | draw"}))
-            .await;
-        let started = self::next_bridge_exchange(&mut requests).await;
-        assert!(matches!(started.request, Request::RunQuery(_)));
-        started
-            .reply
-            .send(self::query_reply(QueryJobState::Preparing))
-            .unwrap();
-        let probe = self::next_bridge_exchange(&mut requests).await;
-        assert_eq!(
-            probe.request,
-            Request::GetQueryStatus(QueryJobRequest { job })
-        );
-        if let Some(reply) = probe_reply {
-            probe.reply.send(reply).unwrap();
-        } else {
-            drop(probe.reply);
-        }
-        let response = client.receive().await;
-        assert_eq!(
-            response.pointer("/result/structuredContent"),
-            Some(&json!({
-                "job": job, "status": "preparing"
-            }))
-        );
-        assert!(requests.try_recv().is_err());
-    }
+    assert_eq!(submitted_at.elapsed(), Duration::ZERO);
     drop(client);
     worker.await.unwrap();
 }
@@ -1263,12 +1181,13 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
         Request::CheckQuery(QueryText { text }) | Request::RunQuery(QueryText { text })
             if text == "points | draw" =>
         {
-            Ok(Reply::QueryJob {
-                job: QueryJobStatus {
-                    job: self::query_job_id(),
-                    state: QueryJobState::Preparing,
-                },
-            })
+            Ok(self::query_reply(QueryJobState::Completed {
+                queries: vec![QueryCounts {
+                    matches: 2,
+                    tracks_with_matches: 1,
+                    skipped: 0,
+                }],
+            }))
         }
         Request::GetQueryStatus(QueryJobRequest { job }) if *job == self::query_job_id() => {
             Ok(self::query_reply(QueryJobState::Completed {
@@ -1431,7 +1350,10 @@ fn history_open_fixture(request: &Request) -> io::Result<Reply> {
             Ok(Reply::HistoryOpen {
                 operation: HistoryOpenStatus {
                     operation: HISTORY_OPEN,
-                    state: HistoryOpenState::Reading,
+                    state: HistoryOpenState::Ready {
+                        recording: self::recording_id(7),
+                        reused: false,
+                    },
                 },
             })
         }

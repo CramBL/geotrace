@@ -247,13 +247,13 @@ impl App {
         }
     }
 
-    pub(super) fn prepare_session_query(&mut self, ctx: &egui::Context) {
+    pub(super) fn prepare_session_query(&mut self, ctx: &egui::Context) -> bool {
         let Some(QueryOperation {
             phase: QueryPhase::Preparing(generation),
             ..
         }) = self.editor_query.operation
         else {
-            return;
+            return false;
         };
         let phase = if self.shared.borrow().loaded_files.data_generation() == generation {
             let series = QuerySeries::capture_for_query(
@@ -273,6 +273,7 @@ impl App {
         if let Some(operation) = &mut self.editor_query.operation {
             operation.phase = phase;
         }
+        true
     }
 
     pub(super) fn refresh_query_results(&mut self) -> Result<(), ErrorCode> {
@@ -433,19 +434,22 @@ impl QuerySeries {
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     use egui::accesskit::Role;
     use egui_kittest::{Harness, kittest::Queryable as _};
     use gt_query_run::{PreparedRun, RunOutcome};
     use gt_session_bridge::{
-        ErrorCode, ListRecordings, QueryJobRequest, QueryJobState, QueryJobStatus, QueryText,
-        Reply, Request, SessionRequest,
+        ApplyProcessing, ErrorCode, ListRecordings, QueryJobId, QueryJobRequest, QueryJobState,
+        QueryJobStatus, QueryText, Reply, Request, SessionRequest,
     };
     use gt_test_utils::recording_fixtures;
     use rstest::rstest;
 
     use super::{QueryPhase, QuerySeries};
     use crate::app::App;
+    use crate::app::session_bridge::SessionBridge;
+    use crate::app::session_operations::SessionOperationStatus;
     use crate::app::session_query::SessionCommand;
     use crate::app::test_util::harness::{self, TestDroppedFile};
     use crate::app::test_util::session;
@@ -465,11 +469,7 @@ mod tests {
         #[case] end: RunEnd,
         #[case] status: QueryJobState,
     ) {
-        let mut harness = Harness::builder().build_eframe(harness::transient_app);
-        harness::drop_file_and_wait_for_load(
-            &mut harness,
-            TestDroppedFile::bytes(recording_fixtures::minimal_gtd_bytes(), "test.gtd"),
-        );
+        let mut harness = self::app_with_query_recording();
         let previous = session::start_query(&mut harness, "points | draw");
         assert!(matches!(
             session::wait_for_query_to_stop(&mut harness, previous),
@@ -531,6 +531,158 @@ mod tests {
     }
 
     #[test]
+    fn a_query_continues_after_its_initial_reply_receiver_closes() {
+        let mut harness = self::app_with_query_recording();
+        let (job, mut reply) = session::begin_query(&mut harness, "points | draw");
+        let (prepared, send) = self::hold_query_completion(harness.state_mut());
+        harness::step_minimized_logic(&mut harness);
+        assert_eq!(reply.try_recv().unwrap(), None);
+        drop(reply);
+        harness::step_minimized_logic(&mut harness);
+        send.send(prepared.execute()).unwrap();
+        harness::step_minimized_logic(&mut harness);
+        assert_eq!(
+            session::query_status(&mut harness, job),
+            session::completed_single_track_query(1)
+        );
+    }
+
+    #[rstest]
+    #[case::preparing(QueryJobState::Preparing, None)]
+    #[case::running(QueryJobState::Running { tracks_prepared: 0, track_total: 1 }, None)]
+    #[case::late_admission(QueryJobState::Preparing, Some(Duration::from_millis(2200)))]
+    fn the_query_wait_expires_without_an_app_frame(
+        #[case] expected: QueryJobState,
+        #[case] queued_for: Option<Duration>,
+    ) {
+        let mut harness = self::app_with_query_recording();
+        let request = Request::RunQuery(QueryText {
+            text: "points | draw".to_owned(),
+        });
+        let mut accepted = None;
+        let mut admitted_at = None;
+        let mut worker = None;
+        let reply = session::exchange_queued_request(&mut harness, &request, |harness, _| {
+            if let Some(duration) = queued_for {
+                std::thread::sleep(duration);
+            }
+            let app = harness.state_mut();
+            let SessionBridge::Running(server) = &mut app.session_bridge else {
+                panic!("expected a running bridge");
+            };
+            let exchange = server.receive().unwrap();
+            admitted_at = Some(Instant::now());
+            app.respond_to_session_exchange(exchange);
+            let job = app.editor_query.operation.unwrap();
+            accepted = Some(QueryJobId {
+                session: job.scope.unwrap(),
+                id: job.id,
+            });
+            if matches!(expected, QueryJobState::Running { .. }) {
+                worker = Some(self::hold_query_completion(app));
+                harness::step_minimized_logic(harness);
+            }
+        });
+        if queued_for.is_none() {
+            assert!(admitted_at.unwrap().elapsed() >= Duration::from_secs(1));
+        }
+        assert_eq!(
+            reply,
+            Reply::QueryJob {
+                job: QueryJobStatus {
+                    job: accepted.unwrap(),
+                    state: expected
+                }
+            }
+        );
+        if let Some((prepared, send)) = worker {
+            send.send(prepared.execute()).unwrap();
+            harness::step_minimized_logic(&mut harness);
+            assert!(harness.state().editor_query.operation.unwrap().phase == QueryPhase::Completed);
+        }
+    }
+
+    #[test]
+    fn a_query_wait_reports_stale_after_track_data_changes_before_preparation() {
+        let mut harness = self::app_with_query_recording();
+        let (job, mut reply) = session::begin_query(&mut harness, "points | draw");
+        assert_eq!(
+            session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
+            Reply::ProcessingApplied
+        );
+        harness::step_minimized_logic(&mut harness);
+        assert_eq!(
+            reply.try_recv().unwrap(),
+            Some(Reply::QueryJob {
+                job: QueryJobStatus {
+                    job,
+                    state: QueryJobState::Stale
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn cancelling_over_ipc_leaves_the_initial_query_exchange_until_the_worker_finishes() {
+        let mut harness = self::app_with_query_recording();
+        let request = Request::RunQuery(QueryText {
+            text: "points | draw".to_owned(),
+        });
+        let mut active_job = None;
+        let reply =
+            session::exchange_queued_request(&mut harness, &request, |harness, endpoint| {
+                let app = harness.state_mut();
+                let SessionBridge::Running(server) = &mut app.session_bridge else {
+                    panic!("expected a running bridge");
+                };
+                let exchange = server.receive().unwrap();
+                app.respond_to_session_exchange(exchange);
+                let (prepared, send) = self::hold_query_completion(app);
+                let Reply::SessionState { state } =
+                    session::exchange_request(harness, endpoint, &Request::GetSessionState)
+                else {
+                    panic!("expected an unrelated state reply");
+                };
+                let job = state.query.unwrap().job.unwrap();
+                active_job = Some(job);
+                assert_eq!(
+                    session::exchange_request(
+                        harness,
+                        endpoint,
+                        &Request::CancelQuery(QueryJobRequest { job })
+                    ),
+                    Reply::QueryJob {
+                        job: QueryJobStatus {
+                            job,
+                            state: QueryJobState::Cancelling
+                        }
+                    }
+                );
+                assert!(prepared.handle().cancelled());
+                send.send(prepared.execute()).unwrap();
+                harness::step_minimized_logic(harness);
+            });
+        let Reply::QueryJob { job } = reply else {
+            panic!("expected a query job");
+        };
+        let id = active_job.unwrap();
+        assert_eq!(job.job, id);
+        assert!(
+            matches!(
+                job.state,
+                QueryJobState::Cancelled
+                    | QueryJobState::Cancelling
+                    | QueryJobState::Preparing
+                    | QueryJobState::Running { .. }
+            ),
+            "{job:?}"
+        );
+        assert!(
+            harness.state().editor_query.phase_for_job(id.session, id) == Ok(QueryPhase::Cancelled)
+        );
+    }
+
+    #[test]
     fn the_restarted_bridge_can_claim_a_running_query() {
         let (mut harness, endpoint) = session::app_with_bridge();
         harness::drop_file_and_wait_for_load(
@@ -552,7 +704,7 @@ mod tests {
             text: "points | draw".to_owned(),
         });
         let app = harness.state_mut();
-        let SessionCommand::Completed(Reply::QueryJob { job: original }) = app
+        let SessionCommand::Operation(SessionOperationStatus::Query(original)) = app
             .execute_session_request(SessionRequest {
                 request: request.clone(),
                 session,
@@ -596,6 +748,15 @@ mod tests {
         );
         assert!(prepared.handle().cancelled());
         send.send(prepared.execute()).unwrap();
+    }
+
+    fn app_with_query_recording() -> Harness<'static, App> {
+        let mut harness = Harness::builder().build_eframe(harness::transient_app);
+        harness::drop_file_and_wait_for_load(
+            &mut harness,
+            TestDroppedFile::bytes(recording_fixtures::minimal_gtd_bytes(), "test.gtd"),
+        );
+        harness
     }
 
     fn hold_query_completion(app: &mut App) -> (PreparedRun, mpsc::Sender<RunOutcome>) {

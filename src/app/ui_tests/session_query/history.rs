@@ -107,14 +107,16 @@ fn a_history_open_reports_the_loaded_recording() {
         recording: page.recordings[0].id,
     });
     let notice_count = harness.state().toasts.len();
-    let accepted = {
+    let (accepted, waiting) = {
         let _access = HistoryAccess::lock();
+        let mut waiting = (0..gt_session_bridge::MAX_DEFERRED_OPERATION_REPLIES)
+            .map(|_| session::begin(&mut harness, request.clone()))
+            .collect::<Vec<_>>();
+        for reply in &mut waiting {
+            assert_eq!(reply.try_recv().unwrap(), None);
+        }
         let accepted = self::open_status(&session::execute(&mut harness, request.clone()));
         assert_eq!(accepted.state, HistoryOpenState::Reading);
-        assert_eq!(
-            self::open_status(&session::execute(&mut harness, request.clone())),
-            accepted
-        );
         assert_eq!(
             session::execute(
                 &mut harness,
@@ -125,7 +127,7 @@ fn a_history_open_reports_the_loaded_recording() {
             Reply::from(ErrorCode::Busy)
         );
         assert_eq!(harness.state().toasts.len(), notice_count);
-        accepted
+        (accepted, waiting)
     };
     let HistoryOpenState::Ready {
         recording,
@@ -134,6 +136,11 @@ fn a_history_open_reports_the_loaded_recording() {
     else {
         panic!("expected a loaded recording");
     };
+    harness.run_steps(2);
+    for mut reply in waiting {
+        let result = reply.try_recv().unwrap().expect("expected History reply");
+        assert_eq!(self::open_status(&result).operation, accepted.operation);
+    }
     let Reply::Recordings { page } = session::execute(
         &mut harness,
         Request::ListRecordings(ListRecordings {
@@ -1205,14 +1212,22 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
     drop(db);
     let mut harness = self::owner_app(&store);
     let page = self::await_page(&mut harness, UNFILTERED);
-    let open = self::open_status(&session::execute(
+    let mut pending = session::begin(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
         }),
-    ));
+    );
     let response = recordings::next_response(&harness.state().history);
-    assert!(matches!(&response, Response::Opened { result: Ok(_), .. }));
+    let Response::Opened {
+        origin: RecordingOperationOrigin::SessionHistory(operation),
+        result: Ok(_),
+        ..
+    } = &response
+    else {
+        panic!("expected a History read");
+    };
+    let operation = *operation;
     harness.state_mut().handle_history_response(response);
 
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -1225,16 +1240,19 @@ fn a_hidden_session_restores_saved_visibility_before_ready_and_loads_attached_lo
         }
         assert!(harness.state().history.restoring_session_recordings());
         assert!(harness.state().logs.is_empty());
-        assert!(matches!(
-            self::open_status(&session::execute(
-                &mut harness,
-                Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
-                    operation: open.operation,
-                }),
-            ))
-            .state,
-            HistoryOpenState::Ready { .. }
-        ));
+        let reply = pending
+            .try_recv()
+            .unwrap()
+            .expect("logic completed the History read");
+        let initial = self::open_status(&reply);
+        assert_eq!(initial.operation, operation);
+        let state = match initial.state {
+            HistoryOpenState::Reading | HistoryOpenState::Loading => {
+                self::after_loading(&mut harness, initial.operation)
+            }
+            state => state,
+        };
+        assert!(matches!(state, HistoryOpenState::Ready { .. }));
         let job = session::start_query(&mut harness, "points");
         assert_eq!(
             session::wait_for_query_to_stop(&mut harness, job),
@@ -1346,19 +1364,22 @@ fn a_history_open_expires_when_the_recording_changes_before_adoption(
     }
     let mut harness = self::owner_app(&store);
     let page = self::await_page(&mut harness, UNFILTERED);
-    let opening = self::open_status(&session::execute(
+    let mut pending = session::begin(
         &mut harness,
         Request::OpenHistoryRecording(OpenHistoryRecording {
             recording: page.recordings[0].id,
         }),
-    ));
+    );
     let response = recordings::next_response(&harness.state().history);
     let Response::Opened {
-        result: Ok(opened), ..
+        origin: RecordingOperationOrigin::SessionHistory(operation),
+        result: Ok(opened),
+        ..
     } = &response
     else {
         panic!("expected a recording read");
     };
+    let operation = *operation;
     let observation = opened.track_snapshot.clone();
     harness.state_mut().handle_history_response(response);
     match change {
@@ -1381,9 +1402,12 @@ fn a_history_open_expires_when_the_recording_changes_before_adoption(
         }
     }
     assert_eq!(
-        self::after_loading(&mut harness, opening.operation),
+        self::after_loading(&mut harness, operation),
         HistoryOpenState::Expired
     );
+    harness::step_minimized_logic(&mut harness);
+    let initial_reply = pending.try_recv().unwrap().expect("expected History reply");
+    assert_eq!(self::open_status(&initial_reply).operation, operation);
     assert!(harness.state().shared.borrow().loaded_files.is_empty());
 }
 

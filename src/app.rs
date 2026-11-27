@@ -41,6 +41,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use session_bridge::{SessionBridge, SessionNavigation};
 use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
+use session_operations::SessionOperationReplies;
 use session_panels::PendingPanelReveals;
 use session_plot::{PlotPresentation, QueuedPlotPresentation};
 use session_traffic_window::SessionTrafficWindow;
@@ -108,6 +109,7 @@ mod reference_window;
 mod session_bridge;
 mod session_history;
 mod session_map;
+mod session_operations;
 mod session_panels;
 mod session_plot;
 mod session_query;
@@ -421,6 +423,7 @@ pub struct App {
     session_traffic_window: SessionTrafficWindow,
     session_history: SessionHistory,
     session_navigation: SessionNavigation,
+    session_operation_replies: SessionOperationReplies,
     pending_session_panel_reveals: PendingPanelReveals,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
@@ -672,6 +675,7 @@ impl App {
             session_traffic_window: SessionTrafficWindow::default(),
             session_history: SessionHistory::default(),
             session_navigation: SessionNavigation::default(),
+            session_operation_replies: SessionOperationReplies::default(),
             pending_session_panel_reveals: PendingPanelReveals::default(),
             pending_writes: options.pending_writes,
             shutdown: shutdown::ShutdownState::default(),

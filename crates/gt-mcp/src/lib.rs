@@ -2,14 +2,13 @@ use std::env;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
-use std::time::Duration;
 
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
-    GetRecording, GetTrack, HistoryOpenState, ListHistoryRecordings, ListMetrics, ListRecordings,
-    ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, PanelOpenState, QueryJobRequest,
-    QueryJobState, QueryText, RangeTarget, Reply, Request, SessionPanel, SetSessionView,
-    SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
+    GetRecording, GetTrack, ListHistoryRecordings, ListMetrics, ListRecordings, ManageRecordings,
+    OpenHistoryRecording, OpenPanel, OpenPoint, PanelOpenState, QueryJobRequest, QueryText,
+    RangeTarget, Reply, Request, SessionPanel, SetSessionView, SetSetting, SetTrackVisibility,
+    SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -23,7 +22,6 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt as _, tool, tool_handler, tool_router,
     transport,
 };
-use tokio::time::{self, Instant};
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn run() -> Result<(), Box<dyn Error>> {
@@ -357,15 +355,7 @@ impl Companion {
 
     async fn inspect(&self, request: Request) -> CallToolResult {
         let checking_query = matches!(&request, Request::CheckQuery(_) | Request::RunQuery(_));
-        let wait_deadline = matches!(
-            request,
-            Request::RunQuery(_) | Request::OpenHistoryRecording(_)
-        )
-        .then(|| Instant::now() + ASYNC_RESULT_WAIT);
-        let mut response = self.bridge.request(&request).await;
-        if let (Some(deadline), Ok(reply)) = (wait_deadline, &mut response) {
-            self.wait_for_result(&request, reply, deadline).await;
-        }
+        let response = self.bridge.request(&request).await;
         let panel_open_failed =
             matches!(&response, Ok(Reply::PanelOpen { state, .. }) if !state.succeeded());
         let result = match response {
@@ -416,61 +406,6 @@ impl Companion {
         }
     }
 
-    async fn wait_for_result(&self, start: &Request, latest: &mut Reply, deadline: Instant) {
-        while let Some(probe) = Self::pending_status_request(start, latest) {
-            let result = tokio::select! {
-                biased;
-                () = time::sleep_until(deadline) => break,
-                result = async {
-                    time::sleep(STATUS_POLL_INTERVAL).await;
-                    self.bridge.request(&probe).await
-                } => result,
-            };
-            let Ok(reply) = result else {
-                break;
-            };
-            let same_operation = match (probe, &reply) {
-                (Request::GetQueryStatus(request), Reply::QueryJob { job }) => {
-                    request.job == job.job
-                }
-                (Request::GetHistoryOpenStatus(request), Reply::HistoryOpen { operation }) => {
-                    request.operation == operation.operation
-                }
-                _ => false,
-            };
-            if !same_operation {
-                break;
-            }
-            *latest = reply;
-        }
-    }
-
-    fn pending_status_request(start: &Request, reply: &Reply) -> Option<Request> {
-        match (start, reply) {
-            (Request::RunQuery(_), Reply::QueryJob { job })
-                if matches!(
-                    job.state,
-                    QueryJobState::Preparing
-                        | QueryJobState::Running { .. }
-                        | QueryJobState::Cancelling
-                ) =>
-            {
-                Some(Request::GetQueryStatus(QueryJobRequest { job: job.job }))
-            }
-            (Request::OpenHistoryRecording(_), Reply::HistoryOpen { operation })
-                if matches!(
-                    operation.state,
-                    HistoryOpenState::Reading | HistoryOpenState::Loading
-                ) =>
-            {
-                Some(Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
-                    operation: operation.operation,
-                }))
-            }
-            _ => None,
-        }
-    }
-
     #[expect(
         clippy::cognitive_complexity,
         reason = "Each arm checks an independent request and reply pair"
@@ -478,14 +413,17 @@ impl Companion {
     fn accepts_reply(request: &Request, reply: &Reply) -> bool {
         match request {
             Request::ApplyProcessing(_) => matches!(reply, Reply::ProcessingApplied),
-            Request::CancelQuery(_) | Request::GetQueryStatus(_) => {
-                matches!(reply, Reply::QueryJob { .. })
+            Request::CancelQuery(args) | Request::GetQueryStatus(args) => {
+                matches!(reply, Reply::QueryJob { job } if job.job == args.job)
             }
             Request::CheckQuery(_) => matches!(reply, Reply::QueryCheck { .. }),
             Request::DescribeSetting(_) | Request::SetSetting(_) => {
                 matches!(reply, Reply::Setting { .. })
             }
-            Request::GetHistoryOpenStatus(_) | Request::OpenHistoryRecording(_) => {
+            Request::GetHistoryOpenStatus(args) => {
+                matches!(reply, Reply::HistoryOpen { operation } if operation.operation == args.operation)
+            }
+            Request::OpenHistoryRecording(_) => {
                 matches!(reply, Reply::HistoryOpen { .. })
             }
             Request::GetQueryResults(_) => matches!(reply, Reply::QueryResults { .. }),
@@ -767,8 +705,6 @@ impl Bridge {
 const COMPANION_NAME: &str = "geotrace-mcp";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const QUERY_LANGUAGE_URI: &str = "geotrace://query-language";
-const ASYNC_RESULT_WAIT: Duration = Duration::from_secs(1);
-const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const QUERY_LANGUAGE_MIME_TYPE: &str = "text/markdown";
 const START_DESKTOP: &str = "Start MCP in GeoTrace Settings and try again.";
 
