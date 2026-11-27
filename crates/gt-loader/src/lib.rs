@@ -26,7 +26,7 @@ use gt_types::{
 };
 
 pub use error::LoadError;
-pub use geotrace_sdk::Error as SdkError;
+pub use geotrace_sdk::{BundledLog, Error as SdkError};
 
 mod error;
 mod navigation;
@@ -64,6 +64,7 @@ pub fn derive_identity(
 pub struct LoadedGtd {
     pub file: LoadedFile,
     pub identity: String,
+    pub bundled_logs: Vec<BundledLog>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,7 +197,11 @@ fn build_loaded_gtd(
         file_meta_from_nav(nav_file, debug_time_repair_threshold),
         contents.load_warnings,
     );
-    Ok(LoadedGtd { file, identity })
+    Ok(LoadedGtd {
+        file,
+        identity,
+        bundled_logs: nav_file.bundled_logs().to_vec(),
+    })
 }
 
 /// Capture the recording's SDK file metadata (title/device/notes/travel mode)
@@ -352,11 +357,11 @@ pub fn same_recorded_payload(
 /// Each range is a half-open `[start, end)` slice of the original nav-point
 /// sequence - the same index ranges that track segmentation produces (see
 /// [`gt_track_builder::segment_tracks`]). The fixes in those ranges and their
-/// satellite reports are dropped. File metadata, markers, event markers, and
-/// their styles are all preserved. Marker and event-marker positions are
-/// re-interpolated from the surviving fixes by the SDK builder, in lenient mode
-/// so a marker that ends up outside the surviving time range is clamped with a
-/// warning.
+/// satellite reports are dropped. File metadata, markers, event markers, their
+/// styles, channels, and bundled logs are all preserved. Marker and event-marker
+/// positions are re-interpolated from the surviving fixes by the SDK builder, in
+/// lenient mode so a marker that ends up outside the surviving time range is
+/// clamped with a warning.
 ///
 /// This is the persisted half of a permanent per-track delete: once the new
 /// bytes replace the old recording, the dropped points cannot be recovered.
@@ -419,6 +424,10 @@ pub fn reencode_dropping_ranges(
     // surviving track are dropped when the reencoded file is next segmented.
     for channel in nav_file.channels() {
         recorder.add_channel(channel.clone());
+    }
+
+    for bundled_log in nav_file.bundled_logs() {
+        recorder.add_bundled_log(bundled_log.clone());
     }
 
     let mut rebuilt = recorder.finish()?;
@@ -1081,6 +1090,9 @@ const UNRECOGNIZED_COLOR_REPLACEMENT: MarkerColor = MarkerColor::new(128, 128, 1
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::slice;
+
     use geotrace_sdk::{
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
         NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite as SdkSat, SatelliteCoverage,
@@ -2269,6 +2281,91 @@ mod tests {
                  last style the recording holds for it: one style is kept per variant path."
             )]
         );
+    }
+
+    fn recording_with_bundled_logs(logs: Vec<BundledLog>) -> Vec<u8> {
+        let mut recorder = NavFileBuilder::new().open();
+        for second in 0..5i64 {
+            recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
+        }
+        for log in logs {
+            recorder.add_bundled_log(log);
+        }
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn loading_a_gtd_with_bundled_logs_exposes_them_in_canonical_order() {
+        let zed = BundledLog::new("zed.log", "2025-05-23 10:00:00Z boot started\n").unwrap();
+        let alpha = BundledLog::new("alpha.log", "2025-05-23 10:00:01Z gps lock\n").unwrap();
+        let bytes = recording_with_bundled_logs(vec![zed.clone(), alpha.clone()]);
+        let expected = vec![alpha, zed];
+
+        let from_bytes = load_gtd_bytes_with_progress(
+            &bytes,
+            "with_logs.gtd".to_owned(),
+            |_, _| {},
+            &SegmentationConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(from_bytes.bundled_logs, expected);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("with_logs.gtd");
+        fs::write(&path, &bytes).unwrap();
+        let from_file =
+            load_gtd_file_with_progress(&path, |_, _| {}, &SegmentationConfig::default()).unwrap();
+        assert_eq!(from_file.bundled_logs, expected);
+    }
+
+    #[test]
+    fn loading_a_gtd_without_bundled_logs_returns_an_empty_vec() {
+        let bytes = recording_with_bundled_logs(Vec::new());
+        let loaded = load_gtd_bytes_with_progress(
+            &bytes,
+            "without_logs.gtd".to_owned(),
+            |_, _| {},
+            &SegmentationConfig::default(),
+        )
+        .unwrap();
+        assert!(loaded.bundled_logs.is_empty());
+    }
+
+    #[test]
+    fn reencode_preserves_bundled_logs() {
+        let zed = BundledLog::new("zed.log", "2025-05-23 10:00:00Z boot started\n").unwrap();
+        let alpha = BundledLog::new("alpha.log", "2025-05-23 10:00:01Z gps lock\n").unwrap();
+        let bytes = recording_with_bundled_logs(vec![zed.clone(), alpha.clone()]);
+
+        let reencoded =
+            reencode_dropping_ranges(&bytes, slice::from_ref(&(1usize..3)), None).unwrap();
+        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
+        assert_eq!(nav_file.nav_points().len(), 3);
+        assert_eq!(nav_file.bundled_logs(), &[alpha, zed]);
+    }
+
+    #[test]
+    fn same_recorded_payload_compares_bundled_logs() {
+        let original = recording_with_bundled_logs(vec![
+            BundledLog::new("gnss.log", "2025-05-23 10:00:00Z gps lock\n").unwrap(),
+        ]);
+        let matching = recording_with_bundled_logs(vec![
+            BundledLog::new("gnss.log", "2025-05-23 10:00:00Z gps lock\n").unwrap(),
+        ]);
+        let different_text = recording_with_bundled_logs(vec![
+            BundledLog::new("gnss.log", "2025-05-23 10:00:00Z gps lost\n").unwrap(),
+        ]);
+        let different_name = recording_with_bundled_logs(vec![
+            BundledLog::new("modem.log", "2025-05-23 10:00:00Z gps lock\n").unwrap(),
+        ]);
+        let without_logs = recording_with_bundled_logs(Vec::new());
+
+        assert!(same_recorded_payload(&original, StoredGtdBytes(&matching)).unwrap());
+        assert!(!same_recorded_payload(&original, StoredGtdBytes(&different_text)).unwrap());
+        assert!(!same_recorded_payload(&original, StoredGtdBytes(&different_name)).unwrap());
+        assert!(!same_recorded_payload(&original, StoredGtdBytes(&without_logs)).unwrap());
     }
 
     /// 1e-9° is about 0.1 mm.
