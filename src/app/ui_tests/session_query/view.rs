@@ -6,8 +6,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_filter::TimeWindow;
 use gt_session_bridge::{
-    DisplayCategoryChange, ErrorCode, OpenPanel, QueryJobState, Reply, Request, SessionMapLayer,
-    SessionState, SessionTimeFilter, SetSessionView, TimeFilterChange,
+    DisplayCategoryChange, ErrorCode, OpenPanel, PanelOpenState, QueryJobState, Reply, Request,
+    SessionMapLayer, SessionState, SessionTimeFilter, SetSessionView, TimeFilterChange,
 };
 use gt_types::{FileIdx, FixRef, MarkerRequirement, PointIdx, TimeRange, TrackIdx, TrackRef};
 use gt_ui_types::{
@@ -293,8 +293,9 @@ fn map_plot_and_query_use_the_same_exact_session_time_bound(
     let plot = OpenPanel::Plot {};
     assert_eq!(
         session::execute(&mut harness, Request::OpenPanel(plot)),
-        Reply::PanelOpenQueued {
-            panel: plot.panel()
+        Reply::PanelOpen {
+            panel: plot.panel(),
+            state: PanelOpenState::Docked,
         }
     );
     harness.run_steps(3);

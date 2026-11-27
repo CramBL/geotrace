@@ -149,6 +149,7 @@ impl App {
     fn release_session_bridge_state(&mut self) {
         self.editor_query.release_active_session_job();
         self.session_navigation = SessionNavigation::default();
+        self.cancel_pending_session_panel_raise();
         let mut shared = self.shared.borrow_mut();
         shared.cancel_pending_session_map();
         shared.pending_session_plot = None;
@@ -203,6 +204,9 @@ impl App {
                     .borrow_mut()
                     .queue_session_map(presentation, reply);
                 self.ctx.request_repaint();
+            }
+            Ok(SessionCommand::Panel { session, args }) => {
+                self.open_session_panel(session, args, reply)
             }
             Ok(SessionCommand::Plot(presentation)) => self.queue_session_plot(presentation, reply),
             Err(error) => reply.send(error),

@@ -70,6 +70,22 @@ impl OpenPanel {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelOpenState {
+    Closed,
+    Docked,
+    Frontmost,
+    Superseded,
+    TimedOut,
+}
+
+impl PanelOpenState {
+    pub fn succeeded(self) -> bool {
+        matches!(self, Self::Docked | Self::Frontmost)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionTimeFilter {
     All,

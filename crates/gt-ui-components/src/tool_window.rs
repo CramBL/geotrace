@@ -55,11 +55,6 @@ impl ToolWindow<'_> {
     }
 
     pub fn raise(ctx: &egui::Context, window_id: egui::Id) -> ToolWindowRaise {
-        match Self::is_frontmost_after_layout(ctx, window_id) {
-            Some(true) => return ToolWindowRaise::AlreadyFrontmost,
-            None => return ToolWindowRaise::WaitingForLayout,
-            Some(false) => {}
-        }
         let (pointer_down, pointer_transition) = ctx.input(|input| {
             (
                 input.pointer.any_down(),
@@ -71,6 +66,11 @@ impl ToolWindow<'_> {
                 ctx.request_repaint();
             }
             return ToolWindowRaise::WaitingForPointer;
+        }
+        match Self::is_frontmost_after_layout(ctx, window_id) {
+            Some(true) => return ToolWindowRaise::AlreadyFrontmost,
+            None => return ToolWindowRaise::WaitingForLayout,
+            Some(false) => {}
         }
         ctx.move_to_top(LayerId::new(Order::Middle, window_id));
         ctx.request_repaint();

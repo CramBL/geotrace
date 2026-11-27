@@ -210,6 +210,10 @@ impl SkyTrailsWindow {
     pub fn is_open(&self) -> bool {
         self.open
     }
+
+    pub fn track(&self) -> Option<TrackRef> {
+        self.track.filter(|_| self.open)
+    }
 }
 
 const SKY_TRAILS_WINDOW_TITLE: &str = "Sky trails";

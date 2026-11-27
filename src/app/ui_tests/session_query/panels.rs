@@ -4,13 +4,13 @@ use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::GEAR as ICON_GEAR;
-use gt_session_bridge::{ErrorCode, OpenPanel, Reply, Request, SessionPanel};
-use gt_test_utils::recording_fixtures;
+use gt_session_bridge::{ErrorCode, OpenPanel, PanelOpenState, Reply, Request, SessionPanel};
+use gt_test_utils::{HarnessInteraction as _, recording_fixtures};
 use rstest::rstest;
 
 use crate::app::query::QueryWindow;
 use crate::app::settings_ui::{self, SettingsPage};
-use crate::app::test_util::session;
+use crate::app::test_util::{harness, session};
 use crate::app::{App, ui_tests};
 
 #[test]
@@ -29,12 +29,33 @@ fn panel_opening_updates_session_state_before_painting() {
         OpenPanel::SkyTrails { track },
     ];
     for args in panels {
-        assert_eq!(
-            session::execute(&mut harness, Request::OpenPanel(args)),
-            Reply::PanelOpenQueued {
-                panel: args.panel()
-            }
-        );
+        let mut reply = session::begin(&mut harness, Request::OpenPanel(args));
+        let panel = args.panel();
+        let Reply::SessionState { state } =
+            session::execute(&mut harness, Request::GetSessionState)
+        else {
+            panic!("expected desktop session state");
+        };
+        assert!(state.open_panels.contains(&panel));
+        let immediate = reply.try_recv().unwrap();
+        if panel == SessionPanel::Plot {
+            assert_eq!(
+                immediate,
+                Some(Reply::PanelOpen {
+                    panel,
+                    state: PanelOpenState::Docked
+                })
+            );
+        } else {
+            assert_eq!(immediate, None);
+            assert_eq!(
+                harness.step_until_some(|_| reply.try_recv().unwrap()),
+                Some(Reply::PanelOpen {
+                    panel,
+                    state: PanelOpenState::Frontmost
+                })
+            );
+        }
     }
     let Reply::SessionState { state } = session::execute(&mut harness, Request::GetSessionState)
     else {
@@ -56,8 +77,9 @@ fn a_bridge_request_opens_the_log_viewer() {
     );
     assert_eq!(
         serde_json::from_slice::<Reply>(&reply).unwrap(),
-        Reply::PanelOpenQueued {
-            panel: SessionPanel::LogViewer
+        Reply::PanelOpen {
+            panel: SessionPanel::LogViewer,
+            state: PanelOpenState::Frontmost,
         }
     );
     harness.run_steps(3);
@@ -78,8 +100,9 @@ fn opening_query_expands_the_window_and_keeps_its_draft_and_result() {
 
     assert_eq!(
         session::execute(&mut harness, Request::OpenPanel(OpenPanel::Query {})),
-        Reply::PanelOpenQueued {
-            panel: SessionPanel::Query
+        Reply::PanelOpen {
+            panel: SessionPanel::Query,
+            state: PanelOpenState::Frontmost,
         }
     );
     harness.run_steps(8);
@@ -96,12 +119,14 @@ fn opening_query_expands_the_window_and_keeps_its_draft_and_result() {
 enum OverlappingWindowAction {
     None,
     OpenPlot,
+    OpenSettings,
     PressPointer,
 }
 
 #[rstest]
 #[case::ordinary(OverlappingWindowAction::None)]
 #[case::plot(OverlappingWindowAction::OpenPlot)]
+#[case::same_target(OverlappingWindowAction::OpenSettings)]
 #[case::pointer(OverlappingWindowAction::PressPointer)]
 fn opening_settings_raises_an_obscured_window_once(#[case] concurrent: OverlappingWindowAction) {
     let (
@@ -114,23 +139,27 @@ fn opening_settings_raises_an_obscured_window_once(#[case] concurrent: Overlappi
     ) = self::app_with_query_over_settings();
 
     let open_settings = Request::OpenPanel(OpenPanel::Settings {});
-    let queued = Reply::PanelOpenQueued {
+    let opened = Reply::PanelOpen {
         panel: SessionPanel::Settings,
+        state: PanelOpenState::Frontmost,
     };
-    assert_eq!(
-        session::execute(&mut harness, open_settings.clone()),
-        queued
-    );
+    let mut original = session::begin(&mut harness, open_settings.clone());
+    assert_eq!(original.try_recv().unwrap(), None);
+    let mut repeated = None;
     match concurrent {
         OverlappingWindowAction::None => {}
         OverlappingWindowAction::OpenPlot => {
             assert!(harness.state().plot_is_visible());
             assert_eq!(
                 session::execute(&mut harness, Request::OpenPanel(OpenPanel::Plot {})),
-                Reply::PanelOpenQueued {
-                    panel: SessionPanel::Plot
+                Reply::PanelOpen {
+                    panel: SessionPanel::Plot,
+                    state: PanelOpenState::Docked,
                 }
             );
+        }
+        OverlappingWindowAction::OpenSettings => {
+            repeated = Some(session::begin(&mut harness, open_settings.clone()));
         }
         OverlappingWindowAction::PressPointer => {
             let pointer_button = |pressed| egui::Event::PointerButton {
@@ -144,6 +173,7 @@ fn opening_settings_raises_an_obscured_window_once(#[case] concurrent: Overlappi
                 .events
                 .extend([egui::Event::PointerMoved(target), pointer_button(true)]);
             harness.step();
+            assert_eq!(original.try_recv().unwrap(), None);
             assert_eq!(harness.ctx.layer_id_at(target), Some(query));
             assert!(session::visible_action_notices(&harness).is_empty());
             harness.input_mut().events.push(pointer_button(false));
@@ -151,7 +181,11 @@ fn opening_settings_raises_an_obscured_window_once(#[case] concurrent: Overlappi
     }
     harness.run_steps(5);
     assert_eq!(harness.ctx.layer_id_at(target), Some(settings));
-    assert_eq!(session::execute(&mut harness, open_settings), queued);
+    assert_eq!(original.try_recv().unwrap(), Some(opened.clone()));
+    if let Some(mut repeated) = repeated {
+        assert_eq!(repeated.try_recv().unwrap(), Some(opened.clone()));
+    }
+    assert_eq!(session::execute(&mut harness, open_settings), opened);
     harness.run_steps(5);
     assert_eq!(
         session::visible_action_notices(&harness),
@@ -181,12 +215,7 @@ fn a_completed_raise_keeps_its_notice_after_the_next_panel_action(
     harness
         .ctx
         .options_mut(|options| options.max_passes = NonZeroUsize::MIN);
-    assert_eq!(
-        session::execute(&mut harness, Request::OpenPanel(OpenPanel::Settings {})),
-        Reply::PanelOpenQueued {
-            panel: SessionPanel::Settings
-        }
-    );
+    let mut earlier = session::begin(&mut harness, Request::OpenPanel(OpenPanel::Settings {}));
     harness.step();
     assert_eq!(harness.ctx.layer_id_at(target), Some(settings));
 
@@ -202,14 +231,22 @@ fn a_completed_raise_keeps_its_notice_after_the_next_panel_action(
         AfterSettingsRaise::RaiseQuery => {
             assert_eq!(
                 session::execute(&mut harness, Request::OpenPanel(OpenPanel::Query {})),
-                Reply::PanelOpenQueued {
-                    panel: SessionPanel::Query
+                Reply::PanelOpen {
+                    panel: SessionPanel::Query,
+                    state: PanelOpenState::Frontmost,
                 }
             );
             expected_notices.push("MCP showed the Query window");
         }
     }
     harness.run_steps(5);
+    assert_eq!(
+        earlier.try_recv().unwrap(),
+        Some(Reply::PanelOpen {
+            panel: SessionPanel::Settings,
+            state: PanelOpenState::Frontmost,
+        })
+    );
     if matches!(next_action, AfterSettingsRaise::RaiseQuery) {
         assert_eq!(harness.ctx.layer_id_at(target), Some(query));
     } else {
@@ -223,15 +260,23 @@ fn the_last_panel_request_raises_its_window_after_a_batch_without_painting() {
     let mut harness = ui_tests::app_with_a_recording();
     harness.set_size(egui::vec2(640.0, 440.0));
     harness.state_mut().settings_page = SettingsPage::Analysis;
-    for args in [OpenPanel::Settings {}, OpenPanel::Query {}] {
-        assert_eq!(
-            session::execute(&mut harness, Request::OpenPanel(args)),
-            Reply::PanelOpenQueued {
-                panel: args.panel()
-            }
-        );
-    }
+    let mut settings = session::begin(&mut harness, Request::OpenPanel(OpenPanel::Settings {}));
+    let mut query = session::begin(&mut harness, Request::OpenPanel(OpenPanel::Query {}));
+    assert_eq!(
+        settings.try_recv().unwrap(),
+        Some(Reply::PanelOpen {
+            panel: SessionPanel::Settings,
+            state: PanelOpenState::Superseded,
+        })
+    );
     harness.run_steps(6);
+    assert_eq!(
+        query.try_recv().unwrap(),
+        Some(Reply::PanelOpen {
+            panel: SessionPanel::Query,
+            state: PanelOpenState::Frontmost,
+        })
+    );
     let target = harness
         .get_by_label_contains("Elevation mask")
         .rect()
@@ -251,6 +296,123 @@ fn the_last_panel_request_raises_its_window_after_a_batch_without_painting() {
         session::visible_action_notices(&harness),
         ["MCP showed Settings", "MCP showed the Query window"]
     );
+}
+
+#[rstest]
+#[case::expired(false)]
+#[case::cancelled(true)]
+fn a_minimized_panel_raise_leaves_the_window_open_without_a_later_raise(#[case] cancel: bool) {
+    let (mut harness, QueryOverSettings { target, query, .. }) =
+        self::app_with_query_over_settings();
+    harness.state_mut().settings_open = false;
+    let mut reply = session::begin(&mut harness, Request::OpenPanel(OpenPanel::Settings {}));
+    let _ = harness::step_minimized_logic(&mut harness);
+    assert_eq!(reply.try_recv().unwrap(), None);
+    let Reply::SessionState { state } = session::execute(&mut harness, Request::GetSessionState)
+    else {
+        panic!("expected desktop session state");
+    };
+    assert!(state.open_panels.contains(&SessionPanel::Settings));
+    if cancel {
+        drop(reply);
+        let _ = harness::step_minimized_logic(&mut harness);
+    } else {
+        harness
+            .state_mut()
+            .pending_session_panel_reveals
+            .expire_oldest();
+        let _ = harness::step_minimized_logic(&mut harness);
+        assert_eq!(
+            reply.try_recv().unwrap(),
+            Some(Reply::PanelOpen {
+                panel: SessionPanel::Settings,
+                state: PanelOpenState::TimedOut,
+            })
+        );
+    }
+    harness.run_steps(5);
+    assert!(harness.state().settings_open);
+    assert_eq!(harness.ctx.layer_id_at(target), Some(query));
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP showed Settings"]
+    );
+}
+
+#[test]
+fn callers_waiting_for_the_same_panel_have_independent_deadlines() {
+    let (
+        mut harness,
+        QueryOverSettings {
+            target, settings, ..
+        },
+    ) = self::app_with_query_over_settings();
+    let request = Request::OpenPanel(OpenPanel::Settings {});
+    let mut older = session::begin(&mut harness, request.clone());
+    let mut newer = session::begin(&mut harness, request);
+    harness
+        .state_mut()
+        .pending_session_panel_reveals
+        .expire_oldest();
+    let _ = harness::step_minimized_logic(&mut harness);
+    assert_eq!(
+        older.try_recv().unwrap(),
+        Some(Reply::PanelOpen {
+            panel: SessionPanel::Settings,
+            state: PanelOpenState::TimedOut,
+        })
+    );
+    assert!(harness.state().settings_open);
+    assert_eq!(newer.try_recv().unwrap(), None);
+    assert_eq!(
+        harness.step_until_some(|_| newer.try_recv().unwrap()),
+        Some(Reply::PanelOpen {
+            panel: SessionPanel::Settings,
+            state: PanelOpenState::Frontmost,
+        })
+    );
+    assert_eq!(harness.ctx.layer_id_at(target), Some(settings));
+}
+
+#[test]
+fn the_desktop_can_close_a_panel_before_mcp_raises_it() {
+    let (mut harness, _) = self::app_with_query_over_settings();
+    let mut reply = session::begin(&mut harness, Request::OpenPanel(OpenPanel::Settings {}));
+    harness
+        .query_all_by_label(ICON_GEAR)
+        .find(|button| button.accesskit_node().toggled() == Some(Toggled::True))
+        .unwrap()
+        .click_accesskit();
+    harness.step();
+    assert!(!harness.state().settings_open);
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(Reply::PanelOpen {
+            panel: SessionPanel::Settings,
+            state: PanelOpenState::Closed
+        })
+    );
+    assert!(session::visible_action_notices(&harness).is_empty());
+}
+
+#[test]
+fn a_panel_raise_preserves_the_query_editors_keyboard_focus() {
+    let (mut harness, _) = self::app_with_query_over_settings();
+    ui_tests::focus_query_editor_at_end(&harness, "");
+    let mut reply = session::begin(&mut harness, Request::OpenPanel(OpenPanel::Settings {}));
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("points".to_owned()));
+    harness.run_steps(3);
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(Reply::PanelOpen {
+            panel: SessionPanel::Settings,
+            state: PanelOpenState::Frontmost
+        })
+    );
+    assert_eq!(harness.state().editor_query.session().text(), "points");
 }
 
 #[rstest]
