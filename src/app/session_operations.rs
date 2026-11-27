@@ -3,9 +3,10 @@ use std::time::{Duration, Instant};
 
 use gt_session_bridge::{
     DeferredSessionReply, ErrorCode, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
-    MAX_DEFERRED_OPERATION_REPLIES, OpenedFile, OpenedFileState, QueryJobId, QueryJobState,
-    QueryJobStatus, Reply, SessionReply,
+    ListHistoryRecordings, MAX_DEFERRED_OPERATION_REPLIES, OpenedFile, OpenedFileState, QueryJobId,
+    QueryJobState, QueryJobStatus, Reply, SessionReply,
 };
+use uuid::Uuid;
 
 use super::App;
 use super::association_batches::SessionOpenWait;
@@ -16,6 +17,10 @@ pub(super) enum SessionOperationStatus {
         files: Vec<OpenedFile>,
     },
     History(HistoryOpenStatus),
+    HistoryListing {
+        session: Uuid,
+        request: ListHistoryRecordings,
+    },
     Query(QueryJobStatus),
 }
 
@@ -29,6 +34,10 @@ impl SessionOperationStatus {
             Self::History(status) => (
                 PendingOperation::History(status.operation),
                 OperationPoll::from_history(status),
+            ),
+            Self::HistoryListing { session, request } => (
+                PendingOperation::HistoryListing { session, request },
+                OperationPoll::Pending(Reply::from(ErrorCode::HistoryNotReady)),
             ),
             Self::Query(status) => (
                 PendingOperation::Query(status.job),
@@ -108,6 +117,10 @@ impl OperationPoll {
 enum PendingOperation {
     Files(SessionOpenWait),
     History(HistoryOpenId),
+    HistoryListing {
+        session: Uuid,
+        request: ListHistoryRecordings,
+    },
     Query(QueryJobId),
 }
 
@@ -120,6 +133,15 @@ impl PendingOperation {
             Self::History(operation) => app
                 .current_history_open_status(*operation)
                 .map(OperationPoll::from_history),
+            Self::HistoryListing { session, request } => {
+                match app.list_history_recordings_page(*session, *request) {
+                    Ok(page) => Ok(OperationPoll::Complete(Reply::HistoryRecordings { page })),
+                    Err(ErrorCode::HistoryNotReady) => Ok(OperationPoll::Pending(Reply::from(
+                        ErrorCode::HistoryNotReady,
+                    ))),
+                    Err(error) => Err(error),
+                }
+            }
             Self::Query(job) => app
                 .session_query_status(job.session, *job)
                 .map(OperationPoll::from_query),

@@ -33,7 +33,7 @@ pub struct HistoryDates {
 }
 
 impl HistoryDates {
-    fn timestamps(self) -> Result<Option<RangeInclusive<i64>>, ErrorCode> {
+    pub fn timestamps(self) -> Result<Option<RangeInclusive<i64>>, ErrorCode> {
         let midnight = |date: NaiveDate| date.and_time(NaiveTime::MIN).and_utc().timestamp_micros();
         match (self.from, self.through) {
             (None, None) => Ok(None),

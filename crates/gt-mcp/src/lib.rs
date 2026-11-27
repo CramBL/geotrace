@@ -172,7 +172,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "List stored History recordings by navigation start time, newest first. Entries without a stored time range appear last. Bounds use RFC 3339 UTC. Filter by overlapping UTC dates and use next_cursor with the same dates to continue.",
+        description = "List stored History recordings by navigation start time, newest first. Entries without a stored time range appear last. Bounds use RFC 3339 UTC. Filter by overlapping UTC dates and use next_cursor with the same dates to continue. Waits briefly while History prepares its initial listing.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn list_history_recordings(
