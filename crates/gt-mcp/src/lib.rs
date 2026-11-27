@@ -202,7 +202,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Open local .gtd or .log files by absolute path, or unload recordings by reference. Opening queues the desktop loader. Unloading keeps History records.",
+        description = "Open local .gtd or .log files by absolute path, or unload recordings by reference. Opening waits briefly and reports each path's outcome. Unloading keeps History records.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -371,7 +371,7 @@ impl Companion {
                 return Self::tool_error("GeoTrace returned an unexpected reply for this tool.");
             }
             Ok(
-                reply @ (Reply::FilesQueued { .. }
+                reply @ (Reply::FilesOpened { .. }
                 | Reply::MapPointOpened(_)
                 | Reply::MapRangeFramed { .. }
                 | Reply::PanelOpen { .. }
@@ -441,7 +441,7 @@ impl Companion {
             Request::ListMetrics(_) => matches!(reply, Reply::Metrics { .. }),
             Request::ListRecordings(_) => matches!(reply, Reply::Recordings { .. }),
             Request::ManageRecordings(ManageRecordings::Open { .. }) => {
-                matches!(reply, Reply::FilesQueued { .. })
+                matches!(reply, Reply::FilesOpened { .. })
             }
             Request::ManageRecordings(ManageRecordings::Unload { .. }) => {
                 matches!(reply, Reply::RecordingsUnloaded { .. })
@@ -497,6 +497,8 @@ impl Companion {
         match code {
             ErrorCode::Busy => "GeoTrace is busy. Try again.",
             ErrorCode::DuplicateDisplayCategory => "Specify each map display category once.",
+            ErrorCode::EmptyLogFile => "The log file is empty.",
+            ErrorCode::FileNotFound => "The file does not exist.",
             ErrorCode::HistoryListingFailed => {
                 "GeoTrace could not list recording History. Check the History window for details."
             }
@@ -604,7 +606,10 @@ impl Companion {
             ErrorCode::StaleTrack => {
                 "The track reference is stale. List the recording's tracks from the beginning."
             }
+            ErrorCode::UnreadableFile => "GeoTrace could not read the file.",
+            ErrorCode::UnrecognizedLogFormat => "GeoTrace did not recognize the log format.",
             ErrorCode::UnsupportedFileExtension => "Choose a .gtd recording or a .log file.",
+            ErrorCode::UnsupportedRecording => "GeoTrace could not read the recording format.",
         }
     }
 

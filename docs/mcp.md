@@ -153,8 +153,15 @@ The encoded request must fit within 4 KiB.
 ```
 
 GeoTrace checks each path's form before it queues the batch and counts identical path strings once.
-The `files_queued` reply gives the number of queued paths.
-Use `list_recordings` to check when recordings are loaded.
+GeoTrace waits up to one second after admitting the request for every input to finish loading, fail, or reach a History decision prompt.
+The wait can end sooner near the connection timeout.
+The `files_opened` reply lists one entry per unique path in request order with its `state`.
+Each state has `kind` set to `loaded`, `failed`, `awaiting_history_decision`, or `pending`.
+A `loaded` recording includes its `recording` reference, while a loaded log omits `recording`.
+A `failed` entry includes an error `code`.
+At expiry, the bridge returns the last status GeoTrace published, leaving unfinished entries as `pending`.
+If four waiting calls are already active, GeoTrace returns the initial `pending` states immediately.
+Use `list_recordings` to check recordings that finish loading after expiry.
 Open the Log viewer to see loaded logs.
 GeoTrace shows load failures and requests for History or log association decisions in the same desktop controls as a file drop.
 
@@ -259,7 +266,7 @@ GeoTrace waits up to one second after admitting the request.
 The wait can end sooner near the connection timeout.
 When the job completes in time, `run_query` returns `completed` with the query summaries.
 At expiry, the bridge returns the last status GeoTrace published for that job.
-If four query or History calls are already waiting, GeoTrace returns the current status immediately.
+If four waiting calls are already active, GeoTrace returns the current status immediately.
 If the connection closes before the reply arrives, retry `run_query` to get the active identifier or start a new job.
 For a pending job, pass an integer `wait_ms` from 0 to 2000 to `get_query_status`.
 Omit `wait_ms` or pass 0 for an immediate status.

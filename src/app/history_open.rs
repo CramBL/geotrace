@@ -602,6 +602,10 @@ impl App {
                 if let Some(attempt) = retry {
                     self.load_failures.finish_retry(attempt, Err(failure));
                 } else {
+                    if let RecordingOperationOrigin::Arrival(arrival) = &origin {
+                        self.association_batches
+                            .record_recording_failed(arrival, failure.cause.session_error_code());
+                    }
                     self.load_failures.push(failure);
                 }
             }

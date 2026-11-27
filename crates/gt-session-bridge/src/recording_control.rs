@@ -2,7 +2,27 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::RecordingReference;
+use crate::protocol::{ErrorCode, RecordingReference};
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OpenedFile {
+    pub path: PathBuf,
+    pub state: OpenedFileState,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OpenedFileState {
+    AwaitingHistoryDecision,
+    Failed {
+        code: ErrorCode,
+    },
+    Loaded {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recording: Option<RecordingReference>,
+    },
+    Pending,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

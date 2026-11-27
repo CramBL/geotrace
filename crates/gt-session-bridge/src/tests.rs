@@ -24,7 +24,9 @@ use tokio::sync::mpsc::error::TryRecvError;
 use uuid::Uuid;
 
 use super::framing::{self, Frame, MAX_REPLY_BYTES, MAX_REQUEST_BYTES};
-use super::recording_control::{MAX_RECORDING_BATCH, ManageRecordings};
+use super::recording_control::{
+    MAX_RECORDING_BATCH, ManageRecordings, OpenedFile, OpenedFileState,
+};
 use super::test_util::TestEndpoint;
 use super::traffic_capture::{MAX_CAPTURE_BYTES, MAX_CAPTURE_FRAMES};
 use super::{
@@ -155,6 +157,74 @@ async fn recording_control_rejects_invalid_batches_before_dispatch() {
         .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::FileTooLarge);
     assert_eq!(wakes.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[test]
+fn files_opened_reply_preserves_every_outcome_variant_and_omits_recording_for_logs() {
+    let session = Uuid::from_u128(11);
+    let recording = RecordingReference { session, number: 3 };
+    let reply = Reply::FilesOpened {
+        files: vec![
+            OpenedFile {
+                path: PathBuf::from("/data/survey.gtd"),
+                state: OpenedFileState::Loaded {
+                    recording: Some(recording),
+                },
+            },
+            OpenedFile {
+                path: PathBuf::from("/data/receiver.log"),
+                state: OpenedFileState::Loaded { recording: None },
+            },
+            OpenedFile {
+                path: PathBuf::from("/data/missing.gtd"),
+                state: OpenedFileState::Failed {
+                    code: ErrorCode::FileNotFound,
+                },
+            },
+            OpenedFile {
+                path: PathBuf::from("/data/stored.gtd"),
+                state: OpenedFileState::AwaitingHistoryDecision,
+            },
+            OpenedFile {
+                path: PathBuf::from("/data/slow.gtd"),
+                state: OpenedFileState::Pending,
+            },
+        ],
+    };
+    let encoded = serde_json::to_value(&reply).unwrap();
+    assert_eq!(
+        encoded,
+        json!({
+            "status": "files_opened",
+            "files": [
+                {
+                    "path": "/data/survey.gtd",
+                    "state": {
+                        "kind": "loaded",
+                        "recording": { "session": session, "number": 3 }
+                    }
+                },
+                {
+                    "path": "/data/receiver.log",
+                    "state": { "kind": "loaded" }
+                },
+                {
+                    "path": "/data/missing.gtd",
+                    "state": { "kind": "failed", "code": "file_not_found" }
+                },
+                {
+                    "path": "/data/stored.gtd",
+                    "state": { "kind": "awaiting_history_decision" }
+                },
+                {
+                    "path": "/data/slow.gtd",
+                    "state": { "kind": "pending" }
+                }
+            ]
+        })
+    );
+    let decoded: Reply = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded, reply);
 }
 
 #[test]

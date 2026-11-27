@@ -1,11 +1,15 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use gt_loaded_files::LoadedFileId;
-use gt_session_bridge::HistoryOpenId;
+use gt_session_bridge::{
+    ErrorCode, HistoryOpenId, OpenedFile, OpenedFileState, RecordingReference,
+};
 use gt_ui_types::LoadedLogId;
+use uuid::Uuid;
 
 use super::load_failures::LoadRetryAttempt;
 
@@ -17,33 +21,41 @@ struct BatchProgress {
     recordings: AtomicUsize,
     logs: AtomicUsize,
     submitted: AtomicBool,
+    session_waiting: AtomicBool,
 }
 
 #[derive(Debug)]
 pub(super) struct AssociationSubmission {
     id: AssociationBatchId,
     progress: Arc<BatchProgress>,
-    next_recording_ordinal: Cell<usize>,
+    next_input_ordinal: Cell<usize>,
 }
 
 impl AssociationSubmission {
     pub(super) fn recording(&self) -> RecordingArrival {
         self.progress.recordings.fetch_add(1, Ordering::Relaxed);
-        let ordinal = self.next_recording_ordinal.get();
-        self.next_recording_ordinal.set(ordinal + 1);
+        let ordinal = self.next_ordinal();
         RecordingArrival {
             batch: self.id,
-            ordinal: RecordingArrivalOrdinal(ordinal),
+            ordinal,
             progress: Arc::clone(&self.progress),
         }
     }
 
     pub(super) fn log(&self) -> LogArrival {
         self.progress.logs.fetch_add(1, Ordering::Relaxed);
+        let ordinal = self.next_ordinal();
         LogArrival {
             batch: self.id,
+            ordinal,
             progress: Arc::clone(&self.progress),
         }
+    }
+
+    fn next_ordinal(&self) -> ArrivalOrdinal {
+        let ordinal = self.next_input_ordinal.get();
+        self.next_input_ordinal.set(ordinal + 1);
+        ArrivalOrdinal(ordinal)
     }
 }
 
@@ -53,12 +65,38 @@ impl Drop for AssociationSubmission {
     }
 }
 
+pub(super) struct SessionOpenWait {
+    batch: AssociationBatchId,
+    progress: Arc<BatchProgress>,
+}
+
+impl Drop for SessionOpenWait {
+    fn drop(&mut self) {
+        self.progress
+            .session_waiting
+            .store(false, Ordering::Release);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct RecordingArrivalOrdinal(usize);
+struct ArrivalOrdinal(usize);
 
 struct ArrivalCandidate {
     recording: LoadedFileId,
-    ordinal: RecordingArrivalOrdinal,
+    ordinal: ArrivalOrdinal,
+}
+
+struct SessionOpenOutcomes {
+    session: Uuid,
+    files: Vec<OpenedFile>,
+}
+
+impl SessionOpenOutcomes {
+    fn set_state(&mut self, ordinal: ArrivalOrdinal, state: OpenedFileState) {
+        if let Some(file) = self.files.get_mut(ordinal.0) {
+            file.state = state;
+        }
+    }
 }
 
 struct BatchState {
@@ -66,6 +104,7 @@ struct BatchState {
     arrival_candidates: Vec<ArrivalCandidate>,
     logs: Vec<LoadedLogId>,
     progress: Arc<BatchProgress>,
+    session_outcomes: Option<SessionOpenOutcomes>,
 }
 
 impl BatchState {
@@ -113,7 +152,7 @@ impl RecordingOperationOrigin {
 #[derive(Debug)]
 pub struct RecordingArrival {
     batch: AssociationBatchId,
-    ordinal: RecordingArrivalOrdinal,
+    ordinal: ArrivalOrdinal,
     progress: Arc<BatchProgress>,
 }
 
@@ -127,6 +166,7 @@ impl Drop for RecordingArrival {
 #[derive(Debug)]
 pub(super) struct LogArrival {
     batch: AssociationBatchId,
+    ordinal: ArrivalOrdinal,
     progress: Arc<BatchProgress>,
 }
 
@@ -142,23 +182,48 @@ impl AssociationBatches {
         &mut self,
         candidates: impl Iterator<Item = LoadedFileId>,
     ) -> AssociationSubmission {
-        let id = AssociationBatchId(self.0.next_id);
-        self.0.next_id += 1;
         let progress = Arc::new(BatchProgress::default());
-        self.0.batches.insert(
-            id,
-            BatchState {
-                initial_candidates: candidates.collect(),
-                arrival_candidates: Vec::new(),
-                logs: Vec::new(),
-                progress: Arc::clone(&progress),
-            },
+        self.insert_batch(candidates.collect(), progress, None)
+    }
+
+    pub(super) fn begin_session_submission(
+        &mut self,
+        session: Uuid,
+        paths: Vec<PathBuf>,
+    ) -> (AssociationSubmission, SessionOpenWait, Vec<OpenedFile>) {
+        let progress = Arc::new(BatchProgress {
+            session_waiting: AtomicBool::new(true),
+            ..BatchProgress::default()
+        });
+        let files: Vec<OpenedFile> = paths
+            .into_iter()
+            .map(|path| OpenedFile {
+                path,
+                state: OpenedFileState::Pending,
+            })
+            .collect();
+        let submission = self.insert_batch(
+            Vec::new(),
+            Arc::clone(&progress),
+            Some(SessionOpenOutcomes {
+                session,
+                files: files.clone(),
+            }),
         );
-        AssociationSubmission {
-            id,
+        let wait = SessionOpenWait {
+            batch: submission.id,
             progress,
-            next_recording_ordinal: Cell::new(0),
-        }
+        };
+        (submission, wait, files)
+    }
+
+    pub(super) fn set_initial_candidates(
+        &mut self,
+        submission: &AssociationSubmission,
+        candidates: impl Iterator<Item = LoadedFileId>,
+    ) {
+        self.batch_for_live_arrival_mut(submission.id)
+            .initial_candidates = candidates.collect();
     }
 
     pub(super) fn register_log(&mut self, arrival: &LogArrival, log: LoadedLogId) {
@@ -168,13 +233,58 @@ impl AssociationBatches {
         }
     }
 
+    pub(super) fn record_log_loaded(&mut self, arrival: &LogArrival) {
+        self.set_session_outcome(
+            arrival.batch,
+            arrival.ordinal,
+            OpenedFileState::Loaded { recording: None },
+        );
+    }
+
+    pub(super) fn record_log_failed(&mut self, arrival: &LogArrival, code: ErrorCode) {
+        self.set_session_outcome(
+            arrival.batch,
+            arrival.ordinal,
+            OpenedFileState::Failed { code },
+        );
+    }
+
     pub(super) fn register_recording(&mut self, arrival: &RecordingArrival, id: LoadedFileId) {
-        self.batch_for_live_arrival_mut(arrival.batch)
-            .arrival_candidates
-            .push(ArrivalCandidate {
-                recording: id,
-                ordinal: arrival.ordinal,
-            });
+        let batch = self.batch_for_live_arrival_mut(arrival.batch);
+        batch.arrival_candidates.push(ArrivalCandidate {
+            recording: id,
+            ordinal: arrival.ordinal,
+        });
+        if let Some(outcomes) = &mut batch.session_outcomes {
+            outcomes.set_state(
+                arrival.ordinal,
+                OpenedFileState::Loaded {
+                    recording: Some(RecordingReference {
+                        session: outcomes.session,
+                        number: id.into(),
+                    }),
+                },
+            );
+        }
+    }
+
+    pub(super) fn record_recording_awaiting_history_decision(
+        &mut self,
+        arrival: &RecordingArrival,
+    ) {
+        self.set_session_outcome(
+            arrival.batch,
+            arrival.ordinal,
+            OpenedFileState::AwaitingHistoryDecision,
+        );
+    }
+
+    pub(super) fn record_recording_failed(&mut self, arrival: &RecordingArrival, code: ErrorCode) {
+        self.set_session_outcome(
+            arrival.batch,
+            arrival.ordinal,
+            OpenedFileState::Failed { code },
+        );
     }
 
     pub(super) fn ready_logs(
@@ -195,11 +305,21 @@ impl AssociationBatches {
         }
         registry.batches.retain(|_, batch| {
             !batch.progress.submitted.load(Ordering::Acquire)
+                || batch.progress.session_waiting.load(Ordering::Acquire)
                 || !batch.logs.is_empty()
                 || batch.progress.recordings.load(Ordering::Acquire) > 0
                 || batch.progress.logs.load(Ordering::Acquire) > 0
         });
         ready
+    }
+
+    pub(super) fn session_open_files(&self, wait: &SessionOpenWait) -> Vec<OpenedFile> {
+        self.0
+            .batches
+            .get(&wait.batch)
+            .and_then(|batch| batch.session_outcomes.as_ref())
+            .map(|outcomes| outcomes.files.clone())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -213,6 +333,42 @@ impl AssociationBatches {
             .batches
             .values()
             .any(|batch| batch.progress.recordings.load(Ordering::Acquire) > 0)
+    }
+
+    fn insert_batch(
+        &mut self,
+        initial_candidates: Vec<LoadedFileId>,
+        progress: Arc<BatchProgress>,
+        session_outcomes: Option<SessionOpenOutcomes>,
+    ) -> AssociationSubmission {
+        let id = AssociationBatchId(self.0.next_id);
+        self.0.next_id += 1;
+        self.0.batches.insert(
+            id,
+            BatchState {
+                initial_candidates,
+                arrival_candidates: Vec::new(),
+                logs: Vec::new(),
+                progress: Arc::clone(&progress),
+                session_outcomes,
+            },
+        );
+        AssociationSubmission {
+            id,
+            progress,
+            next_input_ordinal: Cell::new(0),
+        }
+    }
+
+    fn set_session_outcome(
+        &mut self,
+        batch: AssociationBatchId,
+        ordinal: ArrivalOrdinal,
+        state: OpenedFileState,
+    ) {
+        if let Some(outcomes) = &mut self.batch_for_live_arrival_mut(batch).session_outcomes {
+            outcomes.set_state(ordinal, state);
+        }
     }
 
     #[expect(

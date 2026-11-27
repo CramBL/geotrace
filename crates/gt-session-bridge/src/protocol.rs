@@ -21,7 +21,7 @@ use crate::metrics::Metrics;
 use crate::query_job::{GetQueryStatus, QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
-use crate::recording_control::ManageRecordings;
+use crate::recording_control::{ManageRecordings, OpenedFile};
 use crate::session_state::{OpenPanel, PanelOpenState, SessionPanel, SessionState};
 use crate::session_view::SetSessionView;
 use crate::settings::{SetSetting, SettingInfo, SettingKey, SettingSelection};
@@ -287,8 +287,8 @@ pub enum Reply {
     Error {
         code: ErrorCode,
     },
-    FilesQueued {
-        queued_files: usize,
+    FilesOpened {
+        files: Vec<OpenedFile>,
     },
     HistoryOpen {
         operation: HistoryOpenStatus,
@@ -372,6 +372,8 @@ impl From<ErrorCode> for Reply {
 pub enum ErrorCode {
     Busy,
     DuplicateDisplayCategory,
+    EmptyLogFile,
+    FileNotFound,
     HistoryListingFailed,
     HistoryNotReady,
     HistoryOpenFailed,
@@ -417,7 +419,10 @@ pub enum ErrorCode {
     StaleQueryResults,
     StaleSession,
     StaleTrack,
+    UnreadableFile,
+    UnrecognizedLogFormat,
     UnsupportedFileExtension,
+    UnsupportedRecording,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

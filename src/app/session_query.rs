@@ -13,7 +13,7 @@ use super::App;
 use super::mcp_action_notice::McpActionNotice;
 use super::query_run::QueryPhase;
 use super::session_map::MapPresentation;
-use super::session_operations::SessionOperationStatus;
+use super::session_operations::{INITIAL_OPERATION_WAIT, SessionOperationStatus};
 use super::session_plot::PlotPresentation;
 
 pub(super) enum SessionCommand {
@@ -225,7 +225,7 @@ impl App {
             Request::ListRecordings(args) => {
                 self.inspect_session_request(session, InspectionRequest::ListRecordings(args))
             }
-            Request::ManageRecordings(args) => self.manage_recordings(session, args),
+            Request::ManageRecordings(args) => return self.manage_recordings(session, args),
             Request::OpenHistoryRecording(args) => {
                 let status = self.open_session_history_recording(session, args)?;
                 return Ok(SessionCommand::Operation {
@@ -279,5 +279,3 @@ impl App {
         .execute(request)
     }
 }
-
-const INITIAL_OPERATION_WAIT: Duration = Duration::from_secs(1);
