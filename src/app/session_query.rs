@@ -10,10 +10,12 @@ use super::App;
 use super::mcp_action_notice::McpActionNotice;
 use super::query_run::QueryPhase;
 use super::session_map::MapPresentation;
+use super::session_plot::PlotPresentation;
 
 pub(super) enum SessionCommand {
     Completed(Reply),
     Map(MapPresentation),
+    Plot(PlotPresentation),
 }
 
 impl App {
@@ -214,9 +216,7 @@ impl App {
             }
             Request::ShowOnPlot(args) => {
                 let presentation = self.session_show_on_plot(session, args)?;
-                self.shared.borrow_mut().pending_session_plot = Some(presentation);
-                self.tiles_tree.tiles.set_visible(self.plot_tile_id, true);
-                Ok(Reply::PlotPresentationQueued)
+                return Ok(SessionCommand::Plot(presentation));
             }
         }?;
         Ok(SessionCommand::Completed(reply))

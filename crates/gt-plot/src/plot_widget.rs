@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 
 use chrono::{DateTime, Utc};
-use egui::{Align2, Color32, RichText, Stroke, TextStyle};
+use egui::{Align2, Color32, PointerButton, RichText, Stroke, TextStyle};
 use egui_plot::{AxisHints, LineStyle, PlotTransform, Span, VLine};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_filter::{GlobalFilter, TimeWindow};
@@ -231,6 +231,13 @@ pub struct PlotViewRequest {
     channel: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+pub enum PlotViewOutcome {
+    Framed,
+    Superseded,
+    Unchanged,
+}
+
 impl PlotViewRequest {
     pub fn new(
         times: impl IntoIterator<Item = f64>,
@@ -251,6 +258,10 @@ impl PlotViewRequest {
 
     pub fn framed_x_range(&self) -> RangeInclusive<f64> {
         self::padded_time_range(&self.extent)
+    }
+
+    pub fn extent(&self) -> &RangeInclusive<f64> {
+        &self.extent
     }
 
     fn enable_series(&self, state: &mut PlotState) {
@@ -486,7 +497,7 @@ impl PlotState {
     clippy::too_many_arguments,
     reason = "plot rendering needs files, visibility/filter state, cross-highlight inputs, map-sync range, and mutable plot state"
 )]
-pub fn show_track_plot(
+pub fn show_track_plot<'view>(
     ui: &mut egui::Ui,
     files: &[LoadedFile],
     // Per-file display names, resolved from the user's recording-name template
@@ -518,9 +529,9 @@ pub fn show_track_plot(
     tec: &TecSeries,
     // What the app resolved from the archives over the span the plot shows.
     archive: ArchiveOverlays<'_>,
-    view_request: Option<&PlotViewRequest>,
+    waiting_view: impl FnOnce() -> Option<&'view PlotViewRequest>,
     state: &mut PlotState,
-) -> bool {
+) -> PlotViewOutcome {
     if state.sync_to_map && map_sync_x_range.is_none() {
         state.applied_map_x_range = None;
     }
@@ -542,7 +553,7 @@ pub fn show_track_plot(
             );
         });
         state.clear_hover();
-        return false;
+        return PlotViewOutcome::Unchanged;
     }
 
     // Per-series count, for the line-name prefix.  Distinct from the
@@ -641,11 +652,9 @@ pub fn show_track_plot(
         },
     );
 
-    let view_request = view_request.filter(|_| {
-        ui.available_rect_before_wrap()
-            .intersect(ui.clip_rect())
-            .is_positive()
-    });
+    let plot_area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+    let can_frame =
+        ui.is_enabled() && ui.is_visible() && !ui.is_sizing_pass() && plot_area.is_positive();
     let available_width = ui.available_width();
     let sample_cap = levels::budget_cap(available_width, visible_count);
 
@@ -774,7 +783,13 @@ pub fn show_track_plot(
     }
     let plot_response = plot.show(ui, |plot_ui| {
         let bounds = plot_ui.plot_bounds();
-        let view = view_request.filter(|_| plot_ui.response().interact_rect.is_positive());
+        let response = plot_ui.response();
+        let view =
+            (can_frame && !response.ctx.will_discard() && response.interact_rect.is_positive())
+                .then(waiting_view)
+                .flatten();
+        let superseded = view.is_some() && self::plot_navigation_pending(response, plot_area);
+        let view = view.filter(|_| !superseded && !response.is_pointer_button_down_on());
         let requested_x_range = view.map(PlotViewRequest::framed_x_range);
         let x_range = requested_x_range
             .clone()
@@ -1014,7 +1029,7 @@ pub fn show_track_plot(
         new_hovered_time = plot_ui
             .pointer_coordinate()
             .and_then(|c| DateTime::from_timestamp(c.x as i64, 0));
-        (view, next_x_range.is_some())
+        (view, next_x_range.is_some(), superseded)
     });
     if !dark_mode {
         ui.visuals_mut().extreme_bg_color = saved_extreme_bg;
@@ -1030,15 +1045,25 @@ pub fn show_track_plot(
     if let Some(cache) = new_level_cache {
         state.level_cache = cache;
     }
-    let (applied_view, applied_x_range) = plot_response.inner;
+    let (applied_view, applied_x_range, superseded) = plot_response.inner;
     if applied_x_range {
         state.applied_map_x_range = map_x_key;
     }
-    if let Some(view) = applied_view {
-        view.enable_series(state);
-        ui.ctx().request_repaint();
-    }
-    state.last_visible_x_range = Some(plot_response.transform.bounds().range_x());
+    let actual_x = plot_response.transform.bounds().range_x();
+    let outcome = if let Some(view) = applied_view {
+        if actual_x == view.framed_x_range() {
+            view.enable_series(state);
+            ui.ctx().request_repaint();
+            PlotViewOutcome::Framed
+        } else {
+            PlotViewOutcome::Superseded
+        }
+    } else if superseded {
+        PlotViewOutcome::Superseded
+    } else {
+        PlotViewOutcome::Unchanged
+    };
+    state.last_visible_x_range = Some(actual_x);
     let selected_metric = hovered_label
         .selected()
         .and_then(|hover| hover.metric_selection());
@@ -1067,7 +1092,36 @@ pub fn show_track_plot(
     } else {
         None
     };
-    applied_view.is_some()
+    outcome
+}
+
+fn plot_navigation_pending(response: &egui::Response, plot_area: egui::Rect) -> bool {
+    if response.dragged_by(PointerButton::Primary)
+        || response.dragged_by(PointerButton::Secondary)
+        || response.drag_stopped_by(PointerButton::Secondary)
+        || response.double_clicked()
+    {
+        return true;
+    }
+    // egui_plot allocates separate drag responses in the axis area around the plot.
+    if response
+        .ctx
+        .dragged_id()
+        .and_then(|id| response.ctx.read_response(id))
+        .is_some_and(|dragged| {
+            dragged.layer_id == response.layer_id
+                && dragged.dragged_by(PointerButton::Primary)
+                && plot_area.contains_rect(dragged.interact_rect)
+                && !response.rect.intersect(dragged.interact_rect).is_positive()
+        })
+    {
+        return true;
+    }
+    response.contains_pointer()
+        && response.ctx.input(|input| {
+            input.zoom_delta_2d() != egui::Vec2::splat(1.0)
+                || input.smooth_scroll_delta() != egui::Vec2::ZERO
+        })
 }
 
 fn padded_time_range(extent: &RangeInclusive<f64>) -> RangeInclusive<f64> {

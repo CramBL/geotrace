@@ -1,4 +1,4 @@
-use chrono::Duration;
+use chrono::{DateTime, Duration};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
@@ -7,7 +7,7 @@ use gt_pending_writes::WriteKind;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetRecording, GetTrack, OpenPoint, ProcessingSettingKey,
     QueryJobState, RangeTarget, RecordingReference, Reply, Request, SetSetting, SettingInput,
-    SettingKey, SettingSelection, ShowOnMap, ShowOnPlot, TrackReference,
+    SettingKey, SettingSelection, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
 };
 use gt_side_panel::{CheckState, TreeState};
 use gt_store::{
@@ -56,6 +56,8 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
             .presented_match
             .is_some()
     );
+    let start =
+        DateTime::from_timestamp(recording_fixtures::RECORDING_FIXTURE_START_SECS, 0).unwrap();
     assert_eq!(
         session::execute(
             &mut harness,
@@ -64,7 +66,13 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
                 metrics: Vec::new(),
             }),
         ),
-        Reply::PlotPresentationQueued
+        Reply::PlotFramed {
+            track: old_track,
+            time_range: TimeRange {
+                start,
+                end: start + Duration::seconds(9),
+            },
+        }
     );
     self::set_track_split_gap(&mut harness, Duration::hours(2));
     assert_eq!(

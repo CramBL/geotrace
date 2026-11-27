@@ -3,7 +3,7 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use std::path::{Path, PathBuf};
 
 use egui_kittest::{Harness, Node, kittest::Queryable as _};
-use geotrace_sdk::{Channel, DateTime, Duration, Unit, Utc};
+use geotrace_sdk::{DateTime, Utc};
 use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
 use gt_log_view::{FilterEffect, FilterGroupId, LoadedLog};
 use gt_pending_writes::PendingWrites;
@@ -221,48 +221,6 @@ fn key_press(key: egui::Key) -> egui::Event {
         repeat: false,
         modifiers: egui::Modifiers::NONE,
     }
-}
-
-/// Synthetic `.gtd` bytes whose track carries an aligned 3-component `accel`
-/// channel in g, one sample per nav fix. The [`ACCEL_HIGH_RANGES`] stretches
-/// exceed 1 g on x, so an `@accel.x` filter has multi-sample matches to table
-/// on the window and halo on the map.
-fn accel_channel_gtd_bytes(speed_kmh: f64) -> Vec<u8> {
-    let spec = SyntheticGtdSpec {
-        start: base_time(),
-        point_count: 240,
-        step_secs: 1,
-        start_lat_deg: 55.0,
-        start_lon_deg: 12.0,
-        lat_step_deg: 0.00005,
-        lon_step_deg: 0.00008,
-        heading_deg: 20.0,
-        speed_kmh,
-        eph_m: 1.8,
-        sats_seen: 14,
-        sats_in_fix: 11,
-    };
-    let mut times = Vec::with_capacity(spec.point_count);
-    let mut values = Vec::with_capacity(spec.point_count * 3);
-    for i in 0..spec.point_count {
-        times.push(spec.start + Duration::seconds(i as i64));
-        let x = if ACCEL_HIGH_RANGES.iter().any(|r| r.contains(&i)) {
-            1.5
-        } else {
-            0.2
-        };
-        values.extend([x, 0.1, 0.98]);
-    }
-    let channel = Channel::builder()
-        .name("accel")
-        .unit(Unit::G)
-        .description("IMU acceleration")
-        .components(["x", "y", "z"])
-        .times(times)
-        .values(values)
-        .build()
-        .expect("fixture channel is valid");
-    gt_test_utils::synthetic_gtd_bytes_with_channels(spec, vec![channel])
 }
 
 /// Focus the query editor and drop the caret at the end of `text`, so the
@@ -639,7 +597,3 @@ fn open_temporary_history_database(path: &std::path::Path) -> gt_store::Recordin
 /// A demo-trip query with more matches than the matches table lists at once,
 /// each of them holding rows for the points table below it.
 const MANY_MATCH_QUERY: &str = "points | where accel < -0.2 m/s2";
-
-/// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
-/// value generation and the expected-match assertion so they cannot drift.
-const ACCEL_HIGH_RANGES: [std::ops::Range<usize>; 2] = [60..120, 180..200];

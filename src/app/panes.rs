@@ -4,11 +4,12 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
 use gt_map::{MapAction, MapDrawContext, MapFiles, MapPresentationInput, NavMap};
+use gt_plot::PlotViewOutcome;
+use gt_session_bridge::ErrorCode;
 use gt_types::{Generation, LoadedFile};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
 use super::SharedAppState;
-use super::mcp_action_notice::McpActionNotice;
 use super::pane_presentation::PresentationControls;
 use super::query_run::BackgroundQuery;
 use super::session_map::GuiCameraRequests;
@@ -176,7 +177,11 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
             }
             MainPane::Plot => {
                 let s = &mut *self.state;
-                self.toggle_plot_request = self::plot_header(ui, s, self.recording_names);
+                let header_action = self::plot_header(ui, s, self.recording_names);
+                self.toggle_plot_request = matches!(header_action, PlotHeaderAction::Hide);
+                if self.toggle_plot_request {
+                    s.reject_pending_session_plot(ErrorCode::PlotPresentationSuperseded);
+                }
                 let map_sync_x_range = if s.plot_state.sync_to_map {
                     self.map.viewport_geo_bounds().and_then(|bounds| {
                         s.map_synced_plot_range.range(
@@ -189,19 +194,19 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     None
                 };
-                let view_request = s
-                    .pending_session_plot
-                    .as_ref()
-                    .filter(|_| !self.toggle_plot_request)
-                    .and_then(|request| {
-                        if self.checked_plot_visibility == s.tree.visibility_generation() {
-                            Some(&request.view)
-                        } else {
-                            ui.ctx().request_repaint();
-                            None
-                        }
-                    });
-                let framed = gt_plot::show_track_plot(
+                let plot_ctx = ui.ctx().clone();
+                let waiting_view = || {
+                    if matches!(header_action, PlotHeaderAction::HidePressed) {
+                        return None;
+                    }
+                    let pending = s.pending_session_plot.as_ref()?;
+                    if self.checked_plot_visibility != s.tree.visibility_generation() {
+                        plot_ctx.request_repaint();
+                        return None;
+                    }
+                    pending.waiting_view()
+                };
+                let outcome = gt_plot::show_track_plot(
                     ui,
                     &s.loaded_files,
                     self.recording_names,
@@ -219,14 +224,17 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         context_lines: self.context_lines,
                         solar_flares: self.solar_flares,
                     },
-                    view_request,
+                    waiting_view,
                     &mut s.plot_state,
                 );
-                if framed {
-                    s.presented_session_plot = s.pending_session_plot.take();
-                    McpActionNotice::FramePlot.enqueue(self.toasts);
-                } else if s
-                    .presented_session_plot
+                match outcome {
+                    PlotViewOutcome::Framed => s.confirm_session_plot(self.toasts),
+                    PlotViewOutcome::Superseded => {
+                        s.reject_pending_session_plot(ErrorCode::PlotPresentationSuperseded);
+                    }
+                    PlotViewOutcome::Unchanged => {}
+                }
+                if s.presented_session_plot
                     .as_ref()
                     .is_some_and(|presentation| {
                         s.plot_state.visible_x_range() != Some(presentation.view.framed_x_range())
@@ -259,7 +267,17 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
     }
 }
 
-fn plot_header(ui: &mut egui::Ui, state: &mut SharedAppState, names: &RecordingNames) -> bool {
+enum PlotHeaderAction {
+    Hide,
+    HidePressed,
+    None,
+}
+
+fn plot_header(
+    ui: &mut egui::Ui,
+    state: &mut SharedAppState,
+    names: &RecordingNames,
+) -> PlotHeaderAction {
     egui::Panel::top("plot_header")
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -280,7 +298,13 @@ fn plot_header(ui: &mut egui::Ui, state: &mut SharedAppState, names: &RecordingN
                     {
                         state.presented_session_plot = None;
                     }
-                    hide.clicked()
+                    if hide.clicked() {
+                        PlotHeaderAction::Hide
+                    } else if hide.is_pointer_button_down_on() {
+                        PlotHeaderAction::HidePressed
+                    } else {
+                        PlotHeaderAction::None
+                    }
                 })
                 .inner
             })

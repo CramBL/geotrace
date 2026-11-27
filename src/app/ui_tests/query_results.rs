@@ -28,7 +28,7 @@ use crate::app::query_run::QuerySeries;
 use crate::app::test_util;
 use crate::app::test_util::harness::{self, QUERY_WINDOW_TITLE, ResultsTable, TestDroppedFile};
 use crate::app::test_util::recordings;
-use crate::app::ui_tests::{self, ACCEL_HIGH_RANGES, MANY_MATCH_QUERY};
+use crate::app::ui_tests::{self, MANY_MATCH_QUERY};
 
 /// Query results gray out when the data they were computed from changes -
 /// here via a global-filter edit - and recover when it changes back.
@@ -1421,7 +1421,7 @@ fn accel_app_with_query_window() -> Harness<'static, App> {
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+        TestDroppedFile::bytes(recordings::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
     harness.state_mut().query_window.open = true;
     harness.run_steps(3);
@@ -1466,7 +1466,9 @@ fn open_samples_listing(harness: &mut Harness<'_, App>) {
 #[test]
 fn expanding_a_points_match_lists_the_samples_its_aggregate_reduced() {
     let mut harness = accel_points_query_with_aggregate();
-    let stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
+    let stretch = recordings::ACCEL_HIGH_RANGES
+        .first()
+        .expect("two crafted stretches");
 
     open_samples_listing(&mut harness);
 
@@ -1541,7 +1543,9 @@ fn a_match_preview_includes_samples_at_an_interior_latest_fix_time() {
 #[test]
 fn a_listing_of_more_samples_than_it_shows_draws_only_the_rows_that_fit() {
     let mut harness = accel_points_query_with_aggregate();
-    let stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
+    let stretch = recordings::ACCEL_HIGH_RANGES
+        .first()
+        .expect("two crafted stretches");
 
     open_samples_listing(&mut harness);
 
@@ -1566,7 +1570,9 @@ fn expanding_a_channel_match_lists_the_samples_of_its_matched_rows() {
         &mut harness,
         "@accel | window 1 | where max(@accel.x) > 1 g | table max(@accel.x)",
     );
-    let stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
+    let stretch = recordings::ACCEL_HIGH_RANGES
+        .first()
+        .expect("two crafted stretches");
 
     open_samples_listing(&mut harness);
 
@@ -1605,7 +1611,7 @@ fn a_match_whose_query_reduces_no_channel_states_why_it_lists_nothing() {
 #[test]
 fn a_channel_run_lists_a_match_per_stretch_of_samples() {
     let mut harness = channel_app_with_query_run();
-    for stretch in ACCEL_HIGH_RANGES {
+    for stretch in recordings::ACCEL_HIGH_RANGES {
         assert_eq!(
             harness
                 .query_all_by_role_and_label(
@@ -1654,7 +1660,7 @@ fn copying_a_channel_result_writes_a_tab_separated_sample_table() {
         lines.next(),
         Some("1\t60\t11:34:20.000\t1.500\t0.100\t0.980")
     );
-    let samples: usize = ACCEL_HIGH_RANGES.iter().map(Range::len).sum();
+    let samples: usize = recordings::ACCEL_HIGH_RANGES.iter().map(Range::len).sum();
     assert_eq!(
         copied.lines().count(),
         samples + 1,
@@ -1953,7 +1959,7 @@ fn snapshot_app_query_channel_source() {
 
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+        TestDroppedFile::bytes(recordings::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
 
     {
@@ -1977,7 +1983,9 @@ fn snapshot_app_query_channel_source() {
     // The matches table lists a row per crafted stretch, the samples of the
     // first one fill the table below it, and the map draws halos over the
     // segments those samples cover.
-    let first_stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
+    let first_stretch = recordings::ACCEL_HIGH_RANGES
+        .first()
+        .expect("two crafted stretches");
     harness.inner.get_by_label_contains(&format!(
         "Match 1 {MIDDLE_DOT} {} samples",
         first_stretch.len()
@@ -2005,7 +2013,7 @@ fn snapshot_app_query_points_with_channel() {
 
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+        TestDroppedFile::bytes(recordings::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
 
     {
@@ -2068,7 +2076,7 @@ fn snapshot_app_query_match_samples() {
 
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+        TestDroppedFile::bytes(recordings::accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
 
     {

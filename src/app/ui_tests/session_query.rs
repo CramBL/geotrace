@@ -11,10 +11,10 @@ use gt_session_bridge::{
     QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatch, QueryMatchPosition,
     QueryPageRequest, QueryResultPage, QueryResultSource, QueryResultTime, QueryText,
     QueryValidation, RangeTarget, Reply, Request, SessionRequest, SettingKey, SettingSelection,
-    ShowOnMap, ShowOnPlot,
+    ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
 };
 use gt_test_utils::fixtures;
-use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, GpsTime, PointIdx, TrackIdx, TrackRef};
 use rstest::rstest;
 use uuid::Uuid;
 
@@ -78,7 +78,17 @@ fn releasing_dismiss_keeps_a_replacement_with_the_same_caption(#[case] pane: Pre
             start: 20,
             end: 24,
         },
-        PresentationPane::Plot => Reply::PlotPresentationQueued,
+        PresentationPane::Plot => {
+            let shared = harness.state().shared.borrow();
+            let points = &shared.loaded_files[0].tracks[0].points;
+            Reply::PlotFramed {
+                track,
+                time_range: TimeRange {
+                    start: points[20].tpv.time().utc(),
+                    end: points[23].tpv.time().utc(),
+                },
+            }
+        }
     };
     assert_eq!(session::execute(&mut harness, show(track)), opened);
     harness.run_steps(3);
@@ -116,7 +126,8 @@ fn releasing_dismiss_keeps_a_replacement_with_the_same_caption(#[case] pane: Pre
         .into();
     let replacement = match opened {
         Reply::MapRangeFramed { start, end, .. } => Reply::MapRangeFramed { track, start, end },
-        reply => reply,
+        Reply::PlotFramed { time_range, .. } => Reply::PlotFramed { track, time_range },
+        reply => panic!("expected presentation, got {reply:?}"),
     };
     assert_eq!(session::execute(&mut harness, show(track)), replacement);
     for _ in 0..3 {
@@ -145,7 +156,8 @@ fn releasing_dismiss_keeps_a_replacement_with_the_same_caption(#[case] pane: Pre
 
 #[test]
 fn session_inspection_uses_the_loaded_recording() {
-    let mut harness = ui_tests::app_with_recording_bytes(ui_tests::accel_channel_gtd_bytes(28.0));
+    let mut harness =
+        ui_tests::app_with_recording_bytes(test_util::recordings::accel_channel_gtd_bytes(28.0));
     let check =
         serde_json::from_str(r#"{"method":"check_query","text":"@accel | where @accel.x > 1 g"}"#)
             .unwrap();
@@ -846,11 +858,15 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
+    let sample_offset = TimeDelta::milliseconds(125);
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(28.0), "accel.gtd"),
+        TestDroppedFile::bytes(
+            test_util::recordings::accel_channel_gtd_bytes_with_sample_offset(28.0, sample_offset),
+            "accel.gtd",
+        ),
     );
-    let time = ui_tests::base_time() + TimeDelta::seconds(100);
+    let time = ui_tests::base_time() + TimeDelta::seconds(100) + sample_offset;
     harness
         .state_mut()
         .shared
@@ -882,7 +898,9 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
     assert_eq!(matches[0].range, 0..20);
     assert_eq!(
         matches[0].first_time,
-        Some(QueryResultTime::UnixSeconds(time.timestamp() as f64))
+        Some(QueryResultTime::UnixSeconds(
+            time.timestamp() as f64 + sample_offset.as_seconds_f64()
+        ))
     );
     assert_eq!(
         matches[0].aggregates,
@@ -900,7 +918,7 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
     assert_eq!(
         matches[0].last_time,
         Some(QueryResultTime::UnixSeconds(
-            (time + TimeDelta::seconds(19)).timestamp() as f64
+            (time + TimeDelta::seconds(19)).timestamp() as f64 + sample_offset.as_seconds_f64()
         ))
     );
     self::assert_channel_rows(&mut harness, request, &matches[0]);
@@ -917,7 +935,7 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
         target,
         metrics: Vec::new(),
     };
-    self::assert_channel_plot(&mut harness, &frame, time);
+    self::assert_channel_plot(&mut harness, &frame, time, matches[0].track);
 
     harness
         .state_mut()
@@ -935,24 +953,39 @@ fn session_query_pages_channel_rows_on_the_filtered_timeline() {
     );
 }
 
-fn assert_channel_plot(harness: &mut Harness<'_, App>, frame: &ShowOnPlot, start: DateTime<Utc>) {
+fn assert_channel_plot(
+    harness: &mut Harness<'_, App>,
+    frame: &ShowOnPlot,
+    start: DateTime<Utc>,
+    track: TrackReference,
+) {
     {
         let mut shared = harness.state_mut().shared.borrow_mut();
         shared.plot_state.sync_to_map = false;
         shared.plot_state.channel_vis.set("accel", false);
     }
+    let receipt = session::execute(harness, Request::ShowOnPlot(frame.clone()));
+    let end = start + TimeDelta::seconds(19);
     assert_eq!(
-        session::execute(harness, Request::ShowOnPlot(frame.clone())),
-        Reply::PlotPresentationQueued
+        receipt,
+        Reply::PlotFramed {
+            track,
+            time_range: TimeRange { start, end }
+        }
+    );
+    let wire = serde_json::to_value(receipt).unwrap();
+    assert_eq!(
+        wire["time_range"],
+        serde_json::json!({"start": "2025-05-23T11:35:00.125Z", "end": "2025-05-23T11:35:19.125Z"})
     );
     harness.run_steps(2);
     let shared = harness.state().shared.borrow();
-    let start = start.timestamp() as f64;
     assert!(shared.plot_state.show_channels);
     assert!(shared.plot_state.channel_vis.is_visible("accel"));
+    let seconds = GpsTime::from_utc(start).as_secs_f64_with_subseconds();
     assert_eq!(
         shared.plot_state.visible_x_range(),
-        Some(start - 1.0..=start + 20.0)
+        Some(seconds - 1.0..=seconds + 20.0)
     );
 }
 

@@ -344,7 +344,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Open the plot and frame the time range of a track, an original point range, or a retained query match.",
+        description = "Open the plot and frame a track, an original point range, or a retained query match. Returns the framed sample time range after GeoTrace updates the plot.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -383,7 +383,7 @@ impl Companion {
                 | Reply::MapPointOpened(_)
                 | Reply::MapRangeFramed { .. }
                 | Reply::PanelOpenQueued { .. }
-                | Reply::PlotPresentationQueued
+                | Reply::PlotFramed { .. }
                 | Reply::ProcessingApplied
                 | Reply::QueryDraftOpened
                 | Reply::RecordingsUnloaded { .. }
@@ -536,7 +536,15 @@ impl Companion {
                 matches!(reply, Reply::QueryCheck { .. } | Reply::QueryJob { .. })
             }
             Request::SetTrackVisibility(_) => matches!(reply, Reply::TrackVisibility(_)),
-            Request::ShowOnPlot(_) => matches!(reply, Reply::PlotPresentationQueued),
+            Request::ShowOnPlot(args) => match (&args.target, reply) {
+                (RangeTarget::Track { track, .. }, Reply::PlotFramed { track: framed, .. }) => {
+                    track == framed
+                }
+                (RangeTarget::QueryMatch { job, .. }, Reply::PlotFramed { track, .. }) => {
+                    track.recording.session == job.session
+                }
+                _ => false,
+            },
         }
     }
 
@@ -609,6 +617,18 @@ impl Companion {
             }
             ErrorCode::NoVisiblePlotTime => {
                 "The selected range has no visible plot timestamps under the current filter and track visibility."
+            }
+            ErrorCode::PlotPresentationStale => {
+                "The plot did not frame the range because the recordings, filter, visibility or query changed. The request may have opened the plot."
+            }
+            ErrorCode::PlotPresentationSuperseded => {
+                "A later plot action superseded the requested framing. The request may have opened the plot."
+            }
+            ErrorCode::PlotPresentationTimedOut => {
+                "GeoTrace could not frame the range in time. The request may have opened the plot. Show the plot and try again."
+            }
+            ErrorCode::PlotTimeUnrepresentable => {
+                "Choose a plot range with both timestamps in RFC 3339 years 0000 to 9999."
             }
             ErrorCode::QueryColumnsTooLarge => "Query result columns exceed the page size limit.",
             ErrorCode::QueryHighlightsDisabled => {

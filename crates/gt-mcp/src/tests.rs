@@ -1012,7 +1012,11 @@ async fn assert_ui_tool_replies(client: &mut Client) {
         (
             "show_on_plot",
             json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}, "metrics": ["velocity"]}),
-            json!({"status": "plot_presentation_queued"}),
+            json!({
+                "status": "plot_framed",
+                "track": track,
+                "time_range": { "start": "2026-05-29T18:48:26.125Z", "end": "2026-05-29T18:48:26.125Z" }
+            }),
         ),
         (
             "open_query",
@@ -1177,7 +1181,16 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                 },
             metrics,
         }) if *track == self::track_reference() && metrics.as_slice() == ["velocity"] => {
-            Ok(Reply::PlotPresentationQueued)
+            let time = "2026-05-29T18:48:26.125Z"
+                .parse()
+                .map_err(io::Error::other)?;
+            Ok(Reply::PlotFramed {
+                track: *track,
+                time_range: TimeRange {
+                    start: time,
+                    end: time,
+                },
+            })
         }
         Request::ShowOnMap(ShowOnMap {
             target:

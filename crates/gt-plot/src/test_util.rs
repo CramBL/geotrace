@@ -176,7 +176,7 @@ pub fn drawn_plot_in_theme(
                         context_lines: &state.sources.context_lines,
                         solar_flares: &state.sources.solar_flares,
                     },
-                    None,
+                    || None,
                     &mut state.plot,
                 );
             },
