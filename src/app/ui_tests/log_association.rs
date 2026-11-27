@@ -2,19 +2,22 @@
 //! confirming it does.
 
 use std::fs;
+use std::path::Path;
 
 use chrono::{DateTime, Duration};
 use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::{ARTICLE as ICON_ARTICLE, WARNING as ICON_WARNING};
+use geotrace_sdk::{Angle, BundledLog, NavFileBuilder, NavFix, NavFixTime};
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_log_view::{
     AttachmentSettingsStatus, FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog,
-    LogAttachmentRef, LogSaveReceipt, PositionSourceState, RecordingKey,
+    LogAttachmentRef, LogContextOrigin, LogSaveReceipt, PositionSourceState, RecordingKey,
 };
 use gt_logfile::{LogChronology, YearResolution};
 use gt_pending_writes::WriteAccess;
+use gt_side_panel::NodeKey;
 use gt_store::{
     AttachedLog, DatabaseRef, HistoryDatabase as _, LogAttachment, LogAttachmentEntry,
     LogAttachmentError, LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _,
@@ -2942,6 +2945,185 @@ fn date_resolution_preserves_applied_dates_when_position_selection_is_deferred(
             .year_resolution(),
         YearResolution::PlaceLastEntryInYear(2026)
     );
+}
+
+fn recording_bytes_with_bundled_logs(bundled_logs: &[(&str, &str)]) -> Vec<u8> {
+    let start = gt_test_utils::synthetic_log_start();
+    let mut recorder = NavFileBuilder::new().open();
+    for second in 0..600_i64 {
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(NavFixTime::Receiver(start + Duration::seconds(second)))
+                .lat(Angle::degrees(55.0 + 0.00005 * second as f64))
+                .lon(Angle::degrees(12.0 + 0.00008 * second as f64))
+                .heading(Angle::degrees(20.0))
+                .build(),
+        );
+    }
+    for (name, text) in bundled_logs {
+        recorder.add_bundled_log(BundledLog::new(*name, *text).expect("valid bundled log"));
+    }
+    let mut bytes = Vec::new();
+    recorder
+        .finish()
+        .expect("finish nav file")
+        .write(&mut bytes)
+        .expect("write gtd");
+    bytes
+}
+
+#[test]
+fn bundled_logs_auto_anchor_without_dialog_and_unload_with_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut harness = app_over_a_history_database(&dir.path().join("geotrace.h5"));
+    harness.state_mut().initial_position_source_policy = InitialPositionSourcePolicy::Ask;
+
+    let log_text = fixture_log_text(FIXTURE_LOG_SEED);
+    let gtd_bytes = recording_bytes_with_bundled_logs(&[(FIXTURE_LOG_NAME, &log_text)]);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes, "bundled.gtd"),
+    );
+    harness.run_steps(3);
+
+    let recording_id = harness
+        .state()
+        .shared
+        .borrow()
+        .loaded_files
+        .view()
+        .get(0)
+        .expect("the recording loaded")
+        .id();
+    assert_eq!(harness.state().logs.len(), 1);
+    assert!(!dialog_is_open(&harness));
+    assert!(!harness.state().log_viewer.open);
+    assert_eq!(harness.state().log_viewer.restored_logs.count(), 1);
+    assert!(harness.state().log_viewer.restored_logs.is_pulsing());
+    harness.get_by_label(format!("{ICON_ARTICLE} 1").as_str());
+
+    let log = harness.state().first_log().expect("bundled log loaded");
+    assert_eq!(log.name(), FIXTURE_LOG_NAME);
+    assert_eq!(log.context_origin(), LogContextOrigin::Bundled);
+    assert_eq!(log.associated_recording(), Some(recording_id));
+    assert!(log.associated_entry_count() > 0);
+
+    harness.state_mut().shared.borrow_mut().tree.pending_unload =
+        Some(vec![NodeKey::File(FileIdx::new(0))]);
+    harness.run_steps(3);
+
+    assert!(harness.state().shared.borrow().loaded_files.is_empty());
+    assert!(harness.state().logs.is_empty());
+    assert_eq!(harness.state().log_viewer.restored_logs.count(), 0);
+}
+
+fn store_bundled_recording_with_matching_attachment(
+    db_path: &Path,
+    filters: StoredLogFilterStack,
+) -> (Harness<'static, App>, DatabaseRef) {
+    let mut harness = app_over_a_history_database(db_path);
+    harness.state_mut().initial_position_source_policy = InitialPositionSourcePolicy::Ask;
+
+    let log_text = fixture_log_text(FIXTURE_LOG_SEED);
+    let gtd_bytes = recording_bytes_with_bundled_logs(&[(FIXTURE_LOG_NAME, &log_text)]);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes, "bundled.gtd"),
+    );
+    harness.run_steps(3);
+    let db_ref = stored_recording(&harness);
+    Recordings::open_or_create(db_path)
+        .expect("open db")
+        .attach_log(
+            &db_ref,
+            &LogToAttach {
+                name: FIXTURE_LOG_NAME,
+                text: &log_text,
+                settings: StoredLogSettings {
+                    association_window: None,
+                    filters,
+                    year_reference: None,
+                    year_resolution: StoredYearResolution::Infer,
+                },
+            },
+        )
+        .expect("attach matching log");
+
+    harness.state_mut().shared.borrow_mut().tree.pending_unload =
+        Some(vec![NodeKey::File(FileIdx::new(0))]);
+    harness.run_steps(3);
+    assert!(harness.state().shared.borrow().loaded_files.is_empty());
+    assert!(harness.state().logs.is_empty());
+    (harness, db_ref)
+}
+
+#[test]
+fn bundled_log_deduplicates_with_history_attachment_when_restored_after_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let saved_filters = StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
+        group_id: 0,
+        condition: StoredLogFilterCondition::Message {
+            text: "kernel".to_owned(),
+            regex: false,
+        },
+        effects: StoredLogFilterEffects::Map {
+            enabled: true,
+            color_slot: 0,
+        },
+    }]);
+    let (mut harness, db_ref) =
+        store_bundled_recording_with_matching_attachment(&db_path, saved_filters);
+
+    harness.state().history.open(db_ref.clone());
+    assert!(
+        harness.step_until(|harness| {
+            !harness.state().shared.borrow().loaded_files.is_empty()
+                && harness
+                    .state()
+                    .first_log()
+                    .is_some_and(|log| log.attachment().is_some())
+        }),
+        "the recording reopened and the stored attachment restored over the bundled log"
+    );
+    harness.run_steps(4);
+
+    assert_eq!(harness.state().logs.len(), 1);
+    assert!(!dialog_is_open(&harness));
+    assert!(!harness.state().log_viewer.open);
+    assert_eq!(harness.state().log_viewer.restored_logs.count(), 1);
+    let log = harness.state().first_log().expect("single loaded log");
+    assert_eq!(
+        log.attachment().map(|attachment| &attachment.recording),
+        Some(&db_ref)
+    );
+    assert_eq!(log.filters().chips().len(), 1);
+    assert!(log.associated_recording().is_some());
+}
+
+#[test]
+fn bundled_log_deduplicates_with_already_loaded_history_attachment() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let (mut harness, db_ref) =
+        store_bundled_recording_with_matching_attachment(&db_path, StoredLogFilterStack::default());
+
+    restore_the_stored_attachment(&mut harness, &db_path, &db_ref);
+    assert_eq!(harness.state().logs.len(), 1);
+    assert!(harness.state().first_log().unwrap().attachment().is_some());
+
+    harness.state().history.open(db_ref);
+    assert!(
+        harness.step_until(|harness| !harness.state().shared.borrow().loaded_files.is_empty()),
+        "the recording reopened from history"
+    );
+    harness.run_steps(4);
+
+    assert_eq!(harness.state().logs.len(), 1);
+    assert!(!dialog_is_open(&harness));
+    let log = harness.state().first_log().expect("single loaded log");
+    assert!(log.attachment().is_some());
+    assert!(log.associated_recording().is_some());
 }
 
 /// The seed [`drop_the_log`] writes its lines from.

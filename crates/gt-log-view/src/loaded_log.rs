@@ -50,6 +50,7 @@ impl LogDocument {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LogContextOrigin {
+    Bundled,
     DetachedAttachment,
     LooseImport,
     SavedAttachment,
@@ -64,6 +65,7 @@ pub enum PositionSourceState {
 
 #[derive(Debug)]
 enum LogContext {
+    Bundled { source: Option<RecordingKey> },
     DetachedAttachment { source: Option<RecordingKey> },
     LooseImport { source: PositionSourceState },
     SavedAttachment(Box<AttachmentSettingsState>),
@@ -147,6 +149,7 @@ impl LoadedLog {
 
     pub fn context_origin(&self) -> LogContextOrigin {
         match self.context {
+            LogContext::Bundled { .. } => LogContextOrigin::Bundled,
             LogContext::LooseImport { .. } => LogContextOrigin::LooseImport,
             LogContext::SavedAttachment(_) => LogContextOrigin::SavedAttachment,
             LogContext::DetachedAttachment { .. } => LogContextOrigin::DetachedAttachment,
@@ -156,7 +159,9 @@ impl LoadedLog {
     pub fn attachment(&self) -> Option<&LogAttachmentRef> {
         match &self.context {
             LogContext::SavedAttachment(state) => Some(state.attachment()),
-            LogContext::LooseImport { .. } | LogContext::DetachedAttachment { .. } => None,
+            LogContext::Bundled { .. }
+            | LogContext::LooseImport { .. }
+            | LogContext::DetachedAttachment { .. } => None,
         }
     }
 
@@ -199,7 +204,9 @@ impl LoadedLog {
         }
         match &self.context {
             LogContext::SavedAttachment(state) => state.save_error(),
-            LogContext::LooseImport { .. } | LogContext::DetachedAttachment { .. } => None,
+            LogContext::Bundled { .. }
+            | LogContext::LooseImport { .. }
+            | LogContext::DetachedAttachment { .. } => None,
         }
     }
 
@@ -313,7 +320,7 @@ impl LoadedLog {
     pub fn position_source_state(&self) -> PositionSourceState {
         match &self.context {
             LogContext::LooseImport { source } => source.clone(),
-            LogContext::DetachedAttachment { source } => source
+            LogContext::Bundled { source } | LogContext::DetachedAttachment { source } => source
                 .clone()
                 .map_or(PositionSourceState::None, PositionSourceState::Recording),
             LogContext::SavedAttachment(state) => PositionSourceState::Recording(
@@ -383,7 +390,7 @@ impl LoadedLog {
             LogContext::LooseImport { source } => {
                 *source = PositionSourceState::Recording(recording_key);
             }
-            LogContext::DetachedAttachment { source } => {
+            LogContext::Bundled { source } | LogContext::DetachedAttachment { source } => {
                 *source = Some(recording_key);
             }
             LogContext::SavedAttachment(_) => {}
@@ -414,7 +421,7 @@ impl LoadedLog {
                 *source = PositionSourceState::None;
                 self.clear_entry_placements();
             }
-            LogContext::DetachedAttachment { source } => {
+            LogContext::Bundled { source } | LogContext::DetachedAttachment { source } => {
                 *source = None;
                 self.clear_entry_placements();
             }
@@ -479,6 +486,7 @@ impl LoadedLog {
             LogContext::LooseImport {
                 source: PositionSourceState::Recording(key),
             }
+            | LogContext::Bundled { source: Some(key) }
             | LogContext::DetachedAttachment { source: Some(key) } => key.resolve(recordings),
             LogContext::SavedAttachment(state) => {
                 RecordingLookup::for_attachment(&state.attachment().recording, recordings)
@@ -980,6 +988,9 @@ impl LoadedLogs {
 
     pub fn push(&mut self, mut log: LoadedLog) -> LogPushOutcome {
         let duplicate = match &log.context {
+            LogContext::Bundled { source } => source
+                .as_ref()
+                .and_then(|recording| self.id_of_recording_log(recording, log.content_hash())),
             LogContext::SavedAttachment(state) => self.id_of_attachment(state.attachment()),
             LogContext::LooseImport { .. } => self.id_of_loose_import(log.content_hash()),
             LogContext::DetachedAttachment { .. } => None,
@@ -1009,6 +1020,22 @@ impl LoadedLogs {
         LogPushOutcome::NewlyLoaded(id)
     }
 
+    pub fn load_bundled(
+        &mut self,
+        mut log: LoadedLog,
+        recording: RecordingKey,
+        recordings: &LoadedFilesView<'_>,
+    ) -> LogPushOutcome {
+        if let Some(id) = self.id_of_recording_log(&recording, log.content_hash()) {
+            return LogPushOutcome::AlreadyLoaded(id);
+        }
+        log.context = LogContext::Bundled {
+            source: Some(recording),
+        };
+        log.reassociate(recordings);
+        self.push(log)
+    }
+
     pub fn get_by_id(&self, id: LoadedLogId) -> Option<&LoadedLog> {
         self.logs
             .iter()
@@ -1035,6 +1062,27 @@ impl LoadedLogs {
     ) -> LogPushOutcome {
         if let Some(id) = self.id_of_attachment(&attachment) {
             return LogPushOutcome::AlreadyLoaded(id);
+        }
+        if let Some(stored) = self.logs.iter_mut().find(|stored| {
+            stored.log.context_origin() == LogContextOrigin::Bundled
+                && stored.log.content_hash() == log.content_hash()
+                && stored
+                    .log
+                    .anchor_key()
+                    .as_ref()
+                    .and_then(RecordingKey::database_ref)
+                    == Some(&attachment.recording)
+        }) {
+            stored
+                .log
+                .filters
+                .release_layer_color_slots(&mut self.layer_color_slots);
+            log.restore_attachment(attachment, stored_settings, recordings);
+            log.filters
+                .take_layer_color_slots(&mut self.layer_color_slots);
+            stored.log = log;
+            self.map_matches_stale = true;
+            return LogPushOutcome::AlreadyLoaded(stored.id);
         }
         log.restore_attachment(attachment, stored_settings, recordings);
         self.push(log)
@@ -1269,6 +1317,28 @@ impl LoadedLogs {
             stored.log.reassociate(recordings);
         }
         self.map_matches_stale = true;
+    }
+
+    fn id_of_recording_log(
+        &self,
+        recording: &RecordingKey,
+        content_hash: LogContentHash,
+    ) -> Option<LoadedLogId> {
+        self.logs
+            .iter()
+            .find(|stored| {
+                stored.log.content_hash() == content_hash
+                    && (stored.log.is_anchored_to(recording)
+                        || (matches!(stored.log.context, LogContext::SavedAttachment(_))
+                            && recording.database_ref().is_some()
+                            && stored
+                                .log
+                                .anchor_key()
+                                .as_ref()
+                                .and_then(RecordingKey::database_ref)
+                                == recording.database_ref()))
+            })
+            .map(|stored| stored.id)
     }
 }
 
