@@ -4,11 +4,11 @@ use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
-    ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
-    GetRecording, GetTrack, ListHistoryRecordings, ListMetrics, ListRecordings, ManageRecordings,
-    OpenHistoryRecording, OpenPanel, OpenPoint, PanelOpenState, QueryJobRequest, QueryText,
-    RangeTarget, Reply, Request, SessionPanel, SetSessionView, SetSetting, SetTrackVisibility,
-    SettingSelection, ShowOnMap, ShowOnPlot,
+    ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetQueryStatus,
+    GetRangeDetails, GetRecording, GetTrack, ListHistoryRecordings, ListMetrics, ListRecordings,
+    ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, PanelOpenState, QueryJobRequest,
+    QueryText, RangeTarget, Reply, Request, SessionPanel, SetSessionView, SetSetting,
+    SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -96,7 +96,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Read the status of a History open. A ready result includes the loaded recording ID.",
+        description = "Read the status of a History open. With wait_ms, wait for completion or a desktop decision. A ready result includes the loaded recording ID.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn get_history_open_status(
@@ -118,12 +118,12 @@ impl Companion {
     }
 
     #[tool(
-        description = "Read the current status or summary of a query job returned by run_query.",
+        description = "Read the status or summary of a query job returned by run_query. With wait_ms, wait for completion up to the given duration.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn get_query_status(
         &self,
-        Parameters(args): Parameters<QueryJobRequest>,
+        Parameters(args): Parameters<GetQueryStatus>,
     ) -> CallToolResult {
         self.inspect(Request::GetQueryStatus(args)).await
     }
@@ -413,7 +413,7 @@ impl Companion {
     fn accepts_reply(request: &Request, reply: &Reply) -> bool {
         match request {
             Request::ApplyProcessing(_) => matches!(reply, Reply::ProcessingApplied),
-            Request::CancelQuery(args) | Request::GetQueryStatus(args) => {
+            Request::CancelQuery(args) => {
                 matches!(reply, Reply::QueryJob { job } if job.job == args.job)
             }
             Request::CheckQuery(_) => matches!(reply, Reply::QueryCheck { .. }),
@@ -422,6 +422,9 @@ impl Companion {
             }
             Request::GetHistoryOpenStatus(args) => {
                 matches!(reply, Reply::HistoryOpen { operation } if operation.operation == args.operation)
+            }
+            Request::GetQueryStatus(args) => {
+                matches!(reply, Reply::QueryJob { job } if job.job == args.job)
             }
             Request::OpenHistoryRecording(_) => {
                 matches!(reply, Reply::HistoryOpen { .. })

@@ -32,7 +32,7 @@ pub use crate::protocol::{
     TrackVisibilityResult, VisibilityTrackRefs,
 };
 pub use crate::query_job::{
-    QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
+    GetQueryStatus, QueryCounts, QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus,
 };
 pub use crate::query_results::{
     GetQueryResults, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
@@ -52,6 +52,7 @@ pub use crate::settings::{
     AnalysisSettingKey, ProcessingSettingKey, SetSetting, SettingApply, SettingInfo, SettingInput,
     SettingKey, SettingSelection, SettingUnit, SettingValue,
 };
+pub use crate::status_wait::{StatusWait, StatusWaitOutOfRange};
 use crate::traffic_capture::ExchangeCapture;
 pub use crate::traffic_capture::{TrafficCapture, TrafficDirection, TrafficFrame};
 
@@ -69,6 +70,7 @@ mod session_reply;
 mod session_state;
 mod session_view;
 mod settings;
+mod status_wait;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
 mod traffic_capture;

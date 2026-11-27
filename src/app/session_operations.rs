@@ -46,6 +46,13 @@ pub(super) struct SessionOperationReplies {
     pending: Vec<OperationWaiter>,
 }
 
+#[cfg(test)]
+impl SessionOperationReplies {
+    pub(super) fn waiting_count(&self) -> usize {
+        self.pending.len()
+    }
+}
+
 struct OperationWaiter {
     operation: PendingOperation,
     reply: DeferredSessionReply,
@@ -73,14 +80,15 @@ impl App {
     pub(super) fn await_session_operation(
         &mut self,
         status: SessionOperationStatus,
+        wait: Duration,
         reply: SessionReply,
         admitted_at: Instant,
     ) {
-        let Some(operation) = status.pending_operation() else {
+        let Some(operation) = status.pending_operation().filter(|_| !wait.is_zero()) else {
             reply.send(status);
             return;
         };
-        let deadline = admitted_at + INITIAL_SESSION_OPERATION_WAIT;
+        let deadline = admitted_at + wait;
         let pending = &mut self.session_operation_replies.pending;
         pending.retain(|waiter| waiter.reply.client_is_waiting());
         if pending.len() >= MAX_DEFERRED_OPERATION_REPLIES {
@@ -111,5 +119,3 @@ impl App {
             .collect();
     }
 }
-
-const INITIAL_SESSION_OPERATION_WAIT: Duration = Duration::from_secs(1);

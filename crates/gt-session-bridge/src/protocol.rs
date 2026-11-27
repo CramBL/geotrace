@@ -18,7 +18,7 @@ use crate::history::{
 };
 use crate::inspection::{RangeDetails, RecordingDetails, TrackDetails};
 use crate::metrics::Metrics;
-use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
+use crate::query_job::{GetQueryStatus, QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
 use crate::recording_control::ManageRecordings;
@@ -35,7 +35,7 @@ pub enum Request {
     DescribeSetting(SettingSelection),
     GetHistoryOpenStatus(GetHistoryOpenStatus),
     GetQueryResults(GetQueryResults),
-    GetQueryStatus(QueryJobRequest),
+    GetQueryStatus(GetQueryStatus),
     GetRangeDetails(GetRangeDetails),
     GetRecording(GetRecording),
     GetSessionState,

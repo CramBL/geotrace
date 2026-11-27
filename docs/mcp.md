@@ -261,7 +261,11 @@ When the job completes in time, `run_query` returns `completed` with the query s
 At expiry, the bridge returns the last status GeoTrace published for that job.
 If four query or History calls are already waiting, GeoTrace returns the current status immediately.
 If the connection closes before the reply arrives, retry `run_query` to get the active identifier or start a new job.
-Poll a pending job until the status is `completed`, `cancelled`, `failed`, or `stale`.
+For a pending job, pass an integer `wait_ms` from 0 to 2000 to `get_query_status`.
+Omit `wait_ms` or pass 0 for an immediate status.
+GeoTrace replies when the job completes, is cancelled, fails, or becomes stale.
+At expiry, the bridge returns the last published status for the same job.
+The connection timeout and the limit of four waiting calls also apply to status requests.
 Completion reports the match, track, and skipped counts for each query block in input order.
 The status reports `stale` when the current recording data, filter, enabled tracks, or derived inputs differ from the run's inputs.
 The Query window's Cancel button cancels the same job as `cancel_query`.
@@ -380,7 +384,10 @@ GeoTrace waits up to one second after admitting the request.
 The wait can end sooner near the connection timeout.
 A fast open can return `ready` or `awaiting_track_settings` in the first reply.
 At expiry, the bridge returns the last status GeoTrace published for that operation.
-Poll `get_history_open_status` with the returned `operation` while the read or load is in progress.
+Pass the returned `operation` to `get_history_open_status`.
+Use an integer `wait_ms` from 0 to 2000 to wait for the read and load to finish or for GeoTrace to request a track settings decision.
+Omit `wait_ms` or pass 0 for an immediate status.
+At expiry, the bridge returns the last published status for the same operation.
 Use the `recording` reference in a ready result with `get_recording` and other loaded session tools.
 If GeoTrace cannot reproduce the stored track layout, the operation reports `history_track_layout_unavailable`.
 For a recording with stored tracks, the operation expires if local processing changes the loaded track layout.

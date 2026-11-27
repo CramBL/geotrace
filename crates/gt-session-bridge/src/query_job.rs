@@ -2,6 +2,26 @@ use gt_query_run::{QuerySummary, RunResults};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::StatusWait;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GetQueryStatus {
+    pub job: QueryJobId,
+    #[serde(default, skip_serializing_if = "StatusWait::is_zero")]
+    pub wait_ms: StatusWait,
+}
+
+impl From<QueryJobId> for GetQueryStatus {
+    fn from(job: QueryJobId) -> Self {
+        Self {
+            job,
+            wait_ms: StatusWait::default(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]

@@ -14,7 +14,7 @@ use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, HistoryDates, HistoryOpenId,
     HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings, ListRecordings,
     OpenHistoryRecording, OpenPanel, PanelOpenState, QueryCounts, QueryJobState,
-    RecordingReference, Reply, Request, SessionPanel,
+    RecordingReference, Reply, Request, SessionPanel, StatusWait,
 };
 use gt_side_panel::{CheckState, NodeKey};
 use gt_store::{
@@ -79,9 +79,7 @@ fn a_history_open_reports_a_worker_admission_failure_in_its_reply() {
     assert_eq!(
         session::execute(
             &mut harness,
-            Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
-                operation: status.operation,
-            }),
+            Request::GetHistoryOpenStatus(status.operation.into()),
         ),
         Reply::HistoryOpen { operation: status },
     );
@@ -109,14 +107,27 @@ fn a_history_open_reports_the_loaded_recording() {
     let notice_count = harness.state().toasts.len();
     let (accepted, waiting) = {
         let _access = HistoryAccess::lock();
-        let mut waiting = (0..gt_session_bridge::MAX_DEFERRED_OPERATION_REPLIES)
-            .map(|_| session::begin(&mut harness, request.clone()))
-            .collect::<Vec<_>>();
-        for reply in &mut waiting {
-            assert_eq!(reply.try_recv().unwrap(), None);
-        }
+        let waiting: [_; gt_session_bridge::MAX_DEFERRED_OPERATION_REPLIES] =
+            std::array::from_fn(|_| {
+                let mut reply = session::begin(&mut harness, request.clone());
+                assert_eq!(reply.try_recv().unwrap(), None);
+                reply
+            });
         let accepted = self::open_status(&session::execute(&mut harness, request.clone()));
         assert_eq!(accepted.state, HistoryOpenState::Reading);
+        let mut status = session::begin(
+            &mut harness,
+            Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
+                operation: accepted.operation,
+                wait_ms: StatusWait::try_from(2_000).unwrap(),
+            }),
+        );
+        assert_eq!(
+            status.try_recv().unwrap(),
+            Some(Reply::HistoryOpen {
+                operation: accepted
+            })
+        );
         assert_eq!(
             session::execute(
                 &mut harness,
@@ -167,6 +178,44 @@ fn a_history_open_reports_the_loaded_recording() {
     );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
     assert_eq!(harness.state().toasts.len(), notice_count + 1);
+}
+
+#[test]
+fn a_history_status_reply_returns_the_pending_desktop_decision_immediately() {
+    let (mut harness, _dir, _) =
+        recordings::app_with_stored_tracks(&ui_tests::two_live_track_ranges());
+    harness
+        .state_mut()
+        .processing_config
+        .track_layout
+        .track_split_gap = TimeDelta::hours(2);
+    let page = self::await_page(&mut harness, UNFILTERED);
+    let initial = self::open_status(&session::execute(
+        &mut harness,
+        Request::OpenHistoryRecording(OpenHistoryRecording {
+            recording: page.recordings.first().unwrap().id,
+        }),
+    ));
+    assert_eq!(
+        self::after_loading(&mut harness, initial.operation),
+        HistoryOpenState::AwaitingTrackSettings
+    );
+    let mut reply = session::begin(
+        &mut harness,
+        Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
+            operation: initial.operation,
+            wait_ms: StatusWait::try_from(2_000).unwrap(),
+        }),
+    );
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(Reply::HistoryOpen {
+            operation: HistoryOpenStatus {
+                operation: initial.operation,
+                state: HistoryOpenState::AwaitingTrackSettings,
+            }
+        })
+    );
 }
 
 #[rstest]
@@ -1438,7 +1487,7 @@ fn after_loading(harness: &mut Harness<'_, App>, operation: HistoryOpenId) -> Hi
     loop {
         let state = self::open_status(&session::execute(
             harness,
-            Request::GetHistoryOpenStatus(GetHistoryOpenStatus { operation }),
+            Request::GetHistoryOpenStatus(operation.into()),
         ))
         .state;
         if !matches!(state, HistoryOpenState::Reading | HistoryOpenState::Loading) {

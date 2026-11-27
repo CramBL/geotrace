@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::{Builder, Uuid};
 use xxhash_rust::xxh3::Xxh3;
 
+use crate::StatusWait;
 use crate::protocol::{ErrorCode, RecordingReference, TimeRange};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,6 +75,17 @@ pub struct OpenHistoryRecording {
 #[serde(deny_unknown_fields)]
 pub struct GetHistoryOpenStatus {
     pub operation: HistoryOpenId,
+    #[serde(default, skip_serializing_if = "StatusWait::is_zero")]
+    pub wait_ms: StatusWait,
+}
+
+impl From<HistoryOpenId> for GetHistoryOpenStatus {
+    fn from(operation: HistoryOpenId) -> Self {
+        Self {
+            operation,
+            wait_ms: StatusWait::default(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

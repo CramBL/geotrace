@@ -8,9 +8,9 @@ use egui_kittest::Harness;
 use gt_session_bridge::test_util::{TestEndpoint, TestSessionReply};
 use gt_session_bridge::{
     GetQueryResults, GetRecording, GetTrack, ListRecordings, QueryCounts, QueryJobId,
-    QueryJobRequest, QueryJobState, QueryMatch, QueryMatchPosition, QueryPageRequest,
-    QueryResultPage, QueryResultRow, QueryResults, QueryText, RecordingDetails, Reply, Request,
-    SessionQueryPhase, SessionRequest, TrackDetails, TrackReference,
+    QueryJobState, QueryMatch, QueryMatchPosition, QueryPageRequest, QueryResultPage,
+    QueryResultRow, QueryResults, QueryText, RecordingDetails, Reply, Request, SessionQueryPhase,
+    SessionRequest, TrackDetails, TrackReference,
 };
 use gt_test_utils::HarnessInteraction as _;
 use uuid::Uuid;
@@ -148,7 +148,7 @@ pub fn begin_query(harness: &mut Harness<'_, App>, text: &str) -> (QueryJobId, T
 
 pub fn query_status(harness: &mut Harness<'_, App>, job: QueryJobId) -> QueryJobState {
     let Reply::QueryJob { job: result } =
-        self::execute(harness, Request::GetQueryStatus(QueryJobRequest { job }))
+        self::execute(harness, Request::GetQueryStatus(job.into()))
     else {
         panic!("expected query status");
     };

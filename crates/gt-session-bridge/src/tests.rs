@@ -1597,6 +1597,42 @@ fn apply_processing_keeps_the_existing_wire_command() {
     assert_eq!(serde_json::from_str::<Request>(command).unwrap(), request);
 }
 
+#[test]
+fn status_waits_require_a_bounded_integer_on_the_wire() {
+    let id = json!({"session": Uuid::nil(), "id": Uuid::nil()});
+    for (method, field) in [
+        ("get_query_status", "job"),
+        ("get_history_open_status", "operation"),
+    ] {
+        let mut request = json!({"method": method});
+        request[field] = id.clone();
+        for (wait, expected_ms) in [(None, 0), (Some(0), 0), (Some(2_000), 2_000)] {
+            let mut input = request.clone();
+            if let Some(wait) = wait {
+                input["wait_ms"] = json!(wait);
+            }
+            let command: Request = serde_json::from_value(input).unwrap();
+            let wait = match &command {
+                Request::GetHistoryOpenStatus(args) => args.wait_ms,
+                Request::GetQueryStatus(args) => args.wait_ms,
+                _ => panic!("expected a status request"),
+            };
+            assert_eq!(Duration::from(wait), Duration::from_millis(expected_ms));
+            assert_eq!(
+                serde_json::to_value(command).unwrap().get("wait_ms"),
+                (expected_ms != 0).then(|| json!(expected_ms)).as_ref()
+            );
+        }
+        for invalid in [json!(-1), json!(2_001), json!(1.5), json!("1"), Value::Null] {
+            let mut input = request.clone();
+            input["wait_ms"] = invalid;
+            serde_json::from_value::<Request>(input).unwrap_err();
+        }
+    }
+    serde_json::from_value::<Request>(json!({"method": "cancel_query", "job": id, "wait_ms": 0}))
+        .unwrap_err();
+}
+
 #[tokio::test]
 async fn shutdown_disconnects_pending_client_and_releases_endpoint() {
     let fixture = TestEndpoint::new().unwrap();

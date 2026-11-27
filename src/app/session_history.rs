@@ -2,9 +2,8 @@ use std::sync::{Arc, Weak};
 
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFilesView, RecordingData};
 use gt_session_bridge::{
-    ErrorCode, GetHistoryOpenStatus, HistoryListing, HistoryOpenId, HistoryOpenState,
-    HistoryOpenStatus, HistoryRecordingId, ListHistoryRecordings, OpenHistoryRecording,
-    RecordingReference, Reply,
+    ErrorCode, HistoryListing, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
+    HistoryRecordingId, ListHistoryRecordings, OpenHistoryRecording, RecordingReference, Reply,
 };
 use gt_store::{
     RecordingDebugTag, RecordingUiState, StoredLayoutRevision, StoredSegmentation,
@@ -511,14 +510,14 @@ impl App {
     pub(super) fn history_open_status(
         &mut self,
         session: Uuid,
-        request: GetHistoryOpenStatus,
+        operation: HistoryOpenId,
     ) -> Result<HistoryOpenStatus, ErrorCode> {
-        if request.operation.session != session {
+        if operation.session != session {
             return Err(ErrorCode::StaleSession);
         }
         let ctx = self.ctx.clone();
         self.apply_finished_recording_work(&ctx);
-        self.current_history_open_status(request.operation)
+        self.current_history_open_status(operation)
     }
 
     pub(super) fn current_history_open_status(
