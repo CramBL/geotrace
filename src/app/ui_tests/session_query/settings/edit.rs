@@ -72,7 +72,7 @@ fn a_session_analysis_edit_updates_live_values_and_keeps_the_query_draft() {
     let selection = SettingSelection { key };
     assert_eq!(
         session::execute(&mut harness, Request::OpenSetting(selection)),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     harness.run_steps(3);
     harness
@@ -249,7 +249,7 @@ fn the_numeric_editor_preserves_precision_on_focus_and_save(
     ));
     assert_eq!(
         session::execute(app, Request::OpenSetting(SettingSelection { key })),
-        Reply::SettingOpenQueued
+        Reply::SettingOpened { key }
     );
     app.run_steps(3);
 

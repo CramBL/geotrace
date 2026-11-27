@@ -23,7 +23,7 @@ use crate::query_validation::QueryValidation;
 use crate::recording_control::ManageRecordings;
 use crate::session_state::{OpenPanel, SessionPanel, SessionState};
 use crate::session_view::SetSessionView;
-use crate::settings::{SetSetting, SettingInfo, SettingSelection};
+use crate::settings::{SetSetting, SettingInfo, SettingKey, SettingSelection};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
@@ -293,7 +293,7 @@ pub enum Reply {
     PlotPresentationQueued,
     ProcessingApplied,
     QueryCheck { validation: QueryValidation },
-    QueryDraftQueued,
+    QueryDraftOpened,
     QueryJob { job: QueryJobStatus },
     QueryResults { results: QueryResults },
     Range { details: RangeDetails },
@@ -302,7 +302,7 @@ pub enum Reply {
     RecordingsUnloaded { unloaded_recordings: usize },
     SessionState { state: SessionState },
     Setting { setting: SettingInfo },
-    SettingOpenQueued,
+    SettingOpened { key: SettingKey },
     Settings { settings: Vec<SettingInfo> },
     Track { details: TrackDetails },
     TrackVisibility(TrackVisibilityResult),

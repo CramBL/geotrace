@@ -136,17 +136,23 @@ impl Server {
 
     /// Skip a queued request if its reply receiver has closed.
     pub fn dispatch(&mut self, execute: impl FnOnce(SessionRequest) -> Reply) {
-        let Ok(pending) = self.pending.try_recv() else {
-            return;
-        };
-        if pending.reply.is_closed() {
-            return;
+        if let Some(exchange) = self.receive() {
+            exchange.respond(execute);
         }
-        let reply = execute(SessionRequest {
-            request: pending.request,
-            session: self.session,
-        });
-        drop(pending.reply.send(reply));
+    }
+
+    pub fn receive(&mut self) -> Option<SessionExchange> {
+        let pending = self.pending.try_recv().ok()?;
+        if pending.reply.is_closed() {
+            return None;
+        }
+        Some(SessionExchange {
+            request: SessionRequest {
+                request: pending.request,
+                session: self.session,
+            },
+            reply: pending.reply,
+        })
     }
 
     pub fn traffic_capture(&self) -> TrafficCapture {
@@ -161,6 +167,27 @@ impl Server {
 pub struct SessionRequest {
     pub request: Request,
     pub session: Uuid,
+}
+
+pub struct SessionExchange {
+    request: SessionRequest,
+    reply: oneshot::Sender<Reply>,
+}
+
+impl SessionExchange {
+    pub fn request(&self) -> &Request {
+        &self.request.request
+    }
+
+    pub fn client_is_waiting(&self) -> bool {
+        !self.reply.is_closed()
+    }
+
+    pub fn respond(self, execute: impl FnOnce(SessionRequest) -> Reply) {
+        if self.client_is_waiting() {
+            drop(self.reply.send(execute(self.request)));
+        }
+    }
 }
 
 impl Drop for Server {

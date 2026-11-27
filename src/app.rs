@@ -19,7 +19,6 @@ use gt_map::NavMap;
 use gt_map::mapbox_tiles;
 use gt_pending_writes::PendingWrites;
 use gt_plot::PlotState;
-use gt_session_bridge::SettingKey;
 #[cfg(test)]
 use gt_session_bridge::test_util::TestEndpoint;
 use gt_side_panel::{FilterPanelState, TreeState};
@@ -39,7 +38,7 @@ use panes::MainPane;
 use query_run::BackgroundQuery;
 use recording_name_template::TemplatePreviewRecording;
 use rustc_hash::{FxHashMap, FxHashSet};
-use session_bridge::SessionBridge;
+use session_bridge::{SessionBridge, SessionNavigation};
 use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use session_panels::PendingPanelReveals;
@@ -421,9 +420,8 @@ pub struct App {
     session_bridge_endpoint: Option<Arc<TestEndpoint>>,
     session_traffic_window: SessionTrafficWindow,
     session_history: SessionHistory,
-    pending_session_query_draft: Option<String>,
+    session_navigation: SessionNavigation,
     pending_session_panel_reveals: PendingPanelReveals,
-    pending_session_setting: Option<SettingKey>,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
     pending_writes: PendingWrites,
@@ -673,9 +671,8 @@ impl App {
             session_bridge_endpoint: None,
             session_traffic_window: SessionTrafficWindow::default(),
             session_history: SessionHistory::default(),
-            pending_session_query_draft: None,
+            session_navigation: SessionNavigation::default(),
             pending_session_panel_reveals: PendingPanelReveals::default(),
-            pending_session_setting: None,
             pending_writes: options.pending_writes,
             shutdown: shutdown::ShutdownState::default(),
             interference_backfill_ui: backfill_ui::BackfillUi::default(),

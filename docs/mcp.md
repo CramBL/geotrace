@@ -240,7 +240,8 @@ For a single diagnostic that exceeds the reply limit, check that query in the Ge
 
 Pass `text` to `open_query` to replace the draft in the Query window.
 The tool accepts any draft that fits within the bridge request limit, including text with syntax errors.
-After `query_draft_queued`, use the editor to revise the draft and run it when ready.
+`query_draft_opened` confirms that GeoTrace opened the editor and installed the text.
+Use the editor to revise the draft and run it when ready.
 
 Submit the same `text` to `run_query` to start a background query job.
 GeoTrace evaluates the tracks enabled in the track tree and applies the current global filter, including its time window.
@@ -320,7 +321,10 @@ An `apply` value of `live` means the plot updates as the control changes.
 With `live_with_deferred_markers`, the plot updates as the control changes and GeoTrace regenerates affected markers on load or through Apply to loaded data.
 With `deferred_processing`, GeoTrace uses the setting when it processes a recording.
 Use Apply to loaded data in Settings to process the current recordings with updated settings.
-`open_setting` returns `setting_open_queued` when the bridge schedules the navigation.
+`setting_opened` confirms that GeoTrace opened Settings and selected the page for the returned `key`.
+GeoTrace scrolls to the control during window layout after pending desktop input and scrolling finish.
+`open_query` and `open_setting` wait briefly for earlier desktop input.
+If that input remains pending, GeoTrace returns a busy error and leaves the request unapplied.
 
 Use `set_setting` with a setting's `key` and a boolean or number in its reported unit.
 Numeric input must be finite and within the reported bounds.

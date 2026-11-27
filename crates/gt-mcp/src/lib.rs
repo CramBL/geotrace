@@ -270,7 +270,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Open the Settings window at the selected control.",
+        description = "Open Settings on the page for a setting key. GeoTrace scrolls to the control after pending input and scrolling finish.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -384,9 +384,9 @@ impl Companion {
                 | Reply::PanelOpenQueued { .. }
                 | Reply::PlotPresentationQueued
                 | Reply::ProcessingApplied
-                | Reply::QueryDraftQueued
+                | Reply::QueryDraftOpened
                 | Reply::RecordingsUnloaded { .. }
-                | Reply::SettingOpenQueued
+                | Reply::SettingOpened { .. }
                 | Reply::Settings { .. }
                 | Reply::TrackVisibility(_)),
             ) => serde_json::to_value(reply),
@@ -507,8 +507,10 @@ impl Companion {
             Request::OpenPoint(_) | Request::ShowOnMap(_) => {
                 matches!(reply, Reply::MapPresentationQueued)
             }
-            Request::OpenQuery(_) => matches!(reply, Reply::QueryDraftQueued),
-            Request::OpenSetting(_) => matches!(reply, Reply::SettingOpenQueued),
+            Request::OpenQuery(_) => matches!(reply, Reply::QueryDraftOpened),
+            Request::OpenSetting(args) => {
+                matches!(reply, Reply::SettingOpened { key } if *key == args.key)
+            }
             Request::RunQuery(_) => {
                 matches!(reply, Reply::QueryCheck { .. } | Reply::QueryJob { .. })
             }

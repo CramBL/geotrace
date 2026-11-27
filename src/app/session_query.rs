@@ -11,6 +11,25 @@ use super::mcp_action_notice::McpActionNotice;
 use super::query_run::QueryPhase;
 
 impl App {
+    fn open_session_query_draft(&mut self, text: String) -> Result<Reply, ErrorCode> {
+        if self.shutdown_requested() {
+            return Err(ErrorCode::ShuttingDown);
+        }
+        let opened = self.query_window.reveal_editor(&self.ctx);
+        let edited = self.editor_query.session().text() != text;
+        if edited {
+            self.editor_query.session_mut().set_text(text);
+            self.query_window.invalidate_editor_assistance();
+        }
+        if opened {
+            McpActionNotice::OpenQueryEditor.enqueue(&mut self.toasts);
+        } else if edited {
+            McpActionNotice::UpdateQueryDraft.enqueue(&mut self.toasts);
+        }
+        self.ctx.request_repaint();
+        Ok(Reply::QueryDraftOpened)
+    }
+
     fn submit_session_query(&mut self, scope: Uuid, text: String) -> Result<Reply, ErrorCode> {
         if self.shutdown_requested() {
             return Err(ErrorCode::ShuttingDown);
@@ -36,7 +55,6 @@ impl App {
             QueryPreparation::Ready(checked) => checked,
         };
         let job = self.editor_query.queue(scope, checked, generation);
-        self.pending_session_query_draft = None;
         self.query_window.reveal_editor(&self.ctx);
         self.query_window.invalidate_editor_assistance();
         self.query_window
@@ -177,14 +195,8 @@ impl App {
                 self.shared.borrow_mut().queue_session_map(presentation);
                 Ok(Reply::MapPresentationQueued)
             }
-            Request::OpenQuery(args) => {
-                self.pending_session_query_draft = Some(args.text);
-                Ok(Reply::QueryDraftQueued)
-            }
-            Request::OpenSetting(args) => {
-                self.pending_session_setting = Some(args.key);
-                Ok(Reply::SettingOpenQueued)
-            }
+            Request::OpenQuery(args) => self.open_session_query_draft(args.text),
+            Request::OpenSetting(args) => self.open_session_setting(args.key),
             Request::RunQuery(args) => self.submit_session_query(session, args.text),
             Request::SetSessionView(args) => self.set_session_view(session, args),
             Request::SetSetting(args) => self

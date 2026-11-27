@@ -573,7 +573,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
             }]}
         }))
     );
-    self::assert_ui_tools_queue_requests(&mut client).await;
+    self::assert_ui_tool_replies(&mut client).await;
     self::assert_setting_tools_report_typed_values(&mut client).await;
     self::assert_processing_requires_empty_arguments(&mut client).await;
     self::assert_history_listing_uses_the_date_filter(&mut client).await;
@@ -727,12 +727,12 @@ async fn mcp_cancellation_drops_only_the_targeted_bridge_request() {
             .await
             .expect("MCP cancellation did not close the outstanding bridge response");
         assert!(submitted_at.elapsed() < ASYNC_RESULT_WAIT);
-        control.reply.send(Reply::QueryDraftQueued).unwrap();
+        control.reply.send(Reply::QueryDraftOpened).unwrap();
         let response = client.receive().await;
         assert_eq!(response.get("id"), Some(&json!(3)));
         assert_eq!(
             response.pointer("/result/structuredContent"),
-            Some(&json!({"status": "query_draft_queued"}))
+            Some(&json!({"status": "query_draft_opened"}))
         );
         drop(client);
         tokio::time::timeout(Duration::from_secs(2), worker)
@@ -989,18 +989,18 @@ async fn assert_history_listing_uses_the_date_filter(client: &mut Client) {
     );
 }
 
-async fn assert_ui_tools_queue_requests(client: &mut Client) {
+async fn assert_ui_tool_replies(client: &mut Client) {
     let track = self::track_reference();
     let commands = [
         (
             "open_point",
             json!({"track": track, "point": 1}),
-            "map_presentation_queued",
+            json!({"status": "map_presentation_queued"}),
         ),
         (
             "show_on_map",
             json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}}),
-            "map_presentation_queued",
+            json!({"status": "map_presentation_queued"}),
         ),
         (
             "show_on_map",
@@ -1008,25 +1008,25 @@ async fn assert_ui_tools_queue_requests(client: &mut Client) {
                 "kind": "query_match", "job": self::query_job_id(), "query": 1,
                 "matched": {"track_ordinal": 2, "match_ordinal": 3}
             }}),
-            "map_presentation_queued",
+            json!({"status": "map_presentation_queued"}),
         ),
         (
             "show_on_plot",
             json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}, "metrics": ["velocity"]}),
-            "plot_presentation_queued",
+            json!({"status": "plot_presentation_queued"}),
         ),
         (
             "open_query",
             json!({"text": INVALID_QUERY_DRAFT}),
-            "query_draft_queued",
+            json!({"status": "query_draft_opened"}),
         ),
         (
             "open_setting",
             json!({"key": "analysis.slip_window_min"}),
-            "setting_open_queued",
+            json!({"status": "setting_opened", "key": "analysis.slip_window_min"}),
         ),
     ];
-    for (index, (name, arguments, status)) in commands.into_iter().enumerate() {
+    for (index, (name, arguments, expected)) in commands.into_iter().enumerate() {
         let presented = client
             .exchange(json!({
                 "jsonrpc": "2.0", "id": 13 + index, "method": "tools/call",
@@ -1035,7 +1035,7 @@ async fn assert_ui_tools_queue_requests(client: &mut Client) {
             .await;
         assert_eq!(
             presented.pointer("/result/structuredContent"),
-            Some(&json!({"status": status}))
+            Some(&expected)
         );
     }
 }
@@ -1150,11 +1150,13 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                 },
         }) if *track == self::track_reference() => Ok(Reply::MapPresentationQueued),
         Request::OpenQuery(QueryText { text }) if text == INVALID_QUERY_DRAFT => {
-            Ok(Reply::QueryDraftQueued)
+            Ok(Reply::QueryDraftOpened)
         }
         Request::OpenSetting(SettingSelection {
             key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
-        }) => Ok(Reply::SettingOpenQueued),
+        }) => Ok(Reply::SettingOpened {
+            key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
+        }),
         Request::SetSetting(SetSetting {
             key: SettingKey::Analysis(AnalysisSettingKey::SlipWindow),
             value: SettingInput::Number(12.5),
