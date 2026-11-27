@@ -7,6 +7,7 @@ use geotrace_sdk_units::snr;
 use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 use strum::IntoEnumIterator as _;
 
+use crate::bundled_log::BundledLog;
 use crate::error::{
     ChannelError, DebugTimeRepairError, Error, EventMarkerError, EventMarkerStyleError,
     MARKER_LABEL_LOCATION, MetaField, MetaStringWithNul,
@@ -1233,6 +1234,7 @@ pub struct NavFile {
     pub(crate) event_markers: Vec<EventMarkerPoint>,
     pub(crate) event_marker_styles: Vec<EventMarkerStyle>,
     pub(crate) channels: Vec<Channel>,
+    pub(crate) bundled_logs: Vec<BundledLog>,
 }
 
 impl NavFile {
@@ -1270,6 +1272,11 @@ impl NavFile {
 
     pub fn channels(&self) -> &[Channel] {
         &self.channels
+    }
+
+    /// Raw-text logs bundled in this file, sorted by name.
+    pub fn bundled_logs(&self) -> &[BundledLog] {
+        &self.bundled_logs
     }
 
     /// On an ordinary read, the SDK applies this repair configuration.
@@ -1629,6 +1636,10 @@ mod tests {
                     .build()
                     .expect("one value per timestamp"),
             ],
+            bundled_logs: vec![
+                BundledLog::new("device.log", "2026-05-29T18:48:24Z boot complete\n")
+                    .expect("a valid ISO 8601 bundled log"),
+            ],
         }
     }
 
@@ -1654,6 +1665,7 @@ mod tests {
     #[case::event_markers(|file: &mut NavFile| file.event_markers.clear())]
     #[case::event_marker_styles(|file: &mut NavFile| file.event_marker_styles.clear())]
     #[case::channels(|file: &mut NavFile| file.channels.clear())]
+    #[case::bundled_logs(|file: &mut NavFile| file.bundled_logs.clear())]
     fn two_files_differing_in_one_field_are_unequal_ignoring_the_build_stamp(
         #[case] change: impl FnOnce(&mut NavFile),
     ) {

@@ -7,6 +7,7 @@ use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, FixedPointType, Floating
 use strum::IntoEnumIterator as _;
 
 use crate::builder::ABSENT_TIMESTAMP_MICROS;
+use crate::bundled_log::BundledLog;
 use crate::error::{Error, FieldLocation};
 use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
@@ -57,6 +58,7 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFil
     let event_markers = read_event_markers(&file)?;
     let event_marker_styles = read_event_marker_styles(&file)?;
     let channels = read_channels(&file)?;
+    let bundled_logs = read_bundled_logs(&file)?;
     let debug_time_repair = read_debug_time_repair_tag(
         &attrs,
         write::APPLIED_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR,
@@ -78,6 +80,7 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFil
         event_markers,
         event_marker_styles,
         channels,
+        bundled_logs,
     };
     let repair = match (mode, debug_time_repair) {
         (NavFileOpenMode::Regular, Some(DebugTimeRepairTag::Pending(repair))) => Some(repair),
@@ -832,6 +835,31 @@ fn read_channels(file: &SizeCheckedFile) -> Result<Vec<Channel>, Error> {
     }
     channels.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(channels)
+}
+
+fn read_bundled_logs(file: &SizeCheckedFile) -> Result<Vec<BundledLog>, Error> {
+    let Some(root) = file.optional_group("logs")? else {
+        return Ok(Vec::new());
+    };
+
+    let mut bundled_logs = Vec::new();
+    for name in root.groups()? {
+        let grp = root.group(&name)?;
+        let dataset = grp
+            .optional_dataset("text")?
+            .ok_or_else(|| Error::MissingBundledLogDataset { name: name.clone() })?;
+        let shape = dataset.shape()?;
+        if shape.len() != 1 {
+            return Err(Error::InvalidBundledLogShape {
+                name,
+                actual: shape,
+            });
+        }
+        let bytes = dataset.read_u8()?;
+        bundled_logs.push(BundledLog::from_utf8_bytes(name, &bytes)?);
+    }
+    bundled_logs.sort_by(|a, b| a.name().cmp(b.name()));
+    Ok(bundled_logs)
 }
 
 /// The row of `table` that `index` addresses, or [`Error::IndexPastTable`]

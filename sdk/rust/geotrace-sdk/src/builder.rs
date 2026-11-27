@@ -4,6 +4,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use geotrace_sdk_units::snr;
 
+use crate::bundled_log::BundledLog;
 use crate::error::{
     self, BuildError, Error, FieldLocation, MetaField, MetaStringWithNul, UnplacedRecordCounts,
     VariantPathError,
@@ -211,6 +212,7 @@ impl NavFileBuilder {
             pending_event_markers: Vec::new(),
             event_marker_styles_by_variant_path: BTreeMap::new(),
             channels: Vec::new(),
+            bundled_logs: Vec::new(),
             first_event_variant_path_rejection: None,
             meta: self.meta,
             satellite_window: self.satellite_window,
@@ -237,6 +239,7 @@ pub struct NavRecorder {
     pending_event_markers: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)>,
     event_marker_styles_by_variant_path: BTreeMap<String, EventMarkerStyle>,
     channels: Vec<Channel>,
+    bundled_logs: Vec<BundledLog>,
     first_event_variant_path_rejection: Option<VariantPathError>,
     meta: Option<Meta>,
     satellite_window: Duration,
@@ -248,7 +251,7 @@ pub struct NavRecorder {
 ///
 /// Implemented for [`NavFix`], [`SatelliteReport`], [`SatelliteUsageReport`],
 /// [`SatelliteObservationReport`], [`Annotation`],
-/// [`EventMarker`], and [`Channel`]. Per-variant styling and typed events are
+/// [`EventMarker`], [`Channel`], and [`BundledLog`]. Per-variant styling and typed events are
 /// intentionally not `NavRecord`s: use [`add_event_marker_style`] and
 /// [`add_event`] respectively.
 ///
@@ -301,9 +304,15 @@ impl NavRecord for Channel {
     }
 }
 
+impl NavRecord for BundledLog {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_bundled_log(self);
+    }
+}
+
 impl NavRecorder {
     /// Add any timeline object (a [`NavFix`], [`SatelliteReport`],
-    /// [`Annotation`], [`EventMarker`], or [`Channel`]), dispatched by type
+    /// [`Annotation`], [`EventMarker`], [`Channel`], or [`BundledLog`]), dispatched by type
     /// via [`NavRecord`].
     ///
     /// Ergonomic sugar for the matching `add_*` method:
@@ -372,6 +381,14 @@ impl NavRecorder {
     /// [`Channel::builder`].
     pub fn add_channel(&mut self, channel: Channel) -> &mut Self {
         self.channels.push(channel);
+        self
+    }
+
+    /// Attach a validated raw-text [`BundledLog`] to the recording.
+    ///
+    /// Duplicate log names are rejected by [`finish`](Self::finish).
+    pub fn add_bundled_log(&mut self, log: BundledLog) -> &mut Self {
+        self.bundled_logs.push(log);
         self
     }
 
@@ -563,6 +580,15 @@ impl NavRecorder {
             return Err(BuildError::DuplicateChannelName { name });
         }
 
+        let mut bundled_logs = self.bundled_logs;
+        bundled_logs.sort_by(|a, b| a.name().cmp(b.name()));
+        if let Some(name) = bundled_logs.windows(2).find_map(|pair| match pair {
+            [a, b] if a.name() == b.name() => Some(a.name().to_owned()),
+            _ => None,
+        }) {
+            return Err(BuildError::DuplicateBundledLogName { name });
+        }
+
         let mut meta = self.meta.unwrap_or_default();
         if self.scrubbed_provenance {
             meta.stamp_scrubbed_provenance();
@@ -581,6 +607,7 @@ impl NavRecorder {
                 .into_values()
                 .collect(),
             channels,
+            bundled_logs,
         })
     }
 }

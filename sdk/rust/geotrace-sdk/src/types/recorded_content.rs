@@ -14,6 +14,7 @@ impl NavFile {
             event_markers,
             event_marker_styles,
             channels,
+            bundled_logs,
         } = self;
         meta.equals_ignoring_build_provenance(&other.meta)
             && *debug_time_repair == other.debug_time_repair
@@ -30,6 +31,7 @@ impl NavFile {
                 .iter()
                 .zip(&other.channels)
                 .all(|(channel, other)| channel.equals_recorded_content(other))
+            && *bundled_logs == other.bundled_logs
     }
 }
 
