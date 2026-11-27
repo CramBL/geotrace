@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from geotrace_sdk import (
     Annotation,
+    BundledLog,
     Channel,
     EventMarker,
     EventMarkerStyle,
@@ -64,6 +65,7 @@ def _every_collection() -> NavFile:
     b.add(EventMarker("power/boot", T1))
     b.add_event_marker_style(EventMarkerStyle("power/boot", color="#FF9900"))
     b.add(Channel("temp", [T0, T1], [20.0, 21.0]))
+    b.add(BundledLog("gnss.log", "2024-06-01 09:00:00 gnss: lock acquired\n"))
     return _write_and_read(b)
 
 
@@ -72,6 +74,7 @@ COLLECTION_NAMES = [
     "markers",
     "event_markers",
     "channels",
+    "bundled_logs",
     "event_marker_styles",
 ]
 

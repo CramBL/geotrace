@@ -7,6 +7,7 @@ use pyo3::exceptions::PyIndexError;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PySlice};
 
+use crate::bundled_log::PyBundledLog;
 use crate::channel::PyChannel;
 use crate::markers::{PyEventMarkerPoint, PyEventMarkerStyle, PyMarker};
 use crate::nav_point::PyNavPoint;
@@ -189,6 +190,14 @@ nav_file_sequence! {
     iterator: PyChannelIterator as "ChannelIterator",
     element: PyChannel as "Channel",
     collection: channels,
+}
+
+nav_file_sequence! {
+    summary: "The bundled raw-text logs of a :class:`NavFile`, sorted by name.",
+    sequence: PyBundledLogSequence as "BundledLogSequence",
+    iterator: PyBundledLogIterator as "BundledLogIterator",
+    element: PyBundledLog as "BundledLog",
+    collection: bundled_logs,
 }
 
 nav_file_sequence! {

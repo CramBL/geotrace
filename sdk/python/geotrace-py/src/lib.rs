@@ -13,11 +13,13 @@ use crate::navigation::{
 };
 
 pub use builder::PyNavFileBuilder;
+pub use bundled_log::PyBundledLog;
 pub use channel::{PyChannel, PyChannelUnit, PyUnit};
 pub use collections::{
-    PyChannelIterator, PyChannelSequence, PyEventMarkerPointIterator, PyEventMarkerPointSequence,
-    PyEventMarkerStyleIterator, PyEventMarkerStyleSequence, PyMarkerIterator, PyMarkerSequence,
-    PyNavPointIterator, PyNavPointSequence,
+    PyBundledLogIterator, PyBundledLogSequence, PyChannelIterator, PyChannelSequence,
+    PyEventMarkerPointIterator, PyEventMarkerPointSequence, PyEventMarkerStyleIterator,
+    PyEventMarkerStyleSequence, PyMarkerIterator, PyMarkerSequence, PyNavPointIterator,
+    PyNavPointSequence,
 };
 pub use enums::{PyConstellation, PyMarkerIcon, PyTravelMode};
 pub use markers::{PyAnnotation, PyEventMarker, PyEventMarkerPoint, PyEventMarkerStyle, PyMarker};
@@ -28,6 +30,7 @@ pub use nav_point::PyNavPoint;
 pub use satellite::{PySatellite, PySatelliteReport};
 
 mod builder;
+mod bundled_log;
 mod channel;
 mod collections;
 mod enums;
@@ -51,6 +54,7 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUnit>()?;
     m.add_class::<PyChannelUnit>()?;
     m.add_class::<PyChannel>()?;
+    m.add_class::<PyBundledLog>()?;
     m.add_class::<PyNavFix>()?;
     m.add_class::<PySatelliteIdentity>()?;
     m.add_class::<PySatelliteScope>()?;
@@ -74,6 +78,8 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEventMarkerPointIterator>()?;
     m.add_class::<PyChannelSequence>()?;
     m.add_class::<PyChannelIterator>()?;
+    m.add_class::<PyBundledLogSequence>()?;
+    m.add_class::<PyBundledLogIterator>()?;
     m.add_class::<PyEventMarkerStyleSequence>()?;
     m.add_class::<PyEventMarkerStyleIterator>()?;
     m.add_class::<PyNavFile>()?;

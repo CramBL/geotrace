@@ -9,8 +9,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::collections::{
-    PyChannelSequence, PyEventMarkerPointSequence, PyEventMarkerStyleSequence, PyMarkerSequence,
-    PyNavPointSequence,
+    PyBundledLogSequence, PyChannelSequence, PyEventMarkerPointSequence,
+    PyEventMarkerStyleSequence, PyMarkerSequence, PyNavPointSequence,
 };
 use crate::errors;
 use crate::metadata::PyMeta;
@@ -109,6 +109,12 @@ impl PyNavFile {
     /// All ad-hoc sensor channels, sorted by name.
     #[getter]
     fn channels(&self) -> PyChannelSequence {
+        Arc::clone(&self.inner).into()
+    }
+
+    /// All bundled raw-text logs, sorted by name.
+    #[getter]
+    fn bundled_logs(&self) -> PyBundledLogSequence {
         Arc::clone(&self.inner).into()
     }
 
