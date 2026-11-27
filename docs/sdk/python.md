@@ -150,3 +150,30 @@ New writers use GTD v3.
 The compatible application reader is currently in the Unreleased app.
 App 0.19.0 and earlier require GTD v1/v2 files.
 Publish the compatible app reader before the synchronized SDK releases, and record its release version in the [release handoff](../../RELEASES.md#gtd-v3-release-order).
+
+## Bundled raw-text logs
+
+Attach raw UTF-8 text logs to a recording with `BundledLog`.
+Construct one from a string with `BundledLog(name, text)`, from raw bytes with `BundledLog.from_utf8_bytes(name, data)`, or from disk with `BundledLog.from_file(path)`.
+Pass the log to `NavFileBuilder.add()` or `NavFileBuilder.add_bundled_log()`, or read and attach directly with `NavFileBuilder.add_bundled_log_from_file(path)`.
+Read stored logs back in sorted name order through `NavFile.bundled_logs`.
+
+```python
+from geotrace_sdk import BundledLog, NavFile, NavFileBuilder
+
+nav_file = (
+    NavFileBuilder()
+    .add(BundledLog("gnss.log", "2024-06-01 09:00:00 gnss: lock acquired\n"))
+    .add_bundled_log_from_file("modem.log")
+    .finish()
+)
+nav_file.write_to_file("recording.gtd")
+
+reopened = NavFile.open("recording.gtd")
+for log in reopened.bundled_logs:
+    print(f"{log.name} ({len(log.text)} chars)")
+```
+
+Validation raises `ValueError` for invalid names, invalid UTF-8, empty content, and logs without a recognised timestamp format (syslog, ISO 8601 with a space, or RFC 3339) in the first ten non-empty lines.
+Filesystem failures in `BundledLog.from_file()` and `NavFileBuilder.add_bundled_log_from_file()` raise `OSError`.
+`NavFileBuilder.finish()` raises `ValueError` when two bundled logs share a name.
