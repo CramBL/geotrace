@@ -308,8 +308,12 @@ For a channel match, GeoTrace frames the retained sample times and enables the m
 Use the optional `metrics` array to enable plot metrics by their query identifiers, such as `velocity` and `eph`.
 GeoTrace reports an error for a query identifier with no corresponding plot metric.
 GeoTrace frames visible timestamps even when a selected metric has missing values.
-The `plot_presentation_queued` status acknowledges the request.
-GeoTrace applies a current request on the next frame with a visible plot area.
+GeoTrace returns `plot_framed` after updating the plot's time range and series visibility.
+The reply includes the resolved `track` and inclusive sample `time_range` before axis padding.
+Both bounds use RFC 3339 UTC timestamps.
+GeoTrace converts channel bounds from the query timeline's fractional seconds.
+GeoTrace opens the plot when it accepts the request and waits briefly for a drawable plot frame.
+A change to the target, a later plot action, or a timeout can prevent framing and leave the plot open.
 With Sync to map enabled, the plot keeps that time range until the map's visible time range changes or the user changes the plot view.
 The plot shows which range or query match it framed.
 Dismiss removes the presentation label and keeps the current time range and enabled series.

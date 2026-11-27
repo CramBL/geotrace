@@ -42,7 +42,7 @@ use session_bridge::{SessionBridge, SessionNavigation};
 use session_history::{HistoryLoadAdoption, SessionHistory};
 use session_map::{AppliedMapPresentation, QueuedMapPresentation};
 use session_panels::PendingPanelReveals;
-use session_plot::PlotPresentation;
+use session_plot::{PlotPresentation, QueuedPlotPresentation};
 use session_traffic_window::SessionTrafficWindow;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use settings_ui::search::SettingsSearch;
@@ -166,7 +166,7 @@ struct SharedAppState {
     zoom_to_visible_request: bool,
     reveal_query_matches_request: Option<gt_ui_types::MatchRevealTarget>,
     pending_session_map: Option<QueuedMapPresentation>,
-    pending_session_plot: Option<PlotPresentation>,
+    pending_session_plot: Option<QueuedPlotPresentation>,
     presented_session_map: Option<AppliedMapPresentation>,
     presented_session_plot: Option<PlotPresentation>,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.

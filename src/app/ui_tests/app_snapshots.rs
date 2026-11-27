@@ -11,6 +11,7 @@ use strum::IntoEnumIterator as _;
 use crate::app::App;
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
+use crate::app::test_util::recordings;
 use crate::app::ui_tests;
 
 /// Snapshot of the app with the gold dataset loaded. Captures the side panel,
@@ -399,7 +400,7 @@ fn snapshot_app_plot_channel_components() {
     harness.inner.step();
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(0.9), "accel.gtd"),
+        TestDroppedFile::bytes(recordings::accel_channel_gtd_bytes(0.9), "accel.gtd"),
     );
     harness.inner.run_steps(5);
 
@@ -439,7 +440,7 @@ fn channel_chip_menu_offers_component_colors() {
     harness.inner.step();
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(0.9), "accel.gtd"),
+        TestDroppedFile::bytes(recordings::accel_channel_gtd_bytes(0.9), "accel.gtd"),
     );
     harness.inner.run_steps(5);
     harness.inner.get_by_label_contains("Channels").click();
@@ -506,7 +507,7 @@ fn snapshot_app_plot_channel_color_override() {
     harness.inner.step();
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
-        TestDroppedFile::bytes(ui_tests::accel_channel_gtd_bytes(0.9), "accel.gtd"),
+        TestDroppedFile::bytes(recordings::accel_channel_gtd_bytes(0.9), "accel.gtd"),
     );
     harness.inner.run_steps(5);
 

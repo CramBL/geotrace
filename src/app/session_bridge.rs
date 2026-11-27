@@ -149,12 +149,18 @@ impl App {
     fn release_session_bridge_state(&mut self) {
         self.editor_query.release_active_session_job();
         self.session_navigation = SessionNavigation::default();
-        self.shared.borrow_mut().cancel_pending_session_map();
+        let mut shared = self.shared.borrow_mut();
+        shared.cancel_pending_session_map();
+        shared.pending_session_plot = None;
         self.session_traffic_window = SessionTrafficWindow::default();
     }
 
     pub(super) fn dispatch_session_request(&mut self, ctx: &egui::Context) {
-        self.shared.borrow_mut().poll_session_map(ctx);
+        {
+            let mut shared = self.shared.borrow_mut();
+            shared.poll_session_map(ctx);
+            shared.poll_session_plot(ctx, &self.editor_query);
+        }
         let exchange = match &mut self.session_bridge {
             SessionBridge::Running(server) if server.is_running() => {
                 self.session_navigation.receive(ctx, server)
@@ -198,6 +204,7 @@ impl App {
                     .queue_session_map(presentation, reply);
                 self.ctx.request_repaint();
             }
+            Ok(SessionCommand::Plot(presentation)) => self.queue_session_plot(presentation, reply),
             Err(error) => reply.send(error),
         }
     }

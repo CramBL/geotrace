@@ -1,7 +1,8 @@
 use std::num::NonZeroUsize;
 use std::ops::{Range, RangeInclusive};
+use std::time::Duration;
 
-use chrono::{DateTime, Datelike as _, Utc};
+use chrono::{DateTime, Datelike as _, TimeDelta, Utc};
 use gt_loaded_files::{
     LoadedFileEntry, LoadedFilesView, MAX_RECORDINGS_PER_PAGE, RecordingPage, RecordingSummary,
     SessionTrackRef,
@@ -307,7 +308,10 @@ pub enum Reply {
     PanelOpenQueued {
         panel: SessionPanel,
     },
-    PlotPresentationQueued,
+    PlotFramed {
+        track: TrackReference,
+        time_range: TimeRange,
+    },
     ProcessingApplied,
     QueryCheck {
         validation: QueryValidation,
@@ -395,6 +399,10 @@ pub enum ErrorCode {
     NoSkyTrailReports,
     NoVisibleMapGeometry,
     NoVisiblePlotTime,
+    PlotPresentationStale,
+    PlotPresentationSuperseded,
+    PlotPresentationTimedOut,
+    PlotTimeUnrepresentable,
     QueryColumnsTooLarge,
     QueryHighlightsDisabled,
     QueryJobNotFound,
@@ -479,11 +487,32 @@ impl From<LoadedTimeRange> for TimeRange {
 }
 
 impl TimeRange {
-    pub(crate) fn rfc3339(self) -> Option<Self> {
+    pub fn rfc3339(self) -> Option<Self> {
         Some(Self {
             start: self::rfc3339_bound(self.start)?,
             end: self::rfc3339_bound(self.end)?,
         })
+    }
+
+    pub fn from_unix_seconds(range: &RangeInclusive<f64>) -> Option<Self> {
+        if range.is_empty() {
+            return None;
+        }
+        let from_seconds = |seconds: f64| {
+            let elapsed =
+                TimeDelta::from_std(Duration::try_from_secs_f64(seconds.abs()).ok()?).ok()?;
+            let offset = if seconds.is_sign_negative() {
+                -elapsed
+            } else {
+                elapsed
+            };
+            DateTime::UNIX_EPOCH.checked_add_signed(offset)
+        };
+        Self {
+            start: from_seconds(*range.start())?,
+            end: from_seconds(*range.end())?,
+        }
+        .rfc3339()
     }
 }
 
@@ -567,3 +596,27 @@ const JSON_QUOTE_BYTES: usize = 2;
 // Four strings use one fifth each. The remaining fifth covers the row and page structure.
 const MAX_METADATA_JSON_BYTES: usize = MAX_REPLY_BYTES / MAX_RECORDINGS_PER_PAGE / 5;
 pub const MAX_VISIBILITY_TRACKS: usize = 24;
+
+#[cfg(test)]
+mod tests {
+    use super::TimeRange;
+
+    #[test]
+    fn fractional_unix_seconds_on_either_side_of_the_epoch_serialize_as_utc() {
+        let range = TimeRange::from_unix_seconds(&(-0.125..=0.25)).unwrap();
+        assert_eq!(
+            serde_json::to_value(range).unwrap(),
+            serde_json::json!({
+                "start": "1969-12-31T23:59:59.875Z",
+                "end": "1970-01-01T00:00:00.250Z"
+            })
+        );
+    }
+
+    #[test]
+    fn unix_seconds_outside_the_rfc3339_years_or_numeric_range_are_rejected() {
+        for range in [0.0..=1e12, -1e12..=0.0, 0.0..=f64::INFINITY, f64::NAN..=0.0] {
+            assert_eq!(TimeRange::from_unix_seconds(&range), None);
+        }
+    }
+}

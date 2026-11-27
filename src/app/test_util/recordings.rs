@@ -1,12 +1,13 @@
 //! Recordings written into a real history database, and a `HistoryWorker`
 //! spawned on that database.
 
+use std::ops::Range;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta};
 use egui_kittest::Harness;
-use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
+use geotrace_sdk::{Angle, Channel, NavFileBuilder, NavFix, NavFixTime, Unit};
 use gt_loaded_files::FileHistory;
 use gt_pending_writes::PendingWrites;
 use gt_plot::AnalysisConfig;
@@ -110,6 +111,52 @@ pub fn bytes_starting_at(start_secs: i64, point_count: usize) -> Vec<u8> {
         point_count,
         ..recording_fixtures::minimal_gtd_spec()
     })
+}
+
+/// A recording with one three-component accelerometer sample per fix.
+/// The `accel.x` values exceed 1 g in [`ACCEL_HIGH_RANGES`].
+pub fn accel_channel_gtd_bytes(speed_kmh: f64) -> Vec<u8> {
+    self::accel_channel_gtd_bytes_with_sample_offset(speed_kmh, TimeDelta::zero())
+}
+
+pub fn accel_channel_gtd_bytes_with_sample_offset(
+    speed_kmh: f64,
+    sample_offset: TimeDelta,
+) -> Vec<u8> {
+    let spec = SyntheticGtdSpec {
+        point_count: 240,
+        start_lat_deg: 55.0,
+        start_lon_deg: 12.0,
+        lat_step_deg: 0.00005,
+        lon_step_deg: 0.00008,
+        heading_deg: 20.0,
+        speed_kmh,
+        eph_m: 1.8,
+        sats_seen: 14,
+        sats_in_fix: 11,
+        ..recording_fixtures::minimal_gtd_spec()
+    };
+    let mut times = Vec::with_capacity(spec.point_count);
+    let mut values = Vec::with_capacity(spec.point_count * 3);
+    for i in 0..spec.point_count {
+        times.push(spec.start + TimeDelta::seconds(i as i64) + sample_offset);
+        let x = if ACCEL_HIGH_RANGES.iter().any(|r| r.contains(&i)) {
+            1.5
+        } else {
+            0.2
+        };
+        values.extend([x, 0.1, 0.98]);
+    }
+    let channel = Channel::builder()
+        .name("accel")
+        .unit(Unit::G)
+        .description("IMU acceleration")
+        .components(["x", "y", "z"])
+        .times(times)
+        .values(values)
+        .build()
+        .expect("fixture channel is valid");
+    gt_test_utils::synthetic_gtd_bytes_with_channels(spec, vec![channel])
 }
 
 /// Twenty nav points one second apart from 2025-05-23 12:53:20 UTC.
@@ -325,3 +372,5 @@ pub fn only_recording(worker: &HistoryWorker) -> RecordingEntry {
 
 /// The nav points [`sample_bytes`] holds.
 pub const SAMPLE_POINT_COUNT: u64 = 20;
+
+pub const ACCEL_HIGH_RANGES: [Range<usize>; 2] = [60..120, 180..200];
