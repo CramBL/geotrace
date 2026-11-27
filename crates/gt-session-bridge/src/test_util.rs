@@ -3,10 +3,28 @@ use std::io::{self, ErrorKind};
 #[cfg(unix)]
 use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
+use tokio::sync::oneshot;
 
 use crate::endpoint::Endpoint;
 use crate::framing::{self, MAX_REPLY_BYTES};
-use crate::{EXCHANGE_TIMEOUT, Server};
+use crate::{EXCHANGE_TIMEOUT, Reply, Server, SessionExchange, SessionRequest};
+
+pub struct TestSessionReply(oneshot::Receiver<Reply>);
+
+impl TestSessionReply {
+    pub fn channel(request: SessionRequest) -> (SessionExchange, Self) {
+        let (reply, receiver) = oneshot::channel();
+        (SessionExchange { request, reply }, Self(receiver))
+    }
+
+    pub fn try_recv(&mut self) -> io::Result<Option<Reply>> {
+        match self.0.try_recv() {
+            Ok(reply) => Ok(Some(reply)),
+            Err(oneshot::error::TryRecvError::Empty) => Ok(None),
+            Err(error) => Err(io::Error::other(error)),
+        }
+    }
+}
 
 /// An isolated socket or pipe for local server integration tests.
 pub struct TestEndpoint {

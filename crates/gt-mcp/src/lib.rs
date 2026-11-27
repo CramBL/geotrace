@@ -8,8 +8,8 @@ use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
     GetRecording, GetTrack, HistoryOpenState, ListHistoryRecordings, ListMetrics, ListRecordings,
     ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, QueryJobRequest, QueryJobState,
-    QueryText, Reply, Request, SetSessionView, SetSetting, SetTrackVisibility, SettingSelection,
-    ShowOnMap, ShowOnPlot,
+    QueryText, RangeTarget, Reply, Request, SetSessionView, SetSetting, SetTrackVisibility,
+    SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -246,7 +246,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Center the map on a visible recorded point and open its point information.",
+        description = "Center the map on a visible recorded point and open its point information. Returns the point GeoTrace opened.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -332,7 +332,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Frame and highlight a track, a half-open range of original point indices, or a retained point-query match on the map. Requires Query highlights.",
+        description = "Frame and highlight a track, point range or retained point-query match on the map. Returns the track and half-open point range. Requires Query highlights.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -380,7 +380,8 @@ impl Companion {
             }
             Ok(
                 reply @ (Reply::FilesQueued { .. }
-                | Reply::MapPresentationQueued
+                | Reply::MapPointOpened(_)
+                | Reply::MapRangeFramed { .. }
                 | Reply::PanelOpenQueued { .. }
                 | Reply::PlotPresentationQueued
                 | Reply::ProcessingApplied
@@ -504,9 +505,29 @@ impl Companion {
             Request::OpenPanel(args) => {
                 matches!(reply, Reply::PanelOpenQueued { panel } if *panel == args.panel())
             }
-            Request::OpenPoint(_) | Request::ShowOnMap(_) => {
-                matches!(reply, Reply::MapPresentationQueued)
+            Request::OpenPoint(args) => {
+                matches!(reply, Reply::MapPointOpened(point) if point == args)
             }
+            Request::ShowOnMap(args) => match (&args.target, reply) {
+                (
+                    RangeTarget::Track { track, start, end },
+                    Reply::MapRangeFramed {
+                        track: framed_track,
+                        start: framed_start,
+                        end: framed_end,
+                    },
+                ) => {
+                    track == framed_track
+                        && *framed_start == start.unwrap_or_default()
+                        && end.is_none_or(|end| end == *framed_end)
+                        && framed_start < framed_end
+                }
+                (
+                    RangeTarget::QueryMatch { job, .. },
+                    Reply::MapRangeFramed { track, start, end },
+                ) => track.recording.session == job.session && start < end,
+                _ => false,
+            },
             Request::OpenQuery(_) => matches!(reply, Reply::QueryDraftOpened),
             Request::OpenSetting(args) => {
                 matches!(reply, Reply::SettingOpened { key } if *key == args.key)
@@ -569,6 +590,13 @@ impl Companion {
             }
             ErrorCode::MapboxTokenRequired => {
                 "Enter a Mapbox token in Settings to use the satellite layer."
+            }
+            ErrorCode::MapPresentationStale => {
+                "The recordings, time filter or query changed before the map could apply the request."
+            }
+            ErrorCode::MapPresentationSuperseded => "A later map action superseded the request.",
+            ErrorCode::MapPresentationTimedOut => {
+                "The map could not apply the request in time. Show the map and try again."
             }
             ErrorCode::NoLoadedNavPoints => {
                 "Load a recording with navigation points before applying processing."

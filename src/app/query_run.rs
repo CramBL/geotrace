@@ -446,6 +446,7 @@ mod tests {
 
     use super::{QueryPhase, QuerySeries};
     use crate::app::App;
+    use crate::app::session_query::SessionCommand;
     use crate::app::test_util::harness::{self, TestDroppedFile};
     use crate::app::test_util::session;
 
@@ -551,7 +552,7 @@ mod tests {
             text: "points | draw".to_owned(),
         });
         let app = harness.state_mut();
-        let Reply::QueryJob { job: original } = app
+        let SessionCommand::Completed(Reply::QueryJob { job: original }) = app
             .execute_session_request(SessionRequest {
                 request: request.clone(),
                 session,

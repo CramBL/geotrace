@@ -184,9 +184,26 @@ impl SessionExchange {
     }
 
     pub fn respond(self, execute: impl FnOnce(SessionRequest) -> Reply) {
-        if self.client_is_waiting() {
-            drop(self.reply.send(execute(self.request)));
+        if let Some((request, reply)) = self.into_request() {
+            reply.send(execute(request));
         }
+    }
+
+    pub fn into_request(self) -> Option<(SessionRequest, SessionReply)> {
+        self.client_is_waiting()
+            .then_some((self.request, SessionReply(self.reply)))
+    }
+}
+
+pub struct SessionReply(oneshot::Sender<Reply>);
+
+impl SessionReply {
+    pub fn client_is_waiting(&self) -> bool {
+        !self.0.is_closed()
+    }
+
+    pub fn send(self, reply: impl Into<Reply>) {
+        drop(self.0.send(reply.into()));
     }
 }
 

@@ -19,9 +19,9 @@ use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope,
     LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapEligibility, MapHighlight,
-    MapPresence, MatchHighlight, MatchRevealTarget, PinRevision, PinnedPopup, PointWindowFolds,
-    QueryMatches, ResolvedElement, ResolvedMapHighlight, SkyGlyphVariant, SkyTrailsRequest,
-    SnappedTracks, TrackDataVisibility,
+    MapPresence, MatchRevealTarget, PinRevision, PinnedPopup, PointWindowFolds, QueryMatches,
+    ResolvedElement, ResolvedMapHighlight, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks,
+    TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -50,7 +50,7 @@ pub use display_toggle::{DISPLAY_TOGGLE_BUTTON_AREA_ID, DISPLAY_TOGGLE_POPUP_ARE
 pub use sky_trails_window::SkyTrailsWindow;
 pub use space_weather_indicator::SpaceWeatherIndicator;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
-pub use viewport::{ViewportBounds, query_match_has_geometry};
+pub use viewport::{ViewportBounds, query_match_bounds, query_match_has_geometry};
 
 #[cfg(any(test, feature = "test-util"))]
 #[doc(hidden)]
@@ -302,7 +302,7 @@ pub enum PresentationCamera {
         latitude: Latitude,
         longitude: Longitude,
     },
-    TrackRange(MatchHighlight),
+    TrackRange(GeoBounds),
 }
 
 /// Context provided to the map for a single frame.
@@ -987,14 +987,8 @@ impl NavMap {
                     longitude.as_degrees(),
                 ));
             }
-            Some(PresentationCamera::TrackRange(range)) => {
-                if let Some(bounds) = viewport::query_match_bounds(
-                    ctx.scope(),
-                    range.track,
-                    &(range.start..range.end),
-                ) {
-                    self.fit_to_bounds(ui.max_rect(), bounds);
-                }
+            Some(PresentationCamera::TrackRange(bounds)) => {
+                self.fit_to_bounds(ui.max_rect(), bounds);
             }
             None => {}
         }

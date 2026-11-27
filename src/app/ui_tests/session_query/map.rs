@@ -32,20 +32,18 @@ fn session_map_frames_a_range_when_the_map_draws() {
         .filter
         .set_time_bounds(Some(ui_tests::base_time() + TimeDelta::seconds(30)), None);
 
-    assert_eq!(
-        session::execute(
-            &mut harness,
-            Request::ShowOnMap(ShowOnMap {
-                target: RangeTarget::Track {
-                    track: reference,
-                    start: Some(0),
-                    end: Some(33)
-                }
-            })
-        ),
-        Reply::MapPresentationQueued
+    let mut reply = session::begin(
+        &mut harness,
+        Request::ShowOnMap(ShowOnMap {
+            target: RangeTarget::Track {
+                track: reference,
+                start: Some(0),
+                end: Some(33),
+            },
+        }),
     );
     harness.step();
+    assert_eq!(reply.try_recv().unwrap(), None);
     assert_eq!(
         harness.state().shared.borrow().highlight.presented_match,
         None
@@ -56,6 +54,14 @@ fn session_map_frames_a_range_when_the_map_draws() {
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, true);
     harness.run_steps(2);
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(Reply::MapRangeFramed {
+            track: reference,
+            start: 0,
+            end: 33
+        })
+    );
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     assert_eq!(
         harness.state().shared.borrow().highlight.presented_match,
@@ -160,11 +166,16 @@ fn session_map_discards_a_query_match_without_a_status_request(
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, map_visible);
 
-    assert_eq!(
-        session::execute(&mut harness, request.clone()),
-        Reply::MapPresentationQueued
-    );
+    let mut reply = session::begin(&mut harness, request.clone());
     harness.run_steps(2);
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        map_visible.then_some(Reply::MapRangeFramed {
+            track: matched.track,
+            start: matched.range.start,
+            end: matched.range.end,
+        })
+    );
     {
         let shared = harness.state().shared.borrow();
         assert_eq!(
@@ -196,6 +207,9 @@ fn session_map_discards_a_query_match_without_a_status_request(
         }
     };
     harness.step();
+    if !map_visible {
+        assert_eq!(reply.try_recv().unwrap(), Some(expected_error.into()));
+    }
     {
         let shared = harness.state().shared.borrow();
         assert_eq!(shared.highlight.presented_match, None);
@@ -307,7 +321,7 @@ fn session_map_opens_and_keeps_the_same_pin_until_the_filter_changes(#[case] sta
     for _ in 0..2 {
         assert_eq!(
             session::execute(&mut harness, request.clone()),
-            Reply::MapPresentationQueued
+            Reply::MapPointOpened(OpenPoint { track, point })
         );
         harness.step();
         assert_eq!(
@@ -338,7 +352,7 @@ fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filte
     let point = 20;
     assert_eq!(
         session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
-        Reply::MapPresentationQueued,
+        Reply::MapPointOpened(OpenPoint { track, point }),
     );
     harness.run_steps(2);
     let app = harness.state();
@@ -409,7 +423,11 @@ fn map_double_click_preserves_current_session_pin_ownership(#[case] change_filte
                     },
                 }),
             ),
-            Reply::MapPresentationQueued,
+            Reply::MapRangeFramed {
+                track,
+                start: 30,
+                end: 33
+            },
         );
         harness.step();
         let shared = harness.state().shared.borrow();
@@ -457,10 +475,8 @@ fn the_latest_camera_request_applies_when_the_map_draws(#[case] order: CameraOrd
     if session_last {
         queue_gui_reveal(&mut harness);
     }
-    assert_eq!(
-        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
-        Reply::MapPresentationQueued,
-    );
+    let target = OpenPoint { track, point };
+    let mut reply = session::begin(&mut harness, Request::OpenPoint(target));
     if !session_last {
         queue_gui_reveal(&mut harness);
     }
@@ -494,6 +510,12 @@ fn the_latest_camera_request_applies_when_the_map_draws(#[case] order: CameraOrd
         session_last,
     );
     let pinned = MapElementRef::Fix(FixRef::new(track_ref, PointIdx::new(point)));
+    let expected = if session_last {
+        Reply::MapPointOpened(target)
+    } else {
+        ErrorCode::MapPresentationSuperseded.into()
+    };
+    assert_eq!(reply.try_recv().unwrap(), Some(expected));
     assert_eq!(
         harness.state().shared.borrow().highlight.sticky(),
         session_last.then_some(pinned),
@@ -532,11 +554,16 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
         }),
     ];
     for request in requests {
-        let is_point = matches!(request, Request::OpenPoint(_));
-        assert_eq!(
-            session::execute(&mut harness, request),
-            Reply::MapPresentationQueued,
-        );
+        let expected = match request {
+            Request::OpenPoint(point) => Reply::MapPointOpened(point),
+            _ => Reply::MapRangeFramed {
+                track,
+                start: 30,
+                end: 33,
+            },
+        };
+        let is_point = matches!(expected, Reply::MapPointOpened(_));
+        assert_eq!(session::execute(&mut harness, request), expected);
         harness.run_steps(2);
         assert_eq!(
             harness.state().shared.borrow().highlight.sticky(),
@@ -562,18 +589,19 @@ fn session_map_preserves_a_gui_pin_when_opening_the_same_point() {
     let app = harness.state_mut();
     app.tiles_tree.set_visible(app.map_tile_id, false);
     harness.step();
-    assert_eq!(
-        session::execute(
-            &mut harness,
-            Request::OpenPoint(OpenPoint {
-                track,
-                point: fix.point.as_usize(),
-            }),
-        ),
-        Reply::MapPresentationQueued,
+    let mut reply = session::begin(
+        &mut harness,
+        Request::OpenPoint(OpenPoint {
+            track,
+            point: fix.point.as_usize(),
+        }),
     );
     let row = harness::topmost_point_row(&harness).0.center();
     harness.press_drag_release(row, egui::Vec2::ZERO, 1);
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::MapPresentationSuperseded.into())
+    );
     assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
 
     let app = harness.state_mut();
@@ -589,7 +617,7 @@ fn dismissing_a_presented_point_clears_its_pin() {
     let point = 20;
     assert_eq!(
         session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
-        Reply::MapPresentationQueued
+        Reply::MapPointOpened(OpenPoint { track, point })
     );
     harness.run_steps(2);
     harness.get_by_label("test.gtd / Track 1 / Point 20");
@@ -615,7 +643,7 @@ fn the_map_dismiss_button_is_disabled_during_shutdown() {
             &mut harness,
             Request::OpenPoint(OpenPoint { track, point: 20 })
         ),
-        Reply::MapPresentationQueued
+        Reply::MapPointOpened(OpenPoint { track, point: 20 })
     );
     harness.run_steps(2);
     let _write = harness
@@ -658,10 +686,7 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
             PointIdx::new(point),
         )),
     );
-    assert_eq!(
-        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
-        Reply::MapPresentationQueued,
-    );
+    let mut reply = session::begin(&mut harness, Request::OpenPoint(OpenPoint { track, point }));
     let app = harness.state_mut();
     {
         let mut shared = app.shared.borrow_mut();
@@ -670,6 +695,10 @@ fn superseded_point_request_preserves_deferred_gui_popup_placement() {
     }
     app.tiles_tree.set_visible(app.map_tile_id, true);
     harness.step();
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::MapPresentationSuperseded.into())
+    );
     let shared = harness.state().shared.borrow();
     assert_eq!(shared.highlight.sticky(), Some(gui_pin));
     assert_eq!(shared.popup_pos_request, None);
@@ -686,7 +715,7 @@ fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
             .set_visible(DisplayCategory::TrackPoints, false);
         shared.display_mask
     };
-    assert_eq!(
+    assert!(matches!(
         session::execute(
             &mut harness,
             Request::ShowOnMap(ShowOnMap {
@@ -697,8 +726,8 @@ fn session_map_range_keeps_the_query_highlights_solo_restore_available() {
                 },
             }),
         ),
-        Reply::MapPresentationQueued,
-    );
+        Reply::MapRangeFramed { .. }
+    ));
     harness.run_steps(2);
     assert!(harness.state().editor_query.session().matches().is_none());
     let toggle = harness
@@ -735,12 +764,13 @@ fn session_map_drops_a_queued_range_when_its_inputs_change() {
             end: None,
         },
     });
-    assert_eq!(
-        session::execute(&mut harness, request.clone()),
-        Reply::MapPresentationQueued
-    );
+    let mut reply = session::begin(&mut harness, request.clone());
     self::exclude_recording_times(&mut harness);
     harness.step();
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::MapPresentationStale.into())
+    );
     assert_eq!(
         harness.state().shared.borrow().highlight.presented_match,
         None
@@ -785,15 +815,18 @@ fn session_map_rejects_ranges_with_highlights_disabled_and_keeps_the_point_reque
         .display_mask
         .set_visible(DisplayCategory::QueryHighlights, false);
     let point = 60;
-    assert_eq!(
-        session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
-        Reply::MapPresentationQueued
-    );
+    let target = OpenPoint { track, point };
+    let mut reply = session::begin(&mut harness, Request::OpenPoint(target));
     assert_eq!(
         session::execute(&mut harness, request.clone()),
         ErrorCode::QueryHighlightsDisabled.into()
     );
+    assert_eq!(reply.try_recv().unwrap(), None);
     harness.step();
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(Reply::MapPointOpened(target))
+    );
     let pinned = MapElementRef::Fix(FixRef::new(
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
         PointIdx::new(point),
@@ -811,10 +844,10 @@ fn session_map_rejects_ranges_with_highlights_disabled_and_keeps_the_point_reque
         .set_visible(DisplayCategory::QueryHighlights, true);
     drop(shared);
 
-    assert_eq!(
+    assert!(matches!(
         session::execute(&mut harness, request),
-        Reply::MapPresentationQueued
-    );
+        Reply::MapRangeFramed { .. }
+    ));
     harness.step();
     assert!(
         harness
@@ -839,10 +872,7 @@ fn session_map_drops_a_queued_range_when_highlights_are_disabled_before_drawing(
         },
     });
     let before = harness.state().map.viewport_geo_bounds().unwrap();
-    assert_eq!(
-        session::execute(&mut harness, request),
-        Reply::MapPresentationQueued
-    );
+    let mut reply = session::begin(&mut harness, request);
     harness
         .state_mut()
         .shared
@@ -850,6 +880,10 @@ fn session_map_drops_a_queued_range_when_highlights_are_disabled_before_drawing(
         .display_mask
         .set_visible(DisplayCategory::QueryHighlights, false);
     harness.step();
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::QueryHighlightsDisabled.into())
+    );
     let after = harness.state().map.viewport_geo_bounds().unwrap();
     assert_eq!(
         (after.lat_min, after.lat_max, after.lon_min, after.lon_max),
@@ -873,6 +907,45 @@ fn session_map_drops_a_queued_range_when_highlights_are_disabled_before_drawing(
         None
     );
     assert!(session::visible_action_notices(&harness).is_empty());
+}
+
+#[test]
+fn a_new_map_request_supersedes_the_waiter_and_state_stays_readable() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    let earlier = Request::ShowOnMap(ShowOnMap {
+        target: RangeTarget::Track {
+            track,
+            start: Some(30),
+            end: Some(33),
+        },
+    });
+    let mut old_reply = session::begin(&mut harness, earlier);
+    let Reply::SessionState { state } = session::execute(&mut harness, Request::GetSessionState)
+    else {
+        panic!("expected session state");
+    };
+    assert_eq!(state.map.pinned_point, None);
+    assert_eq!(old_reply.try_recv().unwrap(), None);
+
+    let point = OpenPoint { track, point: 20 };
+    let mut new_reply = session::begin(&mut harness, Request::OpenPoint(point));
+    assert_eq!(
+        old_reply.try_recv().unwrap(),
+        Some(ErrorCode::MapPresentationSuperseded.into())
+    );
+    assert_eq!(new_reply.try_recv().unwrap(), None);
+    harness.run_steps(2);
+    assert_eq!(
+        new_reply.try_recv().unwrap(),
+        Some(Reply::MapPointOpened(point))
+    );
+    let shared = harness.state().shared.borrow();
+    assert_eq!(shared.highlight.presented_match, None);
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP centered the map on a point"]
+    );
 }
 
 #[rstest]
@@ -916,7 +989,11 @@ fn later_map_input_preserves_the_range_and_supersedes_a_point(#[case] input: Com
     });
     assert_eq!(
         session::execute(&mut harness, range),
-        Reply::MapPresentationQueued
+        Reply::MapRangeFramed {
+            track,
+            start: 30,
+            end: 33
+        }
     );
     harness.step();
     let before = harness.state().map.viewport_geo_bounds().unwrap();
@@ -935,12 +1012,9 @@ fn later_map_input_preserves_the_range_and_supersedes_a_point(#[case] input: Com
         });
         harness.step();
     }
-    assert_eq!(
-        session::execute(
-            &mut harness,
-            Request::OpenPoint(OpenPoint { track, point: 1 })
-        ),
-        Reply::MapPresentationQueued
+    let mut reply = session::begin(
+        &mut harness,
+        Request::OpenPoint(OpenPoint { track, point: 1 }),
     );
     if matches!(input, CompetingMapInput::DragOutsideMap) {
         harness.step();
@@ -974,13 +1048,9 @@ fn later_map_input_preserves_the_range_and_supersedes_a_point(#[case] input: Com
     };
     harness.input_mut().events.push(event);
     harness.step();
-    assert!(
-        harness
-            .state()
-            .shared
-            .borrow()
-            .pending_session_map
-            .is_none()
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::MapPresentationSuperseded.into())
     );
     let after = harness.state().map.viewport_geo_bounds().unwrap();
     assert_eq!(
@@ -1017,7 +1087,11 @@ fn an_unavailable_point_keeps_the_earlier_desktop_reveal(#[case] replace: bool) 
     });
     assert_eq!(
         session::execute(&mut harness, range),
-        Reply::MapPresentationQueued
+        Reply::MapRangeFramed {
+            track,
+            start: 30,
+            end: 33
+        }
     );
     harness.step();
     let active = harness.state().shared.borrow().highlight.presented_match;
@@ -1038,16 +1112,18 @@ fn an_unavailable_point_keeps_the_earlier_desktop_reveal(#[case] replace: bool) 
     };
     assert!(latitude < harness.state().map.viewport_geo_bounds().unwrap().lat_min);
     let point = |point| Request::OpenPoint(OpenPoint { track, point });
-    assert_eq!(
-        session::execute(&mut harness, point(1)),
-        Reply::MapPresentationQueued
-    );
-    if replace {
+    let first_reply = session::begin(&mut harness, point(1));
+    let mut reply = if replace {
+        let replacement = session::begin(&mut harness, point(2));
+        let mut first_reply = first_reply;
         assert_eq!(
-            session::execute(&mut harness, point(2)),
-            Reply::MapPresentationQueued
+            first_reply.try_recv().unwrap(),
+            Some(ErrorCode::MapPresentationSuperseded.into())
         );
-    }
+        replacement
+    } else {
+        first_reply
+    };
     harness
         .state_mut()
         .shared
@@ -1055,6 +1131,10 @@ fn an_unavailable_point_keeps_the_earlier_desktop_reveal(#[case] replace: bool) 
         .display_mask
         .set_visible(DisplayCategory::TrackPoints, false);
     harness.step();
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::NoVisibleMapGeometry.into())
+    );
     let restored = harness.state().map.viewport_geo_bounds().unwrap();
     assert!((restored.lat_min..=restored.lat_max).contains(&latitude));
     let shared = harness.state().shared.borrow();
@@ -1092,24 +1172,29 @@ fn dragging_in_the_query_editor_keeps_map_presentations_available() {
     });
     harness.step();
 
-    assert_eq!(
-        session::execute(
-            &mut harness,
-            Request::ShowOnMap(ShowOnMap {
-                target: RangeTarget::Track {
-                    track,
-                    start: Some(30),
-                    end: Some(33)
-                },
-            })
-        ),
-        Reply::MapPresentationQueued
+    let mut reply = session::begin(
+        &mut harness,
+        Request::ShowOnMap(ShowOnMap {
+            target: RangeTarget::Track {
+                track,
+                start: Some(30),
+                end: Some(33),
+            },
+        }),
     );
     harness
         .input_mut()
         .events
         .push(egui::Event::PointerMoved(end));
     harness.step();
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(Reply::MapRangeFramed {
+            track,
+            start: 30,
+            end: 33
+        })
+    );
     assert!(
         harness
             .ctx
@@ -1140,12 +1225,9 @@ fn a_repeated_desktop_fit_takes_precedence_over_a_queued_point() {
     harness.hover_at(center);
     harness.step();
     let before = harness.state().map.viewport_geo_bounds().unwrap();
-    assert_eq!(
-        session::execute(
-            &mut harness,
-            Request::OpenPoint(OpenPoint { track, point: 1 })
-        ),
-        Reply::MapPresentationQueued
+    let mut reply = session::begin(
+        &mut harness,
+        Request::OpenPoint(OpenPoint { track, point: 1 }),
     );
     for pressed in [true, false] {
         harness.input_mut().events.push(egui::Event::PointerButton {
@@ -1156,6 +1238,10 @@ fn a_repeated_desktop_fit_takes_precedence_over_a_queued_point() {
         });
     }
     harness.run_steps(2);
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::MapPresentationSuperseded.into())
+    );
     let after = harness.state().map.viewport_geo_bounds().unwrap();
     assert_eq!(
         (after.lat_min, after.lat_max, after.lon_min, after.lon_max),

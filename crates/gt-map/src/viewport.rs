@@ -715,7 +715,7 @@ pub fn query_match_has_geometry(
     .is_some()
 }
 
-pub(crate) fn query_match_bounds(
+pub fn query_match_bounds(
     scope: MapPresence<'_>,
     track: TrackRef,
     points: &Range<usize>,

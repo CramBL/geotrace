@@ -9,6 +9,12 @@ use uuid::Uuid;
 use super::App;
 use super::mcp_action_notice::McpActionNotice;
 use super::query_run::QueryPhase;
+use super::session_map::MapPresentation;
+
+pub(super) enum SessionCommand {
+    Completed(Reply),
+    Map(MapPresentation),
+}
 
 impl App {
     fn open_session_query_draft(&mut self, text: String) -> Result<Reply, ErrorCode> {
@@ -117,8 +123,8 @@ impl App {
     pub(super) fn execute_session_request(
         &mut self,
         SessionRequest { request, session }: SessionRequest,
-    ) -> Result<Reply, ErrorCode> {
-        match request {
+    ) -> Result<SessionCommand, ErrorCode> {
+        let reply = match request {
             Request::ApplyProcessing(ApplyProcessing {}) => {
                 if self.shutdown_requested() {
                     return Err(ErrorCode::ShuttingDown);
@@ -192,8 +198,7 @@ impl App {
             Request::OpenPanel(args) => self.open_session_panel(session, args),
             Request::OpenPoint(args) => {
                 let presentation = self.session_open_point(session, args)?;
-                self.shared.borrow_mut().queue_session_map(presentation);
-                Ok(Reply::MapPresentationQueued)
+                return Ok(SessionCommand::Map(presentation));
             }
             Request::OpenQuery(args) => self.open_session_query_draft(args.text),
             Request::OpenSetting(args) => self.open_session_setting(args.key),
@@ -205,8 +210,7 @@ impl App {
             Request::SetTrackVisibility(args) => self.set_session_track_visibility(session, &args),
             Request::ShowOnMap(args) => {
                 let presentation = self.session_show_on_map(session, args)?;
-                self.shared.borrow_mut().queue_session_map(presentation);
-                Ok(Reply::MapPresentationQueued)
+                return Ok(SessionCommand::Map(presentation));
             }
             Request::ShowOnPlot(args) => {
                 let presentation = self.session_show_on_plot(session, args)?;
@@ -214,7 +218,8 @@ impl App {
                 self.tiles_tree.tiles.set_visible(self.plot_tile_id, true);
                 Ok(Reply::PlotPresentationQueued)
             }
-        }
+        }?;
+        Ok(SessionCommand::Completed(reply))
     }
 
     fn inspect_session_request(

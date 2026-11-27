@@ -40,7 +40,11 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
     };
     assert_eq!(
         session::execute(&mut harness, Request::ShowOnMap(ShowOnMap { target })),
-        Reply::MapPresentationQueued
+        Reply::MapRangeFramed {
+            track: old_track,
+            start: 0,
+            end: 10
+        }
     );
     harness.step();
     assert!(
@@ -120,6 +124,28 @@ fn applying_processing_rebuilds_tracks_and_expires_old_query_and_view_requests()
 }
 
 #[test]
+fn a_waiting_point_request_expires_when_processing_replaces_its_track() {
+    let mut harness = ui_tests::app_with_recording_bytes(recording_fixtures::two_track_gtd_bytes());
+    let track = session::first_track_reference(&mut harness);
+    self::set_track_split_gap(&mut harness, Duration::hours(2));
+    let mut reply = session::begin(
+        &mut harness,
+        Request::OpenPoint(OpenPoint { track, point: 1 }),
+    );
+    assert_eq!(reply.try_recv().unwrap(), None);
+    assert_eq!(
+        session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
+        Reply::ProcessingApplied
+    );
+    harness.step();
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(ErrorCode::StaleTrack.into())
+    );
+    assert_eq!(harness.state().shared.borrow().highlight.sticky(), None);
+}
+
+#[test]
 fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
     let mut harness = ui_tests::app_with_recording_bytes(self::recording_with_three_fix_groups());
     harness.state_mut().query_window.open = true;
@@ -155,7 +181,10 @@ fn fresh_map_requests_use_the_rebuilt_tracks_before_the_next_frame() {
                 point: 0
             }),
         ),
-        Reply::MapPresentationQueued
+        Reply::MapPointOpened(OpenPoint {
+            track: fresh[1],
+            point: 0
+        })
     );
     harness.step();
     assert!(

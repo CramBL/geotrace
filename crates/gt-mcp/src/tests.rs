@@ -11,14 +11,13 @@ use gt_session_bridge::{
     GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
     HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings,
     MAX_RECORDING_BATCH, MAX_VISIBILITY_TRACKS, ManageRecordings, Metrics, NumericObservation,
-    OpenHistoryRecording, OpenPanel, OpenPoint, PointDetails, QueryCounts, QueryJobId,
-    QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest,
-    QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
-    QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget, Recording,
-    RecordingReference, Recordings, Reply, Request, SessionPanel, SessionState, SetSetting,
-    SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection,
-    SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
-    TrackVisibilityAction, TrackVisibilityResult,
+    OpenHistoryRecording, OpenPanel, PointDetails, QueryCounts, QueryJobId, QueryJobRequest,
+    QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest, QueryResultColumn,
+    QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime, QueryResults, QueryText,
+    QueryValidation, RangeDetails, RangeTarget, Recording, RecordingReference, Recordings, Reply,
+    Request, SessionPanel, SessionState, SetSetting, SetTrackVisibility, SettingApply, SettingInfo,
+    SettingInput, SettingKey, SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot,
+    TimeRange, TrackReference, TrackVisibilityAction, TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -995,12 +994,12 @@ async fn assert_ui_tool_replies(client: &mut Client) {
         (
             "open_point",
             json!({"track": track, "point": 1}),
-            json!({"status": "map_presentation_queued"}),
+            json!({"status": "map_point_opened", "track": track, "point": 1}),
         ),
         (
             "show_on_map",
             json!({"target": {"kind": "track", "track": track, "start": 1, "end": 2}}),
-            json!({"status": "map_presentation_queued"}),
+            json!({"status": "map_range_framed", "track": track, "start": 1, "end": 2}),
         ),
         (
             "show_on_map",
@@ -1008,7 +1007,7 @@ async fn assert_ui_tool_replies(client: &mut Client) {
                 "kind": "query_match", "job": self::query_job_id(), "query": 1,
                 "matched": {"track_ordinal": 2, "match_ordinal": 3}
             }}),
-            json!({"status": "map_presentation_queued"}),
+            json!({"status": "map_range_framed", "track": track, "start": 1, "end": 2}),
         ),
         (
             "show_on_plot",
@@ -1140,15 +1139,21 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
         }) => Ok(Reply::Setting {
             setting: self::setting_fixture(10.0),
         }),
-        Request::OpenPoint(OpenPoint { track, point: 1 })
-        | Request::ShowOnMap(ShowOnMap {
+        Request::OpenPoint(point) if point.track == self::track_reference() && point.point == 1 => {
+            Ok(Reply::MapPointOpened(*point))
+        }
+        Request::ShowOnMap(ShowOnMap {
             target:
                 RangeTarget::Track {
                     track,
                     start: Some(1),
                     end: Some(2),
                 },
-        }) if *track == self::track_reference() => Ok(Reply::MapPresentationQueued),
+        }) if *track == self::track_reference() => Ok(Reply::MapRangeFramed {
+            track: *track,
+            start: 1,
+            end: 2,
+        }),
         Request::OpenQuery(QueryText { text }) if text == INVALID_QUERY_DRAFT => {
             Ok(Reply::QueryDraftOpened)
         }
@@ -1185,7 +1190,11 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                             match_ordinal: 3,
                         },
                 },
-        }) if *job == self::query_job_id() => Ok(Reply::MapPresentationQueued),
+        }) if *job == self::query_job_id() => Ok(Reply::MapRangeFramed {
+            track: self::track_reference(),
+            start: 1,
+            end: 2,
+        }),
         Request::GetQueryResults(GetQueryResults {
             job,
             query: 0,

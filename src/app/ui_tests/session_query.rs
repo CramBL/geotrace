@@ -72,11 +72,15 @@ fn releasing_dismiss_keeps_a_replacement_with_the_same_caption(#[case] pane: Pre
             }),
         }
     };
-    let queued = match pane {
-        PresentationPane::Map => Reply::MapPresentationQueued,
+    let opened = match pane {
+        PresentationPane::Map => Reply::MapRangeFramed {
+            track,
+            start: 20,
+            end: 24,
+        },
         PresentationPane::Plot => Reply::PlotPresentationQueued,
     };
-    assert_eq!(session::execute(&mut harness, show(track)), queued);
+    assert_eq!(session::execute(&mut harness, show(track)), opened);
     harness.run_steps(3);
     harness.get_by_label("Recording / Track 1 / Points 20 to 23");
     let button = harness
@@ -110,7 +114,11 @@ fn releasing_dismiss_keeps_a_replacement_with_the_same_caption(#[case] pane: Pre
         .unwrap()
         .id()
         .into();
-    assert_eq!(session::execute(&mut harness, show(track)), queued);
+    let replacement = match opened {
+        Reply::MapRangeFramed { start, end, .. } => Reply::MapRangeFramed { track, start, end },
+        reply => reply,
+    };
+    assert_eq!(session::execute(&mut harness, show(track)), replacement);
     for _ in 0..3 {
         step(&mut harness);
     }
@@ -590,13 +598,13 @@ fn mcp_reads_a_desktop_query_until_the_editor_runs_again() {
     };
     assert_eq!(active.state, QueryJobState::Busy);
     assert_eq!(harness.state().editor_query.session().text(), text);
-    assert_eq!(
+    assert!(matches!(
         harness.state_mut().execute_session_request(SessionRequest {
             request,
             session: Uuid::from_u128(2),
         }),
         Err(ErrorCode::StaleSession)
-    );
+    ));
     harness
         .ctx
         .options_mut(|options| options.max_passes = max_passes);

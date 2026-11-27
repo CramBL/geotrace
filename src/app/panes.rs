@@ -3,9 +3,7 @@ use egui_notify::Toasts;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
-use gt_map::{
-    MapAction, MapDrawContext, MapFiles, MapPresentationInput, NavMap, PresentationCamera,
-};
+use gt_map::{MapAction, MapDrawContext, MapFiles, MapPresentationInput, NavMap};
 use gt_types::{Generation, LoadedFile};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
@@ -87,7 +85,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     MapPresentationInput::Ready
                 };
-                let presentation_camera =
+                let presentation =
                     if can_draw_map && matches!(map_input, MapPresentationInput::Ready) {
                         s.apply_session_map(self.map, self.query_matches, self.queries)
                     } else {
@@ -134,7 +132,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         zoom_to_visible,
                         reveal_query_matches: reveal,
                         sticky_pos_override: popup_pos,
-                        presentation_camera,
+                        presentation_camera: presentation.as_ref().map(|draw| draw.camera),
                     },
                 );
                 if let Some(action) = frame.action {
@@ -154,12 +152,8 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     }
                 }
                 s.finish_session_map_input(ui.ctx(), map_input, frame.interaction);
-                if let Some(camera) = presentation_camera {
-                    match camera {
-                        PresentationCamera::Center { .. } => McpActionNotice::CenterMapOnPoint,
-                        PresentationCamera::TrackRange(_) => McpActionNotice::FrameMapRange,
-                    }
-                    .enqueue(self.toasts);
+                if let Some(draw) = presentation {
+                    draw.confirm(self.toasts);
                 }
                 if map_viewport.is_positive()
                     && let Some(presentation) = s.presented_session_map
