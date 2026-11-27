@@ -9,7 +9,7 @@ use std::{
 use chrono::{DateTime, Duration, Utc};
 use egui::Context;
 use gt_loaded_files::{FileHistory, LoadedFileId, RecordingLoadOrigin};
-use gt_loader::StoredGtdBytes;
+use gt_loader::{BundledLog, StoredGtdBytes};
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog, YearResolution};
 use gt_pending_writes::{PendingWrites, WriteKind};
@@ -60,6 +60,11 @@ pub struct FinishedJob {
     pub completed_at: f64,
 }
 
+pub(super) struct ParsedBundledLog {
+    pub name: String,
+    pub parsed: ParsedLog,
+}
+
 pub(super) struct LoadedRecordingResult {
     pub file: LoadedFile,
     pub series: PreparedSeries,
@@ -67,6 +72,7 @@ pub(super) struct LoadedRecordingResult {
     pub history_write_attempted: bool,
     pub applied_current_marker_settings: bool,
     pub placement: LoadedRecordingPlacement,
+    pub bundled_logs: Vec<ParsedBundledLog>,
 }
 
 pub(super) struct LooseLogResult {
@@ -1379,6 +1385,12 @@ impl ParsedRecording<'_> {
             mode,
         } = self;
         let mut file = loaded.file;
+        let bundled_log_year_reference = file
+            .metadata
+            .time_range
+            .map_or_else(Utc::now, |range| range.end);
+        let bundled_logs =
+            parse_bundled_logs(loaded.bundled_logs, bundled_log_year_reference, filename);
         let meta = match gt_store::extract_meta(bytes) {
             Ok(mut meta) => {
                 meta.debug_tag = mode.debug_tag();
@@ -1519,8 +1531,38 @@ impl ParsedRecording<'_> {
             placement: open
                 .as_ref()
                 .map_or(LoadedRecordingPlacement::AddAnEntry, HistoryOpen::placement),
+            bundled_logs,
         }
     }
+}
+
+fn parse_bundled_logs(
+    bundled_logs: Vec<BundledLog>,
+    year_reference: DateTime<Utc>,
+    filename: &str,
+) -> Vec<ParsedBundledLog> {
+    bundled_logs
+        .into_iter()
+        .filter_map(|bundled| {
+            let name = bundled.name().to_owned();
+            match gt_logfile::parse_log(LogText::from(bundled.text()), year_reference) {
+                Ok(parsed) => {
+                    let unindexable_line_count = parsed.unindexable_line_count();
+                    if unindexable_line_count > 0 {
+                        let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
+                        log::warn!(
+                            "Dropped {unindexable_line_count} {noun} of bundled log {name:?} in {filename:?} that the log index cannot address"
+                        );
+                    }
+                    Some(ParsedBundledLog { name, parsed })
+                }
+                Err(err) => {
+                    log::warn!("Could not parse bundled log {name:?} in {filename:?}: {err}");
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 /// One freshly loaded recording, and where it is to be stored.
@@ -1705,8 +1747,9 @@ mod tests {
     use std::sync::LazyLock;
     use std::time::{Duration, Instant};
 
-    use chrono::{DateTime, Duration as ChronoDuration};
-    use gt_logfile::LogParseError;
+    use chrono::{DateTime, Datelike as _, Duration as ChronoDuration, TimeZone as _};
+    use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
+    use gt_logfile::{LogChronology, LogParseError};
     use gt_store::{
         DatabaseRef, HistoryDatabase, LogAttachmentId, ReadOnlyHistoryDatabase, Recordings,
         StoredYearResolution,
@@ -2689,6 +2732,68 @@ mod tests {
             Some(stored.track_rows().len()),
             "every track should now be shelved"
         );
+    }
+
+    #[test]
+    fn bundled_logs_parse_with_recording_end_as_year_reference() {
+        let start = Utc.with_ymd_and_hms(2025, 5, 23, 10, 0, 0).unwrap();
+        let mut recorder = NavFileBuilder::new().open();
+        for second in 0..5_i64 {
+            recorder.add_nav_fix(
+                NavFix::builder()
+                    .time(NavFixTime::Receiver(
+                        start + ChronoDuration::seconds(second),
+                    ))
+                    .lat(Angle::degrees(55.6761))
+                    .lon(Angle::degrees(12.5683))
+                    .heading(Angle::degrees(0.0))
+                    .build(),
+            );
+        }
+        recorder.add_bundled_log(
+            BundledLog::new(
+                "syslog.log",
+                "May 23 10:00:02 device hal-gnss: fix acquired\n",
+            )
+            .expect("valid syslog bundled log"),
+        );
+        let mut bytes = Vec::new();
+        recorder
+            .finish()
+            .expect("finish nav file")
+            .write(&mut bytes)
+            .expect("write gtd");
+
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
+        jobs.spawn_gtd_bytes(
+            bytes.into(),
+            "bundled.gtd".to_owned(),
+            SegmentationConfig::default(),
+            GtdLoadMode::Regular,
+            None,
+            RecordingOperationOrigin::Independent,
+        );
+        let completed = drain_until_complete(&mut jobs);
+        let LoadCompletion::Recording {
+            result: Ok(LoadedRecordingResult {
+                file, bundled_logs, ..
+            }),
+            ..
+        } = completed.completion
+        else {
+            panic!("expected a recording completion");
+        };
+
+        let expected_end = start + ChronoDuration::seconds(4);
+        assert_eq!(file.tracks.len(), 1);
+        assert_eq!(bundled_logs.len(), 1);
+        let parsed_bundled = bundled_logs.first().expect("one parsed bundled log");
+        assert_eq!(parsed_bundled.name, "syslog.log");
+        assert_eq!(parsed_bundled.parsed.year_reference(), expected_end);
+        let LogChronology::Resolved(resolved) = parsed_bundled.parsed.chronology() else {
+            panic!("expected resolved chronology for bundled syslog");
+        };
+        assert_eq!(resolved.first_anchored_timestamp().year(), 2025);
     }
 
     static FAILING_ATTACHMENT: LazyLock<LogAttachmentRef> = LazyLock::new(|| LogAttachmentRef {

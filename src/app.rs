@@ -29,7 +29,7 @@ use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
 use load_failures::LoadFailures;
 use loader::{
     AttachedLogRequester, AttachedLogRestore, CompletedLoad, FinishedJob, LoadCompletion, LoadJobs,
-    LoadedRecordingResult, LooseLogResult, SavedLogResult,
+    LoadedRecordingResult, LooseLogResult, ParsedBundledLog, SavedLogResult,
 };
 use log_viewer::LogViewerRequests;
 use log_viewer::association_dialog::LogAssociationDialog;
@@ -1054,6 +1054,7 @@ impl App {
                         history,
                         applied_current_marker_settings,
                         placement,
+                        bundled_logs,
                         ..
                     }),
             } => {
@@ -1132,6 +1133,7 @@ impl App {
                     self.logs.reassociate_all(&s.loaded_files.view());
                     drop(s);
                 }
+                self.integrate_bundled_logs(loaded_id, bundled_logs);
                 if !orphans.is_empty() {
                     self.orphaned_event_markers = Some(orphans);
                 }
@@ -1208,6 +1210,42 @@ impl App {
             failure.cause
         );
         self.load_failures.push(failure);
+    }
+
+    fn integrate_bundled_logs(
+        &mut self,
+        recording_id: Option<LoadedFileId>,
+        bundled_logs: Vec<ParsedBundledLog>,
+    ) {
+        let Some(recording_id) = recording_id else {
+            return;
+        };
+        let window = self.assoc_config.log_association_window;
+        for ParsedBundledLog { name, parsed } in bundled_logs {
+            let entry_count = parsed.entries().len();
+            let log = LoadedLog::new(Some(name.clone()), parsed, window);
+            let outcome = {
+                let shared = self.shared.borrow();
+                let recordings = shared.loaded_files.view();
+                let Some(entry) = recordings.entry_for_id(recording_id) else {
+                    return;
+                };
+                let key = RecordingKey::of_loaded_recording(entry);
+                self.logs.load_bundled(log, key, &recordings)
+            };
+            if let LogPushOutcome::NewlyLoaded(id) = outcome {
+                let associated_entry_count = self
+                    .logs
+                    .get_by_id(id)
+                    .map_or(0, LoadedLog::associated_entry_count);
+                log::info!(
+                    "Loaded bundled log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
+                );
+                self.log_viewer
+                    .restored_logs
+                    .note_log_loaded_with_a_recording(id);
+            }
+        }
     }
 
     fn integrate_completed_saved_log(

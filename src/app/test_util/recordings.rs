@@ -39,6 +39,7 @@ pub fn recording_outcome(name: &str) -> LoadedRecordingResult {
         history_write_attempted: false,
         applied_current_marker_settings: false,
         placement: LoadedRecordingPlacement::AddAnEntry,
+        bundled_logs: Vec::new(),
     }
 }
 
