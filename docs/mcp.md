@@ -104,9 +104,12 @@ Pass one of the names listed for `open_panels` to `open_panel`, for example `{"p
 For `sky_trails`, include a current `track` reference from `get_recording`.
 GeoTrace checks that the track has satellite azimuth and elevation reports before opening Sky trails.
 Supply only `panel` for the other panels.
-GeoTrace returns `panel_open_queued` after recording the panel choice.
-GeoTrace brings a floating panel to the front after layout.
-For Plot, it makes the docked pane visible.
+GeoTrace returns `panel_open` with the panel name and its `state`.
+For Plot, `docked` confirms that the pane is open.
+For a floating panel, `frontmost` confirms its position among the application's floating windows.
+This position applies to GeoTrace's own windows and leaves operating system focus unchanged.
+Incomplete raises return a tool error with `closed`, `superseded`, or `timed_out`.
+The panel stays open after a superseded or timed-out raise.
 Opening Query preserves its draft and results.
 Opening Settings keeps its current page.
 

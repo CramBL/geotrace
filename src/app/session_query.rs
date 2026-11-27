@@ -1,6 +1,7 @@
 use gt_session_bridge::{
-    ApplyProcessing, ErrorCode, Inspection, InspectionRequest, QueryJobId, QueryJobState,
-    QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest, TrackTreeState,
+    ApplyProcessing, ErrorCode, Inspection, InspectionRequest, OpenPanel, QueryJobId,
+    QueryJobState, QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest,
+    TrackTreeState,
 };
 use gt_side_panel::{CheckState, NodeKey};
 use gt_types::TrackRef;
@@ -15,6 +16,7 @@ use super::session_plot::PlotPresentation;
 pub(super) enum SessionCommand {
     Completed(Reply),
     Map(MapPresentation),
+    Panel { session: Uuid, args: OpenPanel },
     Plot(PlotPresentation),
 }
 
@@ -197,7 +199,7 @@ impl App {
             Request::OpenHistoryRecording(args) => self
                 .open_session_history_recording(session, args)
                 .map(|operation| Reply::HistoryOpen { operation }),
-            Request::OpenPanel(args) => self.open_session_panel(session, args),
+            Request::OpenPanel(args) => return Ok(SessionCommand::Panel { session, args }),
             Request::OpenPoint(args) => {
                 let presentation = self.session_open_point(session, args)?;
                 return Ok(SessionCommand::Map(presentation));

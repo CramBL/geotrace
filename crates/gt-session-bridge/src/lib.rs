@@ -43,8 +43,8 @@ pub use crate::recording_control::{
     MAX_RECORDING_BATCH, ManageRecordings, RecordingBatch, RecordingBatchSizeError,
 };
 pub use crate::session_state::{
-    OpenPanel, SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel, SessionQueryPhase,
-    SessionQueryState, SessionState, SessionTimeFilter,
+    OpenPanel, PanelOpenState, SessionMapBounds, SessionMapLayer, SessionMapState, SessionPanel,
+    SessionQueryPhase, SessionQueryState, SessionState, SessionTimeFilter,
 };
 pub use crate::session_view::{DisplayCategoryChange, SetSessionView, TimeFilterChange};
 pub use crate::settings::{

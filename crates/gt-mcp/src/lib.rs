@@ -7,9 +7,9 @@ use std::time::Duration;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetRangeDetails,
     GetRecording, GetTrack, HistoryOpenState, ListHistoryRecordings, ListMetrics, ListRecordings,
-    ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, QueryJobRequest, QueryJobState,
-    QueryText, RangeTarget, Reply, Request, SetSessionView, SetSetting, SetTrackVisibility,
-    SettingSelection, ShowOnMap, ShowOnPlot,
+    ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, PanelOpenState, QueryJobRequest,
+    QueryJobState, QueryText, RangeTarget, Reply, Request, SessionPanel, SetSessionView,
+    SetSetting, SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
@@ -234,7 +234,7 @@ impl Companion {
     }
 
     #[tool(
-        description = "Open or raise History, Log viewer, Plot, Query, Settings, or Sky trails. For Sky trails, supply a current track with satellite positions.",
+        description = "Open History, Log viewer, Plot, Query, Settings, or Sky trails and report its placement in GeoTrace. For Sky trails, supply a current track with satellite positions.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -366,6 +366,8 @@ impl Companion {
         if let (Some(deadline), Ok(reply)) = (wait_deadline, &mut response) {
             self.wait_for_result(&request, reply, deadline).await;
         }
+        let panel_open_failed =
+            matches!(&response, Ok(Reply::PanelOpen { state, .. }) if !state.succeeded());
         let result = match response {
             Ok(Reply::Error {
                 code: ErrorCode::ReplyTooLarge,
@@ -375,14 +377,14 @@ impl Companion {
                 );
             }
             Ok(Reply::Error { code }) => return Self::tool_error(Self::reply_error_message(code)),
-            Ok(reply) if !Self::accepts_success_reply(&request, &reply) => {
+            Ok(reply) if !Self::accepts_reply(&request, &reply) => {
                 return Self::tool_error("GeoTrace returned an unexpected reply for this tool.");
             }
             Ok(
                 reply @ (Reply::FilesQueued { .. }
                 | Reply::MapPointOpened(_)
                 | Reply::MapRangeFramed { .. }
-                | Reply::PanelOpenQueued { .. }
+                | Reply::PanelOpen { .. }
                 | Reply::PlotFramed { .. }
                 | Reply::ProcessingApplied
                 | Reply::QueryDraftOpened
@@ -406,6 +408,7 @@ impl Companion {
             Err(error) => return Self::tool_error(Self::connection_error_message(error.kind())),
         };
         match result {
+            Ok(value) if panel_open_failed => CallToolResult::structured_error(value),
             Ok(value) => CallToolResult::structured(value),
             Err(error) => {
                 Self::tool_error(format!("Could not encode the GeoTrace result ({error})."))
@@ -472,7 +475,7 @@ impl Companion {
         clippy::cognitive_complexity,
         reason = "Each arm checks an independent request and reply pair"
     )]
-    fn accepts_success_reply(request: &Request, reply: &Reply) -> bool {
+    fn accepts_reply(request: &Request, reply: &Reply) -> bool {
         match request {
             Request::ApplyProcessing(_) => matches!(reply, Reply::ProcessingApplied),
             Request::CancelQuery(_) | Request::GetQueryStatus(_) => {
@@ -503,7 +506,8 @@ impl Companion {
                 matches!(reply, Reply::RecordingsUnloaded { .. })
             }
             Request::OpenPanel(args) => {
-                matches!(reply, Reply::PanelOpenQueued { panel } if *panel == args.panel())
+                matches!(reply, Reply::PanelOpen { panel, state }
+                    if *panel == args.panel() && (*panel == SessionPanel::Plot) == (*state == PanelOpenState::Docked))
             }
             Request::OpenPoint(args) => {
                 matches!(reply, Reply::MapPointOpened(point) if point == args)

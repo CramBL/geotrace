@@ -13,8 +13,8 @@ use gt_pending_writes::WriteAccess;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, HistoryDates, HistoryOpenId,
     HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings, ListRecordings,
-    OpenHistoryRecording, OpenPanel, QueryCounts, QueryJobState, RecordingReference, Reply,
-    Request, SessionPanel,
+    OpenHistoryRecording, OpenPanel, PanelOpenState, QueryCounts, QueryJobState,
+    RecordingReference, Reply, Request, SessionPanel,
 };
 use gt_side_panel::{CheckState, NodeKey};
 use gt_store::{
@@ -1658,10 +1658,11 @@ fn reopening_history_expires_the_cursor(#[case] reopen_from_session: bool) {
     };
     let second = self::await_page(&mut harness, continuation);
     let open_history = Request::OpenPanel(OpenPanel::History {});
-    let queued = Reply::PanelOpenQueued {
+    let opened = Reply::PanelOpen {
         panel: SessionPanel::History,
+        state: PanelOpenState::Frontmost,
     };
-    assert_eq!(session::execute(&mut harness, open_history.clone()), queued);
+    assert_eq!(session::execute(&mut harness, open_history.clone()), opened);
     assert_eq!(
         session::execute(&mut harness, Request::ListHistoryRecordings(continuation)),
         Reply::HistoryRecordings {
@@ -1678,7 +1679,7 @@ fn reopening_history_expires_the_cursor(#[case] reopen_from_session: bool) {
     );
 
     if reopen_from_session {
-        assert_eq!(session::execute(&mut harness, open_history), queued);
+        assert_eq!(session::execute(&mut harness, open_history), opened);
     } else {
         harness.get_by_label(ICON_CLOCK_COUNTER_CLOCKWISE).click();
         harness.run_steps(2);

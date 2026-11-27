@@ -1,8 +1,12 @@
 use std::mem;
+use std::time::{Duration, Instant};
 
+use gt_loaded_files::RecordingData;
 use gt_map::SkyTrailsWindow;
-use gt_session_bridge::{ErrorCode, OpenPanel, Reply, SessionPanel, TrackReference};
-use gt_types::SkyGeometry;
+use gt_session_bridge::{
+    ErrorCode, OpenPanel, PanelOpenState, Reply, SessionPanel, SessionReply, TrackReference,
+};
+use gt_types::{Generation, SkyGeometry, TrackRef};
 use gt_ui_components::{ToolWindow, ToolWindowRaise};
 use gt_ui_types::SkyTrailsRequest;
 use uuid::Uuid;
@@ -27,103 +31,263 @@ impl PendingPanelReveals {
         }
     }
 
-    fn request_raise(&mut self, panel: SessionPanel, window_id: egui::Id) {
-        let notify_when_frontmost = !self.changed_panels.contains(&panel);
+    fn request_raise(&mut self, target: FloatingPanelTarget, waiter: PanelWaiter) {
+        let notify_when_frontmost = !self.changed_panels.contains(&target.panel());
         if let Some(previous) = self
             .raise
             .as_mut()
-            .filter(|previous| previous.panel == panel)
+            .filter(|previous| previous.target == target)
         {
             previous.notify_when_frontmost &= notify_when_frontmost;
+            previous.waiters.push(waiter);
             return;
         }
-        self.raise = Some(PanelRaise {
-            panel,
-            window_id,
-            queued: false,
+        if let Some(previous) = self.raise.replace(PanelRaise {
+            target,
+            waiters: vec![waiter],
+            phase: RaisePhase::Pending,
             notify_when_frontmost,
-        });
+        }) {
+            previous.finish(PanelOpenState::Superseded);
+        }
     }
+
+    #[cfg(test)]
+    pub(super) fn expire_oldest(&mut self) {
+        if let Some(waiter) = self
+            .raise
+            .as_mut()
+            .and_then(|raise| raise.waiters.first_mut())
+        {
+            waiter.expires = Instant::now();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FloatingPanelTarget {
+    History,
+    LogViewer,
+    Query,
+    Settings,
+    SkyTrails(CheckedSkyTrack),
+}
+
+impl FloatingPanelTarget {
+    fn for_request(app: &App, session: Uuid, args: OpenPanel) -> Result<Option<Self>, ErrorCode> {
+        let target = match args {
+            OpenPanel::History {} => Self::History,
+            OpenPanel::LogViewer {} => Self::LogViewer,
+            OpenPanel::Plot {} => return Ok(None),
+            OpenPanel::Query {} => Self::Query,
+            OpenPanel::Settings {} => Self::Settings,
+            OpenPanel::SkyTrails { track } => {
+                Self::SkyTrails(app.checked_sky_track(session, track)?)
+            }
+        };
+        Ok(Some(target))
+    }
+
+    fn panel(self) -> SessionPanel {
+        match self {
+            Self::History => SessionPanel::History,
+            Self::LogViewer => SessionPanel::LogViewer,
+            Self::Query => SessionPanel::Query,
+            Self::Settings => SessionPanel::Settings,
+            Self::SkyTrails(_) => SessionPanel::SkyTrails,
+        }
+    }
+
+    fn window_id(self) -> egui::Id {
+        match self {
+            Self::History => HistoryWindow::window_id(),
+            Self::LogViewer => LogViewerWindow::window_id(),
+            Self::Query => QueryWindow::window_id(),
+            Self::Settings => egui::Id::unique(settings_ui::WINDOW_ID),
+            Self::SkyTrails(_) => SkyTrailsWindow::window_id(),
+        }
+    }
+
+    fn reveal(self, app: &mut App) -> bool {
+        let was_closed = !app.session_panel_is_open(self.panel());
+        let changed = match self {
+            Self::History => {
+                app.set_history_window_open(true);
+                false
+            }
+            Self::LogViewer => {
+                app.log_viewer.open_window();
+                false
+            }
+            Self::Query => return app.query_window.reveal_editor(&app.ctx),
+            Self::Settings => {
+                app.settings_open = true;
+                false
+            }
+            Self::SkyTrails(target) => app
+                .sky_trails_window
+                .open(SkyTrailsRequest::whole_track(target.track)),
+        };
+        let expanded = ToolWindow::expand(&app.ctx, self.window_id());
+        was_closed || changed || expanded
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct CheckedSkyTrack {
+    track: TrackRef,
+    generation: Generation<RecordingData>,
+}
+
+struct PanelWaiter {
+    reply: SessionReply,
+    expires: Instant,
 }
 
 struct PanelRaise {
-    panel: SessionPanel,
-    window_id: egui::Id,
-    queued: bool,
+    target: FloatingPanelTarget,
+    waiters: Vec<PanelWaiter>,
+    phase: RaisePhase,
     notify_when_frontmost: bool,
 }
 
-impl App {
-    fn session_panel_window_id(panel: SessionPanel) -> Option<egui::Id> {
-        match panel {
-            SessionPanel::History => Some(HistoryWindow::window_id()),
-            SessionPanel::LogViewer => Some(LogViewerWindow::window_id()),
-            SessionPanel::Plot => None,
-            SessionPanel::Query => Some(QueryWindow::window_id()),
-            SessionPanel::Settings => Some(egui::Id::unique(settings_ui::WINDOW_ID)),
-            SessionPanel::SkyTrails => Some(SkyTrailsWindow::window_id()),
+enum RaisePhase {
+    Pending,
+    RetriedLayout,
+    Verify,
+}
+
+impl PanelRaise {
+    fn finish(self, state: PanelOpenState) {
+        for waiter in self.waiters {
+            waiter.reply.send(Reply::PanelOpen {
+                panel: self.target.panel(),
+                state,
+            });
         }
     }
 
+    fn retain_waiters(&mut self, ctx: &egui::Context) -> bool {
+        let now = Instant::now();
+        for waiter in self.waiters.extract_if(.., |waiter| {
+            now >= waiter.expires || !waiter.reply.client_is_waiting()
+        }) {
+            if waiter.reply.client_is_waiting() {
+                waiter.reply.send(Reply::PanelOpen {
+                    panel: self.target.panel(),
+                    state: PanelOpenState::TimedOut,
+                });
+            }
+        }
+        let Some(expires) = self.waiters.iter().map(|waiter| waiter.expires).min() else {
+            return false;
+        };
+        ctx.request_repaint_after(expires.saturating_duration_since(now));
+        true
+    }
+}
+
+impl App {
     pub(super) fn open_session_panel(
         &mut self,
         session: Uuid,
         args: OpenPanel,
-    ) -> Result<Reply, ErrorCode> {
+        reply: SessionReply,
+    ) {
         if self.shutdown_requested() {
-            return Err(ErrorCode::ShuttingDown);
+            reply.send(ErrorCode::ShuttingDown);
+            return;
         }
-        let panel = args.panel();
-        let was_closed = !self.session_panel_is_open(panel);
-        let changed = match args {
-            OpenPanel::Query {} => self.query_window.reveal_editor(&self.ctx),
-            OpenPanel::SkyTrails { track } => self.open_session_sky_trails(session, track)?,
-            OpenPanel::History {} => {
-                self.set_history_window_open(true);
-                false
-            }
-            OpenPanel::LogViewer {} => {
-                self.log_viewer.open_window();
-                false
-            }
-            OpenPanel::Plot {} => {
-                self.tiles_tree.set_visible(self.plot_tile_id, true);
-                false
-            }
-            OpenPanel::Settings {} => {
-                self.settings_open = true;
-                false
+        self.complete_session_panel_raise();
+        let target = match FloatingPanelTarget::for_request(self, session, args) {
+            Ok(target) => target,
+            Err(error) => {
+                reply.send(error);
+                return;
             }
         };
-        let window_id = Self::session_panel_window_id(panel);
-        let expanded = panel != SessionPanel::Query
-            && window_id.is_some_and(|id| ToolWindow::expand(&self.ctx, id));
-        if was_closed || changed || expanded {
+        if !reply.client_is_waiting() {
+            return;
+        }
+
+        let panel = target.map_or(SessionPanel::Plot, FloatingPanelTarget::panel);
+        let changed = if let Some(target) = target {
+            target.reveal(self)
+        } else {
+            let was_closed = !self.plot_is_visible();
+            self.tiles_tree.set_visible(self.plot_tile_id, true);
+            was_closed
+        };
+        if changed {
             self.pending_session_panel_reveals.record_view_change(panel);
         }
-        if let Some(window_id) = window_id {
-            self.complete_session_panel_raise();
-            self.pending_session_panel_reveals
-                .request_raise(panel, window_id);
+        if let Some(target) = target {
+            self.pending_session_panel_reveals.request_raise(
+                target,
+                PanelWaiter {
+                    reply,
+                    expires: Instant::now() + PANEL_RAISE_WAIT,
+                },
+            );
+            self.ctx.request_repaint_after(PANEL_RAISE_WAIT);
+        } else {
+            reply.send(Reply::PanelOpen {
+                panel,
+                state: PanelOpenState::Docked,
+            });
         }
-        self.ctx.request_repaint();
-        Ok(Reply::PanelOpenQueued { panel })
+        if self
+            .ctx
+            .input(|input| input.viewport().visible() != Some(false))
+        {
+            self.ctx.request_repaint();
+        }
+    }
+
+    fn take_current_session_panel_raise(&mut self) -> Option<PanelRaise> {
+        let raise = self.pending_session_panel_reveals.raise.take()?;
+        if !self.session_panel_is_open(raise.target.panel()) {
+            raise.finish(PanelOpenState::Closed);
+            return None;
+        }
+        if let FloatingPanelTarget::SkyTrails(target) = raise.target
+            && (self.sky_trails_window.track() != Some(target.track)
+                || self.shared.borrow().loaded_files.data_generation() != target.generation)
+        {
+            raise.finish(PanelOpenState::Superseded);
+            return None;
+        }
+        Some(raise)
     }
 
     pub(super) fn complete_session_panel_raise(&mut self) {
-        let completed = self.pending_session_panel_reveals.raise.take_if(|raise| {
-            raise.queued
-                && ToolWindow::is_frontmost_after_layout(&self.ctx, raise.window_id) == Some(true)
-        });
-        if let Some(raise) = completed
-            && raise.notify_when_frontmost
+        let Some(mut raise) = self.take_current_session_panel_raise() else {
+            return;
+        };
+        if matches!(raise.phase, RaisePhase::Verify)
+            && let Some(frontmost) =
+                ToolWindow::is_frontmost_after_layout(&self.ctx, raise.target.window_id())
         {
-            McpActionNotice::RevealPanel(raise.panel).enqueue(&mut self.toasts);
+            let state = if frontmost {
+                if raise.notify_when_frontmost {
+                    McpActionNotice::RevealPanel(raise.target.panel()).enqueue(&mut self.toasts);
+                }
+                PanelOpenState::Frontmost
+            } else {
+                PanelOpenState::Superseded
+            };
+            raise.finish(state);
+        } else if raise.retain_waiters(&self.ctx) {
+            self.pending_session_panel_reveals.raise = Some(raise);
         }
     }
 
+    pub(super) fn cancel_pending_session_panel_raise(&mut self) {
+        self.pending_session_panel_reveals.raise = None;
+    }
+
     pub(super) fn apply_session_panel_reveals(&mut self, ctx: &egui::Context) {
-        if ctx.will_discard() {
+        if ctx.will_discard() || ctx.input(|input| input.viewport().visible() == Some(false)) {
             return;
         }
         for panel in mem::take(&mut self.pending_session_panel_reveals.changed_panels) {
@@ -131,19 +295,29 @@ impl App {
                 McpActionNotice::RevealPanel(panel).enqueue(&mut self.toasts);
             }
         }
-        let Some(mut raise) = self.pending_session_panel_reveals.raise.take() else {
+        let Some(mut raise) = self.take_current_session_panel_raise() else {
             return;
         };
-        if !self.session_panel_is_open(raise.panel) {
+        if matches!(raise.phase, RaisePhase::Verify) {
+            self.pending_session_panel_reveals.raise = Some(raise);
             return;
         }
-        match ToolWindow::raise(ctx, raise.window_id) {
-            ToolWindowRaise::AlreadyFrontmost if !raise.queued => return,
-            ToolWindowRaise::Queued => raise.queued = true,
-            ToolWindowRaise::AlreadyFrontmost | ToolWindowRaise::WaitingForLayout => {
+        if !raise.retain_waiters(ctx) {
+            return;
+        }
+        match ToolWindow::raise(ctx, raise.target.window_id()) {
+            ToolWindowRaise::AlreadyFrontmost => {
+                // egui updates the layer order at the end of the pass.
+                raise.notify_when_frontmost = false;
+                raise.phase = RaisePhase::Verify;
                 ctx.request_repaint();
             }
-            ToolWindowRaise::WaitingForPointer => {}
+            ToolWindowRaise::Queued => raise.phase = RaisePhase::Verify,
+            ToolWindowRaise::WaitingForLayout if matches!(raise.phase, RaisePhase::Pending) => {
+                raise.phase = RaisePhase::RetriedLayout;
+                ctx.request_repaint();
+            }
+            ToolWindowRaise::WaitingForLayout | ToolWindowRaise::WaitingForPointer => {}
         }
         self.pending_session_panel_reveals.raise = Some(raise);
     }
@@ -159,17 +333,15 @@ impl App {
         }
     }
 
-    fn open_session_sky_trails(
-        &mut self,
+    fn checked_sky_track(
+        &self,
         session: Uuid,
         track: TrackReference,
-    ) -> Result<bool, ErrorCode> {
+    ) -> Result<CheckedSkyTrack, ErrorCode> {
         let shared = self.shared.borrow();
         let files = shared.loaded_files.view();
-        let reference = track.resolve(files, session)?;
-        let loaded_track = reference
-            .resolve(files.files())
-            .ok_or(ErrorCode::StaleTrack)?;
+        let track = track.resolve(files, session)?;
+        let loaded_track = track.resolve(files.files()).ok_or(ErrorCode::StaleTrack)?;
         if !loaded_track
             .points
             .iter()
@@ -177,8 +349,11 @@ impl App {
         {
             return Err(ErrorCode::NoSkyTrailReports);
         }
-        Ok(self
-            .sky_trails_window
-            .open(SkyTrailsRequest::whole_track(reference)))
+        Ok(CheckedSkyTrack {
+            track,
+            generation: shared.loaded_files.data_generation(),
+        })
     }
 }
+
+const PANEL_RAISE_WAIT: Duration = Duration::from_millis(500);

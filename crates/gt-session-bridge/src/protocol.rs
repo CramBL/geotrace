@@ -22,7 +22,7 @@ use crate::query_job::{QueryJobId, QueryJobRequest, QueryJobStatus};
 use crate::query_results::{GetQueryResults, QueryMatchPosition, QueryResults};
 use crate::query_validation::QueryValidation;
 use crate::recording_control::ManageRecordings;
-use crate::session_state::{OpenPanel, SessionPanel, SessionState};
+use crate::session_state::{OpenPanel, PanelOpenState, SessionPanel, SessionState};
 use crate::session_view::SetSessionView;
 use crate::settings::{SetSetting, SettingInfo, SettingKey, SettingSelection};
 
@@ -305,8 +305,9 @@ pub enum Reply {
     Metrics {
         page: Metrics,
     },
-    PanelOpenQueued {
+    PanelOpen {
         panel: SessionPanel,
+        state: PanelOpenState,
     },
     PlotFramed {
         track: TrackReference,
