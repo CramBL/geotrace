@@ -128,7 +128,7 @@ pub(super) fn add_series_lines<'a>(
         for (run, selection) in
             viewport.visible_fix_runs(placed.series.fix_mipmaps_for(kind), levels)
         {
-            let points = run.mipmap.geometry().slice_at(selection);
+            let points = run.mipmap.slice_at(selection);
             if kind == MetricKind::ClockDeltaMs {
                 clock_offset::add_clock_offset_line(
                     plot_ui,
@@ -214,7 +214,7 @@ pub(super) fn add_series_lines<'a>(
                 .runs
                 .iter()
                 .zip(run_selections)
-                .map(|(run, selection)| run.geometry().slice_at(*selection))
+                .map(|(run, selection)| run.slice_at(*selection))
                 .filter(|points| points.len() >= 2)
             {
                 nearest.offer_native_line(plot_ui, points, pointer);
@@ -257,7 +257,7 @@ impl MetricSeries {
             if !context.viewport.shows_recorded(&run.mipmap) {
                 continue;
             }
-            let points = run.mipmap.geometry().slice_at(*selection);
+            let points = run.mipmap.slice_at(*selection);
             metric_paint::add_metric_run(
                 plot_ui,
                 points,

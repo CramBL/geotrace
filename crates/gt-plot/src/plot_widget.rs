@@ -2,7 +2,6 @@
 //! ([`show_track_plot`]), and the submodules it orchestrates.
 
 use std::cell::Cell;
-use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 
@@ -10,6 +9,7 @@ use chrono::{DateTime, Utc};
 use egui::{Align2, Color32, PointerButton, RichText, Stroke, TextStyle};
 use egui_plot::{AxisHints, LineStyle, PlotTransform, Span, VLine};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
+use gt_egui_mipmap::KeyBounds;
 use gt_filter::{GlobalFilter, TimeWindow};
 use gt_flare::MarkedFlare;
 use gt_loaded_files::RecordingNames;
@@ -85,17 +85,8 @@ impl FilterTimeWindow {
         start.map_or(f64::NEG_INFINITY, plot_x)..=end.map_or(f64::INFINITY, plot_x)
     }
 
-    fn compare_sample(self, time: Option<DateTime<Utc>>) -> Ordering {
-        let (Some(time), Some((start, end))) = (time, self.0.bounds()) else {
-            return Ordering::Greater;
-        };
-        if start.is_some_and(|start| time < start) {
-            Ordering::Less
-        } else if end.is_some_and(|end| time > end) {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
-        }
+    fn key_bounds(self) -> KeyBounds<DateTime<Utc>> {
+        KeyBounds::from_bounds(self.0.bounds())
     }
 
     /// The part of `seconds` inside the window, empty when the two do not
@@ -609,12 +600,8 @@ pub fn show_track_plot<'view>(
     let time_window = FilterTimeWindow::from(filter);
     let samples = MetricKind::iter()
         .filter(|&kind| {
-            visible_series(&state.series_cache, &visible).any(|placed| {
-                placed
-                    .track_ref()
-                    .resolve(files)
-                    .is_some_and(|track| placed.series.has_samples_in(track, kind, time_window))
-            })
+            visible_series(&state.series_cache, &visible)
+                .any(|placed| placed.series.has_samples_in(kind, time_window))
         })
         .collect();
     let off_scale_clock_baseline = off_scale_clock_baseline(&state.series_cache, &visible);
@@ -850,14 +837,7 @@ pub fn show_track_plot<'view>(
         } else {
             let fresh: Vec<TrackLevelCache> = series_cache
                 .par_iter()
-                .map(|placed| {
-                    placed
-                        .track_ref()
-                        .resolve(files)
-                        .map_or_else(TrackLevelCache::default, |track| {
-                            levels::compute_level_cache(&placed.series, track, line_viewport)
-                        })
-                })
+                .map(|placed| levels::compute_level_cache(&placed.series, line_viewport))
                 .collect();
             new_level_cache_inputs = Some(inputs);
             std::borrow::Cow::Owned(fresh)

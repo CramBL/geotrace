@@ -1,5 +1,5 @@
 use chrono::TimeDelta;
-use gt_egui_mipmap::SelectionRange;
+use gt_egui_mipmap::KeyBounds;
 use gt_types::satellites::{Constellation, ConstellationSet, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::{
@@ -51,10 +51,9 @@ fn drawn_runs(series: &TrackSeries, kind: MetricKind, target: usize) -> Vec<Vec<
         .runs
         .iter()
         .map(|run| {
-            let points = run.mipmap.geometry().select_slice(
-                SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
-                target,
-            );
+            let points =
+                run.mipmap
+                    .select_slice(f64::NEG_INFINITY..=f64::INFINITY, KeyBounds::All, target);
             points
                 .iter()
                 .map(|point| [point.x - base, point.y])
@@ -311,11 +310,10 @@ fn decimated_samples_retain_original_report_references() {
     let series = series(points);
     let metric = series.metrics.get(&MetricKind::SatsFix).expect("metric");
     let run = metric.runs.first().expect("one run");
-    let selection = run.mipmap.geometry().select_indices(
-        SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
-        2,
-    );
-    let selected = run.mipmap.geometry().slice_at(selection);
+    let selection = run
+        .mipmap
+        .select_indices(f64::NEG_INFINITY..=f64::INFINITY, KeyBounds::All, 2);
+    let selected = run.mipmap.slice_at(selection);
     assert!(selected.len() < 2_000);
     for (offset, sample) in selected.iter().enumerate() {
         let source = run
@@ -408,7 +406,7 @@ fn dop_runs_preserve_missing_samples_backward_steps_and_analysis_refresh(#[case]
             series
                 .eph_m
                 .iter()
-                .all(|run| run.mipmap.geometry().finest_level().is_empty())
+                .all(|run| run.mipmap.finest_level().is_empty())
         );
     }
     series.apply_analysis(&track, AnalysisConfig::default());

@@ -60,7 +60,7 @@ pub(super) fn sync_snap_error_cache(
         }
         let runs = snap_error_runs(points)
             .into_iter()
-            .map(|run| MipMap::build(run.iter().map(|p| [p.x, p.y]).collect()))
+            .map(|run| MipMap::build(run.iter().map(|p| [p.x, p.y])))
             .collect();
         let snapped = points
             .iter()
@@ -274,7 +274,7 @@ mod tests {
     /// A run cascade over `count` one-per-second points starting at
     /// `start` seconds.
     fn run_from(start: usize, count: usize) -> MipMap {
-        MipMap::build((0..count).map(|i| [(start + i) as f64, 1.0]).collect())
+        MipMap::build((0..count).map(|i| [(start + i) as f64, 1.0]))
     }
 
     /// A run cascade over `count` one-per-second points from time zero.

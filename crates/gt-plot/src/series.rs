@@ -4,7 +4,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_analysis::{SlipAnalysisConfig, SlipThresholds};
-use gt_egui_mipmap::{IndexedMipMap, IndexedSample, WrapPeriod};
+use gt_egui_mipmap::{KeyedMipMap, KeyedSample, WrapPeriod};
 use gt_types::satellites::{Constellation, ConstellationSet};
 use gt_types::{
     LoadedFile, MetricKind, NavPoint, NavigationEvidenceSource, PositionProvenance,
@@ -80,7 +80,7 @@ pub(crate) struct TrackSeries {
 #[derive(Debug, Clone)]
 pub(crate) struct FixMetricRun {
     pub fix_range: Range<usize>,
-    pub mipmap: IndexedMipMap,
+    pub mipmap: KeyedMipMap<DateTime<Utc>>,
 }
 
 /// One ad-hoc channel's plot series: a line per component, on the channel's
@@ -128,7 +128,7 @@ pub(crate) struct ChannelComponentSeries {
     /// The runs of [`gt_types::Channel::chronological_runs`], in stored order,
     /// each mipmapped on its own: a mipmap level is searched by a binary search
     /// over x.
-    pub runs: Vec<IndexedMipMap>,
+    pub runs: Vec<KeyedMipMap<DateTime<Utc>>>,
 }
 
 /// Build the per-component plot series of one channel.
@@ -156,16 +156,12 @@ fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
                         .get(run.clone())
                         .unwrap_or_default()
                         .iter()
+                        .zip(channel.times.get(run.clone()).unwrap_or_default())
                         .zip(channel.values.chunks(columns).skip(run.start))
-                        .enumerate()
-                        .filter_map(|(offset, (&time, row))| {
-                            Some(IndexedSample {
-                                point: [time, *row.get(col)?],
-                                source_index: run.start + offset,
-                            })
-                        })
-                        .collect();
-                    IndexedMipMap::build(samples, period)
+                        .filter_map(|((&time, &key), row)| {
+                            Some(KeyedSample::new([time, *row.get(col)?], key))
+                        });
+                    KeyedMipMap::build_with_period(samples, period)
                 })
                 .collect();
             ChannelComponentSeries { label, runs }
@@ -207,12 +203,12 @@ impl TrackSeries {
             .retain(|kind, _| !diagnostics.metrics.contains_key(kind));
         self.metrics.extend(diagnostics.metrics);
 
-        let (clock_delta_pts, placement) =
-            clock_delta_series(track, analysis.clock_excursion_threshold_s);
         let fix_ranges = gt_types::channel::chronological_runs(
             track.points.iter().map(|point| Some(point.tpv.time())),
         );
-        self.clock_delta_ms = build_fix_mipmaps(&fix_ranges, clock_delta_pts, None);
+        let (clock_delta_ms, placement) =
+            clock_delta_series(track, &fix_ranges, analysis.clock_excursion_threshold_s);
+        self.clock_delta_ms = clock_delta_ms;
         self.clock_offset_placement = placement;
     }
 }
@@ -224,27 +220,29 @@ impl TrackSeries {
 /// no line at all: every one of its samples is held back.
 fn clock_delta_series(
     track: &gt_types::LoadedTrack,
+    fix_ranges: &[Range<usize>],
     threshold_s: f32,
-) -> (Vec<IndexedSample>, ClockOffsetPlacement) {
+) -> (Vec<FixMetricRun>, ClockOffsetPlacement) {
     let placement = gt_analysis::clock_offset::detect_placement(&track.points, threshold_s);
     let ClockOffsetPlacement::BaselineOnScale(excursions) = &placement else {
-        return (Vec::new(), placement);
+        return (
+            build_fix_mipmaps(&track.points, fix_ranges, None, |_, _| None),
+            placement,
+        );
     };
     let excluded = gt_analysis::clock_offset::excursion_indices(excursions);
-    let points = track
-        .points
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| excluded.binary_search(i).is_err())
-        .filter_map(|(source_index, point)| {
-            let delta_ms = point.tpv.gps_system_clock_offset()?.num_milliseconds();
-            Some(IndexedSample {
-                point: [point.tpv.time().as_secs_f64(), delta_ms as f64],
-                source_index,
-            })
-        })
-        .collect();
-    (points, placement)
+    let runs = build_fix_mipmaps(&track.points, fix_ranges, None, |fix_index, point| {
+        if excluded.binary_search(&fix_index).is_ok() {
+            return None;
+        }
+        let delta_ms = point.tpv.gps_system_clock_offset()?.num_milliseconds();
+        let time = point.tpv.time();
+        Some(KeyedSample::new(
+            [time.as_secs_f64(), delta_ms as f64],
+            time.utc(),
+        ))
+    });
+    (runs, placement)
 }
 
 /// Build mipmap series for every track in a single file, using `fi` as the file
@@ -355,32 +353,11 @@ fn build_track_series(
         MetricKind::SystemBootDeltaMs,
         build_system_boot_delta_series(&track.points),
     );
-    let mut velocity_kmh_pts = Vec::with_capacity(track.points.len());
-    let mut eph_m_pts = Vec::new();
-    let mut heading_deg_pts = Vec::new();
-
-    for (source_index, point) in track.points.iter().enumerate() {
-        let time = point.tpv.time().as_secs_f64_with_subseconds();
-        let sample = |value| IndexedSample {
-            point: [time, value],
-            source_index,
-        };
-
-        if let Some(v) = point.tpv.velocity_kmh() {
-            velocity_kmh_pts.push(sample(v));
-        }
-
-        if let Some(eph) = point.tpv.eph_m() {
-            eph_m_pts.push(sample(f64::from(eph)));
-        }
-
-        if let Some(h) = point.tpv.heading() {
-            heading_deg_pts.push(sample(h.get::<degree>()));
-        }
-    }
-
-    let (clock_delta_ms_pts, clock_offset_placement) =
-        clock_delta_series(track, analysis.clock_excursion_threshold_s);
+    let fix_ranges = gt_types::channel::chronological_runs(
+        track.points.iter().map(|point| Some(point.tpv.time())),
+    );
+    let (clock_delta_ms, clock_offset_placement) =
+        clock_delta_series(track, &fix_ranges, analysis.clock_excursion_threshold_s);
 
     let x_range = track
         .points
@@ -409,22 +386,47 @@ fn build_track_series(
             }))
         });
 
-    let fix_ranges = gt_types::channel::chronological_runs(
-        track.points.iter().map(|point| Some(point.tpv.time())),
-    );
     TrackSeries {
         ti,
         metrics,
         x_range,
         present,
-        velocity_kmh: build_fix_mipmaps(&fix_ranges, velocity_kmh_pts, None),
-        eph_m: build_fix_mipmaps(&fix_ranges, eph_m_pts, None),
+        velocity_kmh: build_fix_mipmaps(&track.points, &fix_ranges, None, |_, point| {
+            let time = point.tpv.time();
+            Some(KeyedSample::new(
+                [
+                    time.as_secs_f64_with_subseconds(),
+                    point.tpv.velocity_kmh()?,
+                ],
+                time.utc(),
+            ))
+        }),
+        eph_m: build_fix_mipmaps(&track.points, &fix_ranges, None, |_, point| {
+            let time = point.tpv.time();
+            Some(KeyedSample::new(
+                [
+                    time.as_secs_f64_with_subseconds(),
+                    f64::from(point.tpv.eph_m()?),
+                ],
+                time.utc(),
+            ))
+        }),
         heading_deg: build_fix_mipmaps(
+            &track.points,
             &fix_ranges,
-            heading_deg_pts,
             Some(WrapPeriod::full_turn_degrees()),
+            |_, point| {
+                let time = point.tpv.time();
+                Some(KeyedSample::new(
+                    [
+                        time.as_secs_f64_with_subseconds(),
+                        point.tpv.heading()?.get::<degree>(),
+                    ],
+                    time.utc(),
+                ))
+            },
         ),
-        clock_delta_ms: build_fix_mipmaps(&fix_ranges, clock_delta_ms_pts, None),
+        clock_delta_ms,
         clock_offset_placement,
         util_anomalies: diagnostics.anomalies,
         channels: track.channels.iter().map(build_channel_series).collect(),
@@ -432,21 +434,22 @@ fn build_track_series(
 }
 
 fn build_fix_mipmaps(
+    points: &[NavPoint],
     fix_ranges: &[Range<usize>],
-    samples: Vec<IndexedSample>,
     period: Option<WrapPeriod>,
+    mut extract: impl FnMut(usize, &NavPoint) -> Option<KeyedSample<DateTime<Utc>>>,
 ) -> Vec<FixMetricRun> {
-    let mut samples = samples.into_iter().peekable();
     fix_ranges
         .iter()
         .map(|fix_range| {
-            let run_samples = std::iter::from_fn(|| {
-                samples.next_if(|sample| fix_range.contains(&sample.source_index))
-            })
-            .collect();
+            let run_points = points.get(fix_range.clone()).unwrap_or_default();
+            let samples = run_points
+                .iter()
+                .enumerate()
+                .filter_map(|(offset, point)| extract(fix_range.start + offset, point));
             FixMetricRun {
                 fix_range: fix_range.clone(),
-                mipmap: IndexedMipMap::build(run_samples, period),
+                mipmap: KeyedMipMap::build_with_period(samples, period),
             }
         })
         .collect()
@@ -823,6 +826,7 @@ const MICROS_PER_SEC: f64 = 1_000_000.0;
 #[cfg(test)]
 mod tests {
     use geotrace_sdk_units::Unit;
+    use gt_egui_mipmap::KeyBounds;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::nav_point::NavPoint;
     use gt_types::time_types::GpsTime;
@@ -840,14 +844,9 @@ mod tests {
 
     /// The points one line draws at the level a view wanting `target` samples
     /// selects, in the order they are drawn.
-    fn drawn_points(recorded: &IndexedMipMap, target: usize) -> Vec<(f64, f64)> {
-        let mipmap = recorded.geometry();
-        let level = mipmap.select_indices(
-            gt_egui_mipmap::SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
-            target,
-        );
-        mipmap
-            .slice_at(level)
+    fn drawn_points<M>(recorded: &KeyedMipMap<DateTime<Utc>, M>, target: usize) -> Vec<(f64, f64)> {
+        recorded
+            .select_slice(f64::NEG_INFINITY..=f64::INFINITY, KeyBounds::All, target)
             .iter()
             .map(|point| (point.x, point.y))
             .collect()
@@ -1105,7 +1104,7 @@ mod tests {
                 component
                     .runs
                     .iter()
-                    .map(|run| run.geometry().original_len())
+                    .map(KeyedMipMap::original_len)
                     .collect::<Vec<_>>(),
                 [250, 200, 300, 250],
                 "{}",
@@ -1195,7 +1194,7 @@ mod tests {
         gt_test_utils::loaded_track_with_points(points)
     }
 
-    fn heading_series(headings: &[Option<f64>]) -> IndexedMipMap {
+    fn heading_series(headings: &[Option<f64>]) -> KeyedMipMap<DateTime<Utc>> {
         let track = track_with_headings(headings);
         build_track_series(0, &track, AnalysisConfig::default())
             .heading_deg
@@ -1221,7 +1220,7 @@ mod tests {
 
     /// The y values the plot draws for one series at the level a view wanting
     /// `target` samples selects, in the order they are drawn.
-    fn drawn_values(mipmap: &IndexedMipMap, target: usize) -> Vec<f64> {
+    fn drawn_values(mipmap: &KeyedMipMap<DateTime<Utc>>, target: usize) -> Vec<f64> {
         drawn_points(mipmap, target)
             .into_iter()
             .map(|(_, y)| y)

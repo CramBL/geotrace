@@ -1,5 +1,5 @@
 use chrono::{DateTime, TimeDelta, Utc};
-use gt_egui_mipmap::SelectionRange;
+use gt_egui_mipmap::KeyBounds;
 use gt_types::{
     BootClockBackwardStep, BootTime, GpsTime, Latitude, Longitude, MetricKind, NavPoint, SysTime,
     SystemBootComparison, SystemBootTimePair, TimePositionVelocity,
@@ -106,12 +106,12 @@ fn system_boot_series_preserves_samples_and_source_identity(#[case] fixture: Clo
     };
     assert_eq!(metric.runs.len(), fixture.expected_runs.len());
     for (run, expected_sources) in metric.runs.iter().zip(fixture.expected_runs) {
-        let geometry = run.mipmap.geometry();
-        let selection = geometry.select_indices(
-            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
+        let selection = run.mipmap.select_indices(
+            f64::NEG_INFINITY..=f64::INFINITY,
+            KeyBounds::All,
             usize::MAX,
         );
-        let samples = geometry.slice_at(selection);
+        let samples = run.mipmap.slice_at(selection);
         assert_eq!(samples.len(), expected_sources.len());
         for (offset, (sample, &point_index)) in samples.iter().zip(*expected_sources).enumerate() {
             assert_eq!(sample.y, point_index as f64 / 1_000.0);
