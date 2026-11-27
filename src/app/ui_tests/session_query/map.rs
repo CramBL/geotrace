@@ -477,7 +477,7 @@ fn the_latest_camera_request_applies_when_the_map_draws(#[case] order: CameraOrd
         assert_eq!(map_rect.height(), 0.0);
         {
             let shared = app.shared.borrow();
-            assert!(shared.reveal_query_matches_request.is_none());
+            assert_eq!(shared.reveal_query_matches_request.is_some(), !session_last);
             assert_eq!(shared.highlight.sticky(), None);
         }
         app.set_split_ratio(0.6);
@@ -892,6 +892,284 @@ fn session_map_rejects_invalid_point_references(
         session::execute(&mut harness, Request::OpenPoint(OpenPoint { track, point })),
         expected.into()
     );
+}
+
+enum CompetingMapInput {
+    DragOutsideMap,
+    Escape,
+    Zoom,
+}
+
+#[rstest]
+#[case::escape(CompetingMapInput::Escape)]
+#[case::zoom(CompetingMapInput::Zoom)]
+#[case::drag_outside_map(CompetingMapInput::DragOutsideMap)]
+fn later_map_input_preserves_the_range_and_supersedes_a_point(#[case] input: CompetingMapInput) {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    let range = Request::ShowOnMap(ShowOnMap {
+        target: RangeTarget::Track {
+            track,
+            start: Some(30),
+            end: Some(33),
+        },
+    });
+    assert_eq!(
+        session::execute(&mut harness, range),
+        Reply::MapPresentationQueued
+    );
+    harness.step();
+    let before = harness.state().map.viewport_geo_bounds().unwrap();
+    let highlight = harness.state().shared.borrow().highlight.presented_match;
+    let app = harness.state();
+    let map_rect = app.tiles_tree.tiles.rect(app.map_tile_id).unwrap();
+    let map_center = map_rect.center();
+    harness.hover_at(map_center);
+    harness.step();
+    if matches!(input, CompetingMapInput::DragOutsideMap) {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: map_center,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+    }
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::OpenPoint(OpenPoint { track, point: 1 })
+        ),
+        Reply::MapPresentationQueued
+    );
+    if matches!(input, CompetingMapInput::DragOutsideMap) {
+        harness.step();
+        assert!(
+            harness
+                .state()
+                .shared
+                .borrow()
+                .pending_session_map
+                .is_some()
+        );
+    }
+    let event = match input {
+        CompetingMapInput::DragOutsideMap => {
+            egui::Event::PointerMoved(egui::pos2(map_rect.left() - 20.0, map_center.y))
+        }
+        CompetingMapInput::Escape => egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+        CompetingMapInput::Zoom => egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            source: egui::MouseWheelSource::Wheel,
+            delta: egui::vec2(0.0, -90.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        },
+    };
+    harness.input_mut().events.push(event);
+    harness.step();
+    assert!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .pending_session_map
+            .is_none()
+    );
+    let after = harness.state().map.viewport_geo_bounds().unwrap();
+    assert_eq!(
+        (after.lat_min, after.lon_min, after.lat_max, after.lon_max)
+            == (
+                before.lat_min,
+                before.lon_min,
+                before.lat_max,
+                before.lon_max
+            ),
+        matches!(input, CompetingMapInput::Escape)
+    );
+    let shared = harness.state().shared.borrow();
+    assert_eq!(shared.highlight.presented_match, highlight);
+    assert_eq!(shared.highlight.sticky(), None);
+    assert_eq!(
+        session::visible_action_notices(&harness),
+        ["MCP framed a range on the map"]
+    );
+}
+
+#[rstest]
+#[case::one_request(false)]
+#[case::replacement(true)]
+fn an_unavailable_point_keeps_the_earlier_desktop_reveal(#[case] replace: bool) {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    let range = Request::ShowOnMap(ShowOnMap {
+        target: RangeTarget::Track {
+            track,
+            start: Some(30),
+            end: Some(33),
+        },
+    });
+    assert_eq!(
+        session::execute(&mut harness, range),
+        Reply::MapPresentationQueued
+    );
+    harness.step();
+    let active = harness.state().shared.borrow().highlight.presented_match;
+    let reference = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let latitude = {
+        let mut shared = harness.state_mut().shared.borrow_mut();
+        shared.reveal_query_matches_request = Some(MatchRevealTarget::OneMatch {
+            track: reference,
+            points: 0..1,
+        });
+        reference
+            .resolve(shared.loaded_files.files())
+            .unwrap()
+            .resolved_position_at(0)
+            .unwrap()
+            .0
+            .as_degrees()
+    };
+    assert!(latitude < harness.state().map.viewport_geo_bounds().unwrap().lat_min);
+    let point = |point| Request::OpenPoint(OpenPoint { track, point });
+    assert_eq!(
+        session::execute(&mut harness, point(1)),
+        Reply::MapPresentationQueued
+    );
+    if replace {
+        assert_eq!(
+            session::execute(&mut harness, point(2)),
+            Reply::MapPresentationQueued
+        );
+    }
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .display_mask
+        .set_visible(DisplayCategory::TrackPoints, false);
+    harness.step();
+    let restored = harness.state().map.viewport_geo_bounds().unwrap();
+    assert!((restored.lat_min..=restored.lat_max).contains(&latitude));
+    let shared = harness.state().shared.borrow();
+    assert!(shared.pending_session_map.is_none());
+    assert_eq!(shared.highlight.sticky(), None);
+    assert_eq!(shared.highlight.presented_match, active);
+}
+
+#[test]
+fn dragging_in_the_query_editor_keeps_map_presentations_available() {
+    let mut harness = ui_tests::app_with_query_window_open();
+    harness
+        .state_mut()
+        .editor_query
+        .session_mut()
+        .set_text("points | where velocity > 1 km/h".to_owned());
+    harness.run_steps(2);
+    let track = session::first_track_reference(&mut harness);
+    let app = harness.state();
+    let viewport = app.tiles_tree.tiles.rect(app.map_tile_id).unwrap();
+    let editor = harness
+        .get_by_role(Role::MultilineTextInput)
+        .rect()
+        .intersect(viewport);
+    assert!(editor.is_positive());
+    let start = editor.lerp_inside(egui::vec2(0.2, 0.5));
+    let end = editor.lerp_inside(egui::vec2(0.8, 0.5));
+    harness.hover_at(start);
+    harness.step();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: start,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::ShowOnMap(ShowOnMap {
+                target: RangeTarget::Track {
+                    track,
+                    start: Some(30),
+                    end: Some(33)
+                },
+            })
+        ),
+        Reply::MapPresentationQueued
+    );
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(end));
+    harness.step();
+    assert!(
+        harness
+            .ctx
+            .input(|input| input.pointer.any_down() && input.pointer.delta() != egui::Vec2::ZERO)
+    );
+    let shared = harness.state().shared.borrow();
+    assert_eq!(
+        shared.highlight.presented_match,
+        Some(MatchHighlight::new(
+            TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            &(30..33),
+        ))
+    );
+}
+
+#[test]
+fn a_repeated_desktop_fit_takes_precedence_over_a_queued_point() {
+    let mut harness = ui_tests::app_with_a_recording();
+    let track = session::first_track_reference(&mut harness);
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .zoom_to_visible_request = true;
+    harness.step();
+    let app = harness.state();
+    let center = app.tiles_tree.tiles.rect(app.map_tile_id).unwrap().center();
+    harness.hover_at(center);
+    harness.step();
+    let before = harness.state().map.viewport_geo_bounds().unwrap();
+    assert_eq!(
+        session::execute(
+            &mut harness,
+            Request::OpenPoint(OpenPoint { track, point: 1 })
+        ),
+        Reply::MapPresentationQueued
+    );
+    for pressed in [true, false] {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    harness.run_steps(2);
+    let after = harness.state().map.viewport_geo_bounds().unwrap();
+    assert_eq!(
+        (after.lat_min, after.lat_max, after.lon_min, after.lon_max),
+        (
+            before.lat_min,
+            before.lat_max,
+            before.lon_min,
+            before.lon_max
+        )
+    );
+    let shared = harness.state().shared.borrow();
+    assert!(shared.pending_session_map.is_none());
+    assert_eq!(shared.highlight.sticky(), None);
+    assert!(session::visible_action_notices(&harness).is_empty());
 }
 
 fn exclude_recording_times(harness: &mut Harness<'_, App>) {

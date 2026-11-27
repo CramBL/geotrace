@@ -717,8 +717,8 @@ impl MapScene {
                         ..draw.context(files, visibility)
                     },
                 );
-                if returned.is_some() {
-                    *returned_action = returned;
+                if returned.action.is_some() {
+                    *returned_action = returned.action;
                 }
             },
             MapSceneState {

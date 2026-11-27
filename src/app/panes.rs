@@ -3,13 +3,17 @@ use egui_notify::Toasts;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
-use gt_map::{MapAction, MapDrawContext, MapFiles, NavMap, PresentationCamera};
+use gt_map::{
+    MapAction, MapDrawContext, MapFiles, MapPresentationInput, NavMap, PresentationCamera,
+};
 use gt_types::{Generation, LoadedFile};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
 use super::SharedAppState;
 use super::mcp_action_notice::McpActionNotice;
 use super::pane_presentation::PresentationControls;
+use super::query_run::BackgroundQuery;
+use super::session_map::GuiCameraRequests;
 
 /// Pane variants for the central area tiles tree.
 pub(super) enum MainPane {
@@ -20,6 +24,7 @@ pub(super) enum MainPane {
 /// Behavior implementation that renders each pane of the central tiles tree.
 pub(super) struct MainBehavior<'a> {
     pub(super) map: &'a mut NavMap,
+    pub(super) queries: &'a BackgroundQuery,
     pub(super) checked_plot_visibility: Generation<TrackDataVisibility>,
     pub(super) state: &'a mut SharedAppState,
     pub(super) toasts: &'a mut Toasts,
@@ -76,16 +81,29 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
             MainPane::Map => {
                 let s = &mut *self.state;
                 let map_viewport = ui.max_rect().intersect(ui.clip_rect());
-                let presentation_camera = if map_viewport.is_positive() {
-                    s.apply_session_map(self.map, self.query_matches)
+                let can_draw_map = map_viewport.is_finite() && map_viewport.is_positive();
+                let map_input = if can_draw_map && s.pending_session_map.is_some() {
+                    self.map.presentation_input(ui, s.highlight.sticky())
                 } else {
-                    None
+                    MapPresentationInput::Ready
                 };
-                let center_req = s.map_center_request.take();
+                let presentation_camera =
+                    if can_draw_map && matches!(map_input, MapPresentationInput::Ready) {
+                        s.apply_session_map(self.map, self.query_matches, self.queries)
+                    } else {
+                        None
+                    };
+                let GuiCameraRequests {
+                    center,
+                    zoom_to_visible,
+                    reveal,
+                } = if can_draw_map {
+                    s.take_gui_camera_requests_for_draw()
+                } else {
+                    GuiCameraRequests::default()
+                };
                 let popup_pos = s.popup_pos_request.take();
-                let zoom_to_visible = std::mem::replace(&mut s.zoom_to_visible_request, false);
-                let reveal_query_matches = s.reveal_query_matches_request.take();
-                if let Some(action) = self.map.draw(
+                let frame = self.map.draw(
                     ui,
                     MapDrawContext {
                         files: MapFiles::Loaded(s.loaded_files.view()),
@@ -112,13 +130,14 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         highlight: &mut s.highlight,
                         sky_glyph_variant: &mut s.sky_glyph_variant,
                         point_window_folds: &mut s.point_window_folds,
-                        center_request: center_req,
+                        center_request: center,
                         zoom_to_visible,
-                        reveal_query_matches,
+                        reveal_query_matches: reveal,
                         sticky_pos_override: popup_pos,
                         presentation_camera,
                     },
-                ) {
+                );
+                if let Some(action) = frame.action {
                     match action {
                         MapAction::ShowOnlyTrack(track) => {
                             s.tree.show_only_track(track);
@@ -134,6 +153,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         }
                     }
                 }
+                s.finish_session_map_input(ui.ctx(), map_input, frame.interaction);
                 if let Some(camera) = presentation_camera {
                     match camera {
                         PresentationCamera::Center { .. } => McpActionNotice::CenterMapOnPoint,

@@ -2,13 +2,13 @@ use std::ops::Range;
 
 use gt_filter::GlobalFilter;
 use gt_loaded_files::RecordingData;
-use gt_map::{NavMap, PresentationCamera};
+use gt_map::{MapFrameInteraction, MapPresentationInput, NavMap, PresentationCamera};
 use gt_query_run::MatchExtent;
 use gt_session_bridge::{ErrorCode, OpenPoint, RangeTarget, ShowOnMap};
 use gt_types::{DataCategory, FixRef, Generation, Latitude, Longitude, PointIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, MapElementRef, MapEligibility, MapPresence, MapPresenceResult, MatchHighlight,
-    PinRevision, QueryMatches,
+    MatchRevealTarget, PinRevision, QueryMatches,
 };
 use uuid::Uuid;
 
@@ -26,6 +26,19 @@ pub(super) struct MapPresentation {
 pub(super) struct QueuedMapPresentation {
     presentation: MapPresentation,
     pin_revision: Option<PinRevision>,
+    earlier_camera: Option<RetainedGuiCamera>,
+}
+
+#[derive(Default)]
+pub(super) struct GuiCameraRequests {
+    pub(super) center: Option<(f64, f64)>,
+    pub(super) zoom_to_visible: bool,
+    pub(super) reveal: Option<MatchRevealTarget>,
+}
+
+struct RetainedGuiCamera {
+    requests: GuiCameraRequests,
+    generation: Generation<RecordingData>,
 }
 
 #[derive(Clone, Copy)]
@@ -260,16 +273,97 @@ impl App {
 }
 
 impl SharedAppState {
+    fn has_gui_camera_requests(&self) -> bool {
+        self.map_center_request.is_some()
+            || self.zoom_to_visible_request
+            || self.reveal_query_matches_request.is_some()
+    }
+
+    fn take_gui_camera_requests(&mut self) -> GuiCameraRequests {
+        GuiCameraRequests {
+            center: self.map_center_request.take(),
+            zoom_to_visible: std::mem::take(&mut self.zoom_to_visible_request),
+            reveal: self.reveal_query_matches_request.take(),
+        }
+    }
+
+    pub(super) fn take_gui_camera_requests_for_draw(&mut self) -> GuiCameraRequests {
+        if self.has_gui_camera_requests() {
+            self.pending_session_map = None;
+        }
+        self.take_gui_camera_requests()
+    }
+
+    fn restore_earlier_camera(&mut self, pending: QueuedMapPresentation) {
+        if let Some(earlier) = pending.earlier_camera
+            && !self.has_gui_camera_requests()
+        {
+            self.map_center_request = earlier.requests.center;
+            self.zoom_to_visible_request = earlier.requests.zoom_to_visible;
+            if earlier.generation == self.loaded_files.data_generation() {
+                self.reveal_query_matches_request = earlier.requests.reveal;
+            }
+        }
+    }
+
     pub(super) fn queue_session_map(&mut self, presentation: MapPresentation) {
-        self.map_center_request = None;
-        self.zoom_to_visible_request = false;
-        self.reveal_query_matches_request = None;
+        let previous = self.pending_session_map.take();
+        let earlier_camera = if self.has_gui_camera_requests() {
+            Some(RetainedGuiCamera {
+                requests: self.take_gui_camera_requests(),
+                generation: self.loaded_files.data_generation(),
+            })
+        } else {
+            previous.and_then(|pending| pending.earlier_camera)
+        };
         let pin_revision = matches!(presentation.target, PresentationTarget::Point { .. })
             .then(|| self.highlight.pin_revision());
         self.pending_session_map = Some(QueuedMapPresentation {
             presentation,
             pin_revision,
+            earlier_camera,
         });
+    }
+
+    pub(super) fn finish_session_map_input(
+        &mut self,
+        ctx: &egui::Context,
+        input: MapPresentationInput,
+        interaction: MapFrameInteraction,
+    ) {
+        if matches!(input, MapPresentationInput::Ready) {
+            return;
+        }
+        if let Some(pending) = self.pending_session_map.take()
+            && !matches!(interaction, MapFrameInteraction::NavigateCamera)
+        {
+            let point_superseded = pending.pin_revision.is_some_and(|revision| {
+                matches!(interaction, MapFrameInteraction::DismissPoint)
+                    || revision != self.highlight.pin_revision()
+            });
+            if point_superseded {
+                self.restore_earlier_camera(pending);
+            } else {
+                self.pending_session_map = Some(pending);
+            }
+        }
+        if matches!(input, MapPresentationInput::FrameInteraction) || self.has_gui_camera_requests()
+        {
+            ctx.request_repaint();
+        }
+    }
+
+    fn can_apply_pending_map(
+        &self,
+        pending: &QueuedMapPresentation,
+        query_matches: Option<&QueryMatches>,
+        queries: &BackgroundQuery,
+    ) -> bool {
+        !self.has_gui_camera_requests()
+            && pending
+                .pin_revision
+                .is_none_or(|revision| revision == self.highlight.pin_revision())
+            && pending.presentation.can_apply(self, query_matches, queries)
     }
 
     pub(super) fn discard_stale_session_map(
@@ -278,17 +372,7 @@ impl SharedAppState {
         query_matches: Option<&QueryMatches>,
         queries: &BackgroundQuery,
     ) {
-        // Queuing a session request clears the earlier GUI camera requests.
-        let later_gui_camera = self.map_center_request.is_some()
-            || self.zoom_to_visible_request
-            || self.reveal_query_matches_request.is_some();
-        let pending = self.pending_session_map.take().filter(|pending| {
-            !later_gui_camera
-                && pending
-                    .pin_revision
-                    .is_none_or(|revision| revision == self.highlight.pin_revision())
-                && pending.presentation.can_apply(self, query_matches, queries)
-        });
+        let pending = self.take_current_session_map(query_matches, queries);
         if let Some(active) = self.presented_session_map
             && (!active.presentation.is_current(self, query_matches, queries)
                 || active.pin.is_some_and(|pin| {
@@ -305,12 +389,28 @@ impl SharedAppState {
         });
     }
 
+    fn take_current_session_map(
+        &mut self,
+        query_matches: Option<&QueryMatches>,
+        queries: &BackgroundQuery,
+    ) -> Option<QueuedMapPresentation> {
+        let pending = self.pending_session_map.take()?;
+        if self.can_apply_pending_map(&pending, query_matches, queries) {
+            Some(pending)
+        } else {
+            self.restore_earlier_camera(pending);
+            None
+        }
+    }
+
     pub(super) fn apply_session_map(
         &mut self,
         map: &mut NavMap,
         query_matches: Option<&QueryMatches>,
+        queries: &BackgroundQuery,
     ) -> Option<PresentationCamera> {
-        let presentation = self.pending_session_map.take()?.presentation;
+        let pending = self.take_current_session_map(query_matches, queries)?;
+        let presentation = pending.presentation;
         if let PresentationTarget::Range { highlight, .. } = presentation.target
             && !gt_map::query_match_has_geometry(
                 self.map_presence(query_matches),
@@ -318,6 +418,7 @@ impl SharedAppState {
                 &(highlight.start..highlight.end),
             )
         {
+            self.restore_earlier_camera(pending);
             return None;
         }
         self.clear_session_map(map);
