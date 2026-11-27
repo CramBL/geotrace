@@ -1,4 +1,5 @@
 use std::io::{self, ErrorKind};
+use std::time::Instant;
 
 #[cfg(unix)]
 use tempfile::TempDir;
@@ -7,22 +8,43 @@ use tokio::sync::oneshot;
 
 use crate::endpoint::Endpoint;
 use crate::framing::{self, MAX_REPLY_BYTES};
-use crate::{EXCHANGE_TIMEOUT, Reply, Server, SessionExchange, SessionRequest};
+use crate::session_reply::{DeferredResponse, ExchangeReply};
+use crate::{EXCHANGE_TIMEOUT, Reply, Server, SessionExchange, SessionReply, SessionRequest};
 
-pub struct TestSessionReply(oneshot::Receiver<Reply>);
+pub struct TestSessionReply {
+    exchange: oneshot::Receiver<ExchangeReply>,
+    deferred: Option<DeferredResponse>,
+}
 
 impl TestSessionReply {
     pub fn channel(request: SessionRequest) -> (SessionExchange, Self) {
-        let (reply, receiver) = oneshot::channel();
-        (SessionExchange { request, reply }, Self(receiver))
+        let (reply, exchange) = SessionReply::channel(Instant::now() + EXCHANGE_TIMEOUT);
+        (
+            SessionExchange { request, reply },
+            Self {
+                exchange,
+                deferred: None,
+            },
+        )
     }
 
     pub fn try_recv(&mut self) -> io::Result<Option<Reply>> {
-        match self.0.try_recv() {
-            Ok(reply) => Ok(Some(reply)),
-            Err(oneshot::error::TryRecvError::Empty) => Ok(None),
-            Err(error) => Err(io::Error::other(error)),
+        if self.deferred.is_none() {
+            match self.exchange.try_recv() {
+                Ok(ExchangeReply::Immediate(reply)) => return Ok(Some(reply)),
+                Ok(ExchangeReply::Deferred(response)) => self.deferred = Some(response),
+                Err(oneshot::error::TryRecvError::Empty) => return Ok(None),
+                Err(error) => return Err(io::Error::other(error)),
+            }
         }
+        let result = self
+            .deferred
+            .as_mut()
+            .and_then(DeferredResponse::ready_reply);
+        if result.is_some() {
+            self.deferred = None;
+        }
+        Ok(result)
     }
 }
 

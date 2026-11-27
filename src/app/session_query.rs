@@ -11,11 +11,13 @@ use super::App;
 use super::mcp_action_notice::McpActionNotice;
 use super::query_run::QueryPhase;
 use super::session_map::MapPresentation;
+use super::session_operations::SessionOperationStatus;
 use super::session_plot::PlotPresentation;
 
 pub(super) enum SessionCommand {
     Completed(Reply),
     Map(MapPresentation),
+    Operation(SessionOperationStatus),
     Panel { session: Uuid, args: OpenPanel },
     Plot(PlotPresentation),
 }
@@ -40,17 +42,21 @@ impl App {
         Ok(Reply::QueryDraftOpened)
     }
 
-    fn submit_session_query(&mut self, scope: Uuid, text: String) -> Result<Reply, ErrorCode> {
+    fn submit_session_query(
+        &mut self,
+        scope: Uuid,
+        text: String,
+    ) -> Result<SessionCommand, ErrorCode> {
         if self.shutdown_requested() {
             return Err(ErrorCode::ShuttingDown);
         }
         if let Some(job) = self.editor_query.active_job(scope)? {
-            return Ok(Reply::QueryJob {
+            return Ok(SessionCommand::Completed(Reply::QueryJob {
                 job: QueryJobStatus {
                     job,
                     state: QueryJobState::Busy,
                 },
-            });
+            }));
         }
         let (schema, generation) = {
             let shared = self.shared.borrow();
@@ -61,7 +67,9 @@ impl App {
             )
         };
         let checked = match QueryPreparation::check(text, schema)? {
-            QueryPreparation::Rejected(validation) => return Ok(Reply::QueryCheck { validation }),
+            QueryPreparation::Rejected(validation) => {
+                return Ok(SessionCommand::Completed(Reply::QueryCheck { validation }));
+            }
             QueryPreparation::Ready(checked) => checked,
         };
         let job = self.editor_query.queue(scope, checked, generation);
@@ -71,12 +79,12 @@ impl App {
             .record_run(self.editor_query.session().text());
         self.sync_settings_autosave();
         McpActionNotice::QueueQuery.enqueue(&mut self.toasts);
-        Ok(Reply::QueryJob {
-            job: QueryJobStatus {
+        Ok(SessionCommand::Operation(SessionOperationStatus::Query(
+            QueryJobStatus {
                 job,
                 state: QueryJobState::Preparing,
             },
-        })
+        )))
     }
 
     pub(super) fn require_completed_query(
@@ -94,7 +102,11 @@ impl App {
         }
     }
 
-    fn session_query_status(&mut self, session: Uuid, job: QueryJobId) -> Result<Reply, ErrorCode> {
+    pub(super) fn session_query_status(
+        &mut self,
+        session: Uuid,
+        job: QueryJobId,
+    ) -> Result<QueryJobStatus, ErrorCode> {
         let state =
             match self.editor_query.phase_for_job(session, job)? {
                 QueryPhase::Cancelled => QueryJobState::Cancelled,
@@ -119,9 +131,7 @@ impl App {
                 ),
                 QueryPhase::Stale => QueryJobState::Stale,
             };
-        Ok(Reply::QueryJob {
-            job: QueryJobStatus { job, state },
-        })
+        Ok(QueryJobStatus { job, state })
     }
 
     pub(super) fn execute_session_request(
@@ -153,6 +163,7 @@ impl App {
                     _ => {}
                 }
                 self.session_query_status(session, args.job)
+                    .map(|job| Reply::QueryJob { job })
             }
             Request::CheckQuery(args) => {
                 self.inspect_session_request(session, InspectionRequest::CheckQuery(args))
@@ -172,7 +183,9 @@ impl App {
                     .retained_results(shared.loaded_files.view())?;
                 QueryResults::project(&results, args).map(|results| Reply::QueryResults { results })
             }
-            Request::GetQueryStatus(args) => self.session_query_status(session, args.job),
+            Request::GetQueryStatus(args) => self
+                .session_query_status(session, args.job)
+                .map(|job| Reply::QueryJob { job }),
             Request::GetRangeDetails(args) => {
                 self.inspect_session_request(session, InspectionRequest::GetRangeDetails(args))
             }
@@ -196,9 +209,12 @@ impl App {
                 self.inspect_session_request(session, InspectionRequest::ListRecordings(args))
             }
             Request::ManageRecordings(args) => self.manage_recordings(session, args),
-            Request::OpenHistoryRecording(args) => self
-                .open_session_history_recording(session, args)
-                .map(|operation| Reply::HistoryOpen { operation }),
+            Request::OpenHistoryRecording(args) => {
+                let status = self.open_session_history_recording(session, args)?;
+                return Ok(SessionCommand::Operation(SessionOperationStatus::History(
+                    status,
+                )));
+            }
             Request::OpenPanel(args) => return Ok(SessionCommand::Panel { session, args }),
             Request::OpenPoint(args) => {
                 let presentation = self.session_open_point(session, args)?;
@@ -206,7 +222,7 @@ impl App {
             }
             Request::OpenQuery(args) => self.open_session_query_draft(args.text),
             Request::OpenSetting(args) => self.open_session_setting(args.key),
-            Request::RunQuery(args) => self.submit_session_query(session, args.text),
+            Request::RunQuery(args) => return self.submit_session_query(session, args.text),
             Request::SetSessionView(args) => self.set_session_view(session, args),
             Request::SetSetting(args) => self
                 .set_session_setting(args)

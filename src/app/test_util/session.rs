@@ -10,7 +10,7 @@ use gt_session_bridge::{
     GetQueryResults, GetRecording, GetTrack, ListRecordings, QueryCounts, QueryJobId,
     QueryJobRequest, QueryJobState, QueryMatch, QueryMatchPosition, QueryPageRequest,
     QueryResultPage, QueryResultRow, QueryResults, QueryText, RecordingDetails, Reply, Request,
-    SessionRequest, TrackDetails, TrackReference,
+    SessionQueryPhase, SessionRequest, TrackDetails, TrackReference,
 };
 use gt_test_utils::HarnessInteraction as _;
 use uuid::Uuid;
@@ -62,7 +62,7 @@ pub fn exchange_request(
 pub fn exchange_queued_request(
     harness: &mut Harness<'_, App>,
     request: &Request,
-    advance_desktop: impl FnOnce(&mut Harness<'_, App>),
+    advance_desktop: impl FnOnce(&mut Harness<'_, App>, &TestEndpoint),
 ) -> Reply {
     assert!(harness.state().session_bridge.server().is_none());
     let endpoint = TestEndpoint::new().unwrap();
@@ -71,7 +71,7 @@ pub fn exchange_queued_request(
     harness.state_mut().session_bridge = SessionBridge::Running(
         endpoint
             .start_server(move || {
-                ready.try_send(()).unwrap();
+                ready.try_send(()).ok();
                 ctx.request_repaint();
             })
             .unwrap(),
@@ -80,7 +80,7 @@ pub fn exchange_queued_request(
     let reply = thread::scope(|scope| {
         let client = scope.spawn(|| endpoint.exchange_payload(&payload).unwrap());
         queued.recv_timeout(Duration::from_secs(2)).unwrap();
-        advance_desktop(harness);
+        advance_desktop(harness, &endpoint);
         client.join().unwrap()
     });
     harness.state_mut().stop_session_bridge();
@@ -126,17 +126,24 @@ pub fn results(harness: &mut Harness<'_, App>, args: GetQueryResults) -> QueryRe
 }
 
 pub fn start_query(harness: &mut Harness<'_, App>, text: &str) -> QueryJobId {
-    let reply = self::execute(
+    self::begin_query(harness, text).0
+}
+
+pub fn begin_query(harness: &mut Harness<'_, App>, text: &str) -> (QueryJobId, TestSessionReply) {
+    let mut reply = self::begin(
         harness,
         Request::RunQuery(QueryText {
             text: text.to_owned(),
         }),
     );
-    let Reply::QueryJob { job } = reply else {
-        panic!("expected a running query job, got {reply:?}");
-    };
-    assert_eq!(job.state, QueryJobState::Preparing);
-    job.job
+    assert_eq!(reply.try_recv().unwrap(), None);
+    let state = harness
+        .state()
+        .editor_query
+        .session_state(SESSION_ID)
+        .unwrap();
+    assert_eq!(state.phase, SessionQueryPhase::Preparing);
+    (state.job.unwrap(), reply)
 }
 
 pub fn query_status(harness: &mut Harness<'_, App>, job: QueryJobId) -> QueryJobState {

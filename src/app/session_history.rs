@@ -464,6 +464,7 @@ impl App {
         }
         let ctx = self.ctx.clone();
         self.apply_finished_recording_work(&ctx);
+        self.publish_session_operation_replies();
         let files = self.shared.borrow();
         let previous = self.session_history.operation.as_ref();
         if let Some(operation) = previous.filter(|operation| operation.pending()) {
@@ -517,10 +518,17 @@ impl App {
         }
         let ctx = self.ctx.clone();
         self.apply_finished_recording_work(&ctx);
+        self.current_history_open_status(request.operation)
+    }
+
+    pub(super) fn current_history_open_status(
+        &self,
+        id: HistoryOpenId,
+    ) -> Result<HistoryOpenStatus, ErrorCode> {
         self.session_history
             .operation
             .as_ref()
-            .filter(|operation| operation.id == request.operation)
+            .filter(|operation| operation.id == id)
             .map(|operation| operation.status(self.shared.borrow().loaded_files.view()))
             .ok_or(ErrorCode::HistoryOpenNotFound)
     }

@@ -218,7 +218,7 @@ fn pending_run_input_leaves_a_session_draft_unrun() {
             &Request::OpenQuery(QueryText {
                 text: draft.to_owned()
             }),
-            press_run,
+            |harness, _| press_run(harness),
         ),
         Reply::QueryDraftOpened,
     );
@@ -268,7 +268,7 @@ fn a_queued_run_click_uses_the_previous_draft(#[case] held_press: bool) {
             &Request::OpenQuery(QueryText {
                 text: draft.to_owned()
             }),
-            |harness| {
+            |harness, _| {
                 if held_press {
                     harness.step();
                     assert_eq!(harness.state().editor_query.session().text(), previous);
@@ -304,7 +304,7 @@ fn an_empty_query_draft_is_installed_without_painting() {
             &Request::OpenQuery(QueryText {
                 text: String::new()
             }),
-            |harness| {
+            |harness, _| {
                 let _ = test_util::harness::step_minimized_logic(harness);
             },
         ),

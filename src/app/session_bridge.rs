@@ -5,6 +5,7 @@ use egui::{Event, InputState};
 use gt_session_bridge::{ErrorCode, Request, Server, SessionExchange};
 
 use super::App;
+use super::session_operations::SessionOperationReplies;
 use super::session_query::SessionCommand;
 use super::session_traffic_window::SessionTrafficWindow;
 
@@ -149,6 +150,7 @@ impl App {
     fn release_session_bridge_state(&mut self) {
         self.editor_query.release_active_session_job();
         self.session_navigation = SessionNavigation::default();
+        self.session_operation_replies = SessionOperationReplies::default();
         self.cancel_pending_session_panel_raise();
         let mut shared = self.shared.borrow_mut();
         shared.cancel_pending_session_map();
@@ -157,6 +159,7 @@ impl App {
     }
 
     pub(super) fn dispatch_session_request(&mut self, ctx: &egui::Context) {
+        self.publish_session_operation_replies();
         {
             let mut shared = self.shared.borrow_mut();
             shared.poll_session_map(ctx);
@@ -173,11 +176,14 @@ impl App {
             }
             _ => None,
         };
+        let received = exchange.is_some();
         if let Some(exchange) = exchange {
             self.respond_to_session_exchange(exchange);
         }
-        // Send the job ID before copying the selected tracks.
-        self.prepare_session_query(ctx);
+        let prepared = self.prepare_session_query(ctx);
+        if received || prepared {
+            self.publish_session_operation_replies();
+        }
     }
 
     pub(super) fn complete_session_navigation_after_input(&mut self, ctx: &egui::Context) {
@@ -194,6 +200,7 @@ impl App {
     }
 
     pub(super) fn respond_to_session_exchange(&mut self, exchange: SessionExchange) {
+        let admitted_at = Instant::now();
         let Some((request, reply)) = exchange.into_request() else {
             return;
         };
@@ -204,6 +211,9 @@ impl App {
                     .borrow_mut()
                     .queue_session_map(presentation, reply);
                 self.ctx.request_repaint();
+            }
+            Ok(SessionCommand::Operation(status)) => {
+                self.await_session_operation(status, reply, admitted_at);
             }
             Ok(SessionCommand::Panel { session, args }) => {
                 self.open_session_panel(session, args, reply)
@@ -237,7 +247,7 @@ mod tests {
             &Request::OpenQuery(QueryText {
                 text: "points".to_owned(),
             }),
-            |harness| {
+            |harness, _| {
                 let ctx = harness.ctx.clone();
                 let mut unprocessed = RawInput {
                     events: vec![Event::Text("draft".to_owned())],
