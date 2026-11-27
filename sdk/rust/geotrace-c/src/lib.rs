@@ -31,8 +31,8 @@ pub use error::GtdStatus;
 pub use icon::GtdMarkerIcon;
 pub use log_callback::{GtdLogCallback, GtdLogLevel};
 pub use nav_file::{
-    GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo, GtdNavFile,
-    GtdNavPointInfo, GtdNavPointInfoV2, GtdNavPointInfoV3, GtdSatelliteWarningInfo,
+    GtdBundledLogInfo, GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo,
+    GtdNavFile, GtdNavPointInfo, GtdNavPointInfoV2, GtdNavPointInfoV3, GtdSatelliteWarningInfo,
 };
 pub use navigation::{
     GtdNavFixV2, GtdNavFixV3, GtdOptU32, GtdOptU64, GtdPositionProvenance, GtdSolutionDimension,

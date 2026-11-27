@@ -1,10 +1,11 @@
-//! Adding nav fixes, satellite reports, markers and channels to a builder.
+//! Adding nav fixes, satellite reports, markers, channels and bundled logs to a builder.
 
 use std::ffi::c_char;
+use std::slice;
 
 use geotrace_sdk::{
-    Angle, Annotation, Channel, ChannelUnit, EventMarker, EventMarkerStyle, SatelliteReport,
-    Velocity,
+    Angle, Annotation, BundledLog, Channel, ChannelUnit, EventMarker, EventMarkerStyle,
+    SatelliteReport, Velocity,
 };
 
 use super::GtdFileBuilder;
@@ -432,6 +433,96 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
             Err(e) => {
                 error::set_last_error(e);
                 GtdStatus::GTD_ERR_INVALID_CHANNEL
+            }
+        }
+    })
+}
+
+/// Attach a validated raw-text log to the recording.
+///
+/// @p name becomes the HDF5 group name under `logs/` and must be non-empty,
+/// neither `.` nor `..`, and contain no `/` or nul byte. Duplicate log names
+/// are rejected by `gtd_builder_finish()`.
+///
+/// @p text is @p text_length bytes of UTF-8 log text. A trailing nul byte is
+/// not required. The first ten non-empty lines must contain at least one
+/// recognised timestamp format (syslog, ISO 8601 with a space, or RFC 3339).
+///
+/// @param builder     Builder handle.
+/// @param name        Nul-terminated UTF-8 log name.
+/// @param text        Pointer to @p text_length UTF-8 bytes of log text.
+/// @param text_length Byte length of @p text.
+///
+/// @return `GTD_ERR_NULL_ARGUMENT` if @p builder or @p name is NULL, or if
+///         @p text is NULL with a non-zero @p text_length.
+/// @return `GTD_ERR_UTF8` if @p name or @p text is not valid UTF-8.
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p name is invalid, @p text is empty,
+///         or @p text has no recognised timestamp format in its head.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_add_bundled_log(
+    builder: *mut GtdFileBuilder,
+    name: *const c_char,
+    text: *const c_char,
+    text_length: usize,
+) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let builder = nonnull_mut!(builder);
+        let name = cstr!(name);
+        if text_length > 0 && text.is_null() {
+            error::set_last_error("text is null but text_length > 0");
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+        }
+        let bytes = if text_length == 0 {
+            &[][..]
+        } else {
+            // SAFETY: `text` is non-null with `text_length` readable bytes (checked above).
+            unsafe { slice::from_raw_parts(text.cast::<u8>(), text_length) }
+        };
+        match BundledLog::from_utf8_bytes(name, bytes) {
+            Ok(log) => {
+                builder.recorder_mut().add_bundled_log(log);
+                GtdStatus::GTD_OK
+            }
+            Err(e) => {
+                let status = error::status_for_bundled_log_error(&e);
+                error::set_last_error(e);
+                status
+            }
+        }
+    })
+}
+
+/// Read a raw-text log file from @p path and attach it to the recording.
+///
+/// The bundled log name is derived from the file name of @p path. Duplicate log
+/// names are rejected by `gtd_builder_finish()`.
+///
+/// @param builder Builder handle.
+/// @param path    Nul-terminated UTF-8 file path to read.
+///
+/// @return `GTD_ERR_NULL_ARGUMENT` if @p builder or @p path is NULL.
+/// @return `GTD_ERR_UTF8` if @p path or the file content is not valid UTF-8.
+/// @return `GTD_ERR_IO` if reading @p path fails.
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p path has no valid file name, the
+///         file is empty, or the file has no recognised timestamp format in its
+///         head.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_add_bundled_log_from_file(
+    builder: *mut GtdFileBuilder,
+    path: *const c_char,
+) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let builder = nonnull_mut!(builder);
+        let path = cstr!(path);
+        match BundledLog::from_file(path) {
+            Ok(log) => {
+                builder.recorder_mut().add_bundled_log(log);
+                GtdStatus::GTD_OK
+            }
+            Err(e) => {
+                let status = error::status_for_bundled_log_error(&e);
+                error::set_last_error(e);
+                status
             }
         }
     })

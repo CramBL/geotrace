@@ -32,15 +32,16 @@ sanitizer_canary = []
 chrono.workspace = true
 geotrace-sdk = { path = "../geotrace-sdk" }
 geotrace-sdk-units = { path = "../geotrace-sdk-units" }
+# Only the `gen_fixture` bin uses this, to craft the files no writer can produce.
+hdf5-pure.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 strum.workspace = true
-# Only the `gen_fixture` bin uses this, to craft the files no writer can produce.
-hdf5-pure.workspace = true
 
 [dev-dependencies]
 geotrace-sdk-test-util = { path = "../geotrace-sdk-test-util" }
 rstest.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
