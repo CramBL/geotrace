@@ -1546,6 +1546,28 @@ struct ChannelView {
 };
 
 /**
+ * A raw-text log to attach to a recording via `FileBuilder::add_bundled_log()`.
+ *
+ * `name` becomes the HDF5 group name under `logs/` and must be non-empty,
+ * neither `.` nor `..`, and contain no `/` or nul byte. `text` must be
+ * non-empty UTF-8 whose head contains a recognised timestamp format.
+ */
+struct BundledLog {
+    std::string name;
+    std::string text;
+};
+
+/**
+ * Bundled raw-text log returned by `NavFile::bundled_log()`.
+ *
+ * String fields are copies - they are valid regardless of the `NavFile`'s lifetime.
+ */
+struct BundledLogView {
+    std::string name;
+    std::string text;
+};
+
+/**
  * Data for one navigation fix, returned by `NavFile::nav_point()`.
  *
  * The value ranges of `NavFix` apply here too, as expectations.
@@ -2275,6 +2297,47 @@ class FileBuilder {
     }
 
     /**
+     * Attach a validated raw-text log to the recording.
+     *
+     * `log.name` becomes the HDF5 group name under `logs/` and must be non-empty,
+     * neither `.` nor `..`, and contain no `/` or nul byte. Duplicate log names
+     * are rejected by `finish()`.
+     *
+     * @throws std::invalid_argument if `log.name` is invalid, `log.text` is empty,
+     *         or `log.text` has no recognised timestamp format in its head.
+     * @throws Error if `log.name` or `log.text` is not valid UTF-8.
+     */
+    FileBuilder &add_bundled_log(const BundledLog &log) {
+        if (recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the bundled log name", log.name)) {
+            return *this;
+        }
+        record(::gtd_builder_add_bundled_log(impl_.get(), log.name.c_str(), log.text.data(),
+                                             log.text.size()));
+        return *this;
+    }
+
+    /**
+     * Read a raw-text log file from @p path and attach it to the recording.
+     *
+     * The bundled log name is derived from the file name of @p path. Duplicate
+     * log names are rejected by `finish()`.
+     *
+     * @throws IoError if reading @p path fails.
+     * @throws std::invalid_argument if @p path has no valid file name, the file
+     *         is empty, or the file has no recognised timestamp format in its
+     *         head.
+     * @throws Error if @p path or the file content is not valid UTF-8.
+     */
+    FileBuilder &add_bundled_log_from_file(const std::filesystem::path &path) {
+        const std::string path_str = detail::path_string(path);
+        if (recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the bundled log path", path_str)) {
+            return *this;
+        }
+        record(::gtd_builder_add_bundled_log_from_file(impl_.get(), path_str.c_str()));
+        return *this;
+    }
+
+    /**
      * Add a type-safe event marker from an event-taxonomy value.
      *
      * Accepts any `enum class` with an `EventEnum<>` specialisation. The path is
@@ -2324,6 +2387,7 @@ class FileBuilder {
     FileBuilder &add(const Annotation &ann) { return add_annotation(ann); }
     FileBuilder &add(const EventMarker &marker) { return add_event_marker(marker); }
     FileBuilder &add(const Channel &channel) { return add_channel(channel); }
+    FileBuilder &add(const BundledLog &log) { return add_bundled_log(log); }
     ///@}
 
     ///@}
@@ -2338,6 +2402,7 @@ class FileBuilder {
      *         marker and no nav fix, in lenient mode too.
      * @throws AnnotationsOutOfRangeError if annotations fall outside the time range.
      * @throws EventMarkersOutOfRangeError if event markers fall outside the time range.
+     * @throws std::invalid_argument if two bundled logs share a name.
      */
     NavFile finish();
 
@@ -3045,6 +3110,38 @@ class [[nodiscard]] NavFile {
      */
     [[nodiscard]] ChannelView channel(std::size_t idx) const {
         return try_channel(idx).value_or_throw();
+    }
+
+    /** Number of bundled raw-text logs in the file. */
+    [[nodiscard]] std::size_t bundled_log_count() const noexcept {
+        return ::gtd_nav_file_bundled_log_count(impl_.get());
+    }
+
+    /**
+     * Return the bundled log at @p idx, or an out-of-range error.
+     *
+     * Bundled logs are sorted by name.
+     */
+    Result<BundledLogView> try_bundled_log(std::size_t idx) const {
+        GtdBundledLogInfo info{};
+        const GtdStatus status = ::gtd_nav_file_get_bundled_log(impl_.get(), idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        BundledLogView view{};
+        view.name = info.name;
+        view.text = std::string{info.text, info.text_length};
+        return view;
+    }
+
+    /**
+     * Return the bundled log at @p idx.
+     *
+     * Bundled logs are sorted by name.
+     * @throws std::out_of_range if `idx >= bundled_log_count()`.
+     */
+    [[nodiscard]] BundledLogView bundled_log(std::size_t idx) const {
+        return try_bundled_log(idx).value_or_throw();
     }
 
   private:
