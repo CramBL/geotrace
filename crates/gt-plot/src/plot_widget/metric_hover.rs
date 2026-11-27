@@ -147,7 +147,7 @@ impl MetricRun {
         selection: LevelSelection,
         pointer: egui::Pos2,
     ) -> Option<MetricHoverCandidate> {
-        let points = self.mipmap.geometry().slice_at(selection);
+        let points = self.mipmap.slice_at(selection);
         let line = Line::new("", PlotPoints::Borrowed(points));
         let closest = line
             .find_closest(pointer, plot_ui.transform())

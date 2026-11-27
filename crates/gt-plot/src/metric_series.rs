@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use gt_egui_mipmap::{IndexedMipMap, IndexedSample, LevelSelection};
+use gt_egui_mipmap::{KeyedMipMap, KeyedSample, LevelSelection};
 use gt_types::time_types::GpsTime;
 use gt_types::{LoadedTrack, NavigationEvidenceSource, SatelliteReportMetadata};
 
@@ -86,8 +86,7 @@ pub(crate) struct MetricSeries {
 
 #[derive(Clone, Debug)]
 pub(crate) struct MetricRun {
-    pub mipmap: IndexedMipMap,
-    sources: Vec<MetricSampleSource>,
+    pub mipmap: KeyedMipMap<DateTime<Utc>, MetricSampleSource>,
 }
 
 impl MetricSeries {
@@ -118,38 +117,26 @@ impl MetricSeries {
         if samples.is_empty() {
             return;
         }
-        let mut indexed = Vec::with_capacity(samples.len());
-        let mut sources = Vec::with_capacity(samples.len());
-        for sample in samples {
-            if let Some(value) = sample.value {
-                indexed.push(IndexedSample {
-                    point: [sample.time.as_secs_f64_with_subseconds(), value],
-                    source_index: sources.len(),
-                });
-                sources.push(sample.source);
-            }
-        }
+        let keyed = samples.into_iter().filter_map(|sample| {
+            let value = sample.value?;
+            Some(KeyedSample::with_meta(
+                [sample.time.as_secs_f64_with_subseconds(), value],
+                sample.time.utc(),
+                sample.source,
+            ))
+        });
         self.runs.push(MetricRun {
-            mipmap: IndexedMipMap::build(indexed, None),
-            sources,
+            mipmap: KeyedMipMap::build(keyed),
         });
     }
 }
 
 impl MetricRun {
-    pub fn sample_time(&self, track: &LoadedTrack, index: usize) -> Option<DateTime<Utc>> {
-        self.sources
-            .get(index)?
-            .normalized_time(track)
-            .map(GpsTime::utc)
-    }
-
     pub fn sample_source(
         &self,
         level: LevelSelection,
         offset: usize,
     ) -> Option<MetricSampleSource> {
-        let source = self.mipmap.source_at(level, offset)?;
-        self.sources.get(source).copied()
+        self.mipmap.meta_at(level, offset).copied()
     }
 }

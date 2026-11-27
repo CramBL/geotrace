@@ -395,7 +395,7 @@ pub(super) fn add_off_scale_clock_offsets(
             {
                 add_run(
                     samples_in_fix_range(samples, &run.fix_range),
-                    run.mipmap.geometry().finest_level(),
+                    run.mipmap.finest_level(),
                 );
             }
         }
