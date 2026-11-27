@@ -7,7 +7,7 @@ use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults, GetQueryStatus,
     GetRangeDetails, GetRecording, GetTrack, ListHistoryRecordings, ListMetrics, ListRecordings,
     ManageRecordings, OpenHistoryRecording, OpenPanel, OpenPoint, PanelOpenState, QueryJobRequest,
-    QueryText, RangeTarget, Reply, Request, SessionPanel, SetSessionView, SetSetting,
+    QueryText, RangeTarget, Reply, Request, RequestError, SessionPanel, SetSessionView, SetSetting,
     SetTrackVisibility, SettingSelection, ShowOnMap, ShowOnPlot,
 };
 use rmcp::handler::server::tool::ToolCallContext;
@@ -395,7 +395,9 @@ impl Companion {
             Ok(Reply::SessionState { state }) => serde_json::to_value(state),
             Ok(Reply::Setting { setting }) => serde_json::to_value(setting),
             Ok(Reply::Track { details }) => serde_json::to_value(details),
-            Err(error) => return Self::tool_error(Self::connection_error_message(error.kind())),
+            Err(error) => {
+                return Self::tool_error(Self::connection_error_message(&request, &error));
+            }
         };
         match result {
             Ok(value) if panel_open_failed => CallToolResult::structured_error(value),
@@ -613,16 +615,77 @@ impl Companion {
         }
     }
 
-    fn connection_error_message(kind: ErrorKind) -> String {
-        match kind {
-            ErrorKind::ConnectionRefused | ErrorKind::NotFound => START_DESKTOP.to_owned(),
-            ErrorKind::FileTooLarge => Self::reply_error_message(ErrorCode::RequestTooLarge).to_owned(),
-            ErrorKind::PermissionDenied => {
-                "The GeoTrace session denied access. Run GeoTrace and its companion as the same user."
-                    .to_owned()
+    fn connection_error_message(request: &Request, error: &RequestError) -> String {
+        match error {
+            RequestError::BeforeSend(error) => match error.kind() {
+                ErrorKind::ConnectionRefused | ErrorKind::NotFound => START_DESKTOP.to_owned(),
+                ErrorKind::FileTooLarge => {
+                    Self::reply_error_message(ErrorCode::RequestTooLarge).to_owned()
+                }
+                ErrorKind::PermissionDenied => {
+                    "The GeoTrace session denied access. Run GeoTrace and its companion as the same user."
+                        .to_owned()
+                }
+                ErrorKind::TimedOut => {
+                    "Could not connect to GeoTrace in time. Try again.".to_owned()
+                }
+                kind => format!("Could not contact GeoTrace ({kind})."),
+            },
+            RequestError::DuringExchange(error) => {
+                let Some(guidance) = Self::uncertain_exchange_guidance(request) else {
+                    return match error.kind() {
+                        ErrorKind::TimedOut => {
+                            "GeoTrace did not respond in time. Try again.".to_owned()
+                        }
+                        kind => format!("Lost the connection to GeoTrace ({kind}). Try again."),
+                    };
+                };
+                match error.kind() {
+                    ErrorKind::TimedOut => format!("GeoTrace did not respond in time. {guidance}"),
+                    kind => format!(
+                        "Lost the connection to GeoTrace ({kind}) after sending the request. {guidance}"
+                    ),
+                }
             }
-            ErrorKind::TimedOut => "GeoTrace did not respond in time. Try again.".to_owned(),
-            kind => format!("Could not contact GeoTrace ({kind})."),
+        }
+    }
+
+    fn uncertain_exchange_guidance(request: &Request) -> Option<&'static str> {
+        match request {
+            Request::CheckQuery(_)
+            | Request::DescribeSetting(_)
+            | Request::GetHistoryOpenStatus(_)
+            | Request::GetQueryResults(_)
+            | Request::GetQueryStatus(_)
+            | Request::GetRangeDetails(_)
+            | Request::GetRecording(_)
+            | Request::GetSessionState
+            | Request::GetSettings
+            | Request::GetTrack(_)
+            | Request::ListHistoryRecordings(_)
+            | Request::ListMetrics(_)
+            | Request::ListRecordings(_) => None,
+            Request::CancelQuery(_)
+            | Request::OpenPanel(_)
+            | Request::OpenPoint(_)
+            | Request::OpenQuery(_)
+            | Request::OpenSetting(_)
+            | Request::SetSessionView(_)
+            | Request::SetSetting(_)
+            | Request::SetTrackVisibility(_)
+            | Request::ShowOnMap(_)
+            | Request::ShowOnPlot(_) => Some(
+                "GeoTrace may have applied the change. Inspecting state or retrying the same call is safe.",
+            ),
+            Request::ApplyProcessing(_) | Request::ManageRecordings(_) => Some(
+                "GeoTrace may have already started or applied the request. Check list_recordings or get_session_state before retrying.",
+            ),
+            Request::OpenHistoryRecording(_) => Some(
+                "GeoTrace may have already started opening the recording. Check list_recordings, or retry open_history_recording if it is still pending.",
+            ),
+            Request::RunQuery(_) => Some(
+                "GeoTrace may have already started the query. Retry run_query to reclaim an active job or start a new one if it already finished.",
+            ),
         }
     }
 
@@ -693,13 +756,13 @@ impl ServerHandler for Companion {
 enum Bridge {
     Desktop,
     #[cfg(test)]
-    Fixture(fn(&Request) -> io::Result<Reply>),
+    Fixture(fn(&Request) -> Result<Reply, RequestError>),
     #[cfg(test)]
     Pending(tests::PendingBridge),
 }
 
 impl Bridge {
-    async fn request(&self, request: &Request) -> io::Result<Reply> {
+    async fn request(&self, request: &Request) -> Result<Reply, RequestError> {
         match self {
             Self::Desktop => gt_session_bridge::request(request).await,
             #[cfg(test)]

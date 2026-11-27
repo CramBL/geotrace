@@ -213,25 +213,51 @@ impl Drop for Server {
     }
 }
 
-/// Call from a [`tokio::runtime::Runtime`] with I/O and time enabled.
-pub async fn request(request: &Request) -> io::Result<Reply> {
-    self::request_at(&Endpoint::current_user()?, request).await
+#[derive(Debug, thiserror::Error)]
+pub enum RequestError {
+    #[error("Bridge request failed before sending ({0})")]
+    BeforeSend(#[source] io::Error),
+    #[error("Bridge request failed during exchange ({0})")]
+    DuringExchange(#[source] io::Error),
 }
 
-async fn request_at(endpoint: &Endpoint, request: &Request) -> io::Result<Reply> {
+impl RequestError {
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            Self::BeforeSend(error) | Self::DuringExchange(error) => error.kind(),
+        }
+    }
+}
+
+/// Call from a [`tokio::runtime::Runtime`] with I/O and time enabled.
+pub async fn request(request: &Request) -> Result<Reply, RequestError> {
+    let endpoint = Endpoint::current_user().map_err(RequestError::BeforeSend)?;
+    self::request_at(&endpoint, request, EXCHANGE_TIMEOUT).await
+}
+
+async fn request_at(
+    endpoint: &Endpoint,
+    request: &Request,
+    timeout: Duration,
+) -> Result<Reply, RequestError> {
     let frame = Frame::encode(request, MAX_REQUEST_BYTES).map_err(|error| {
-        io::Error::new(
+        RequestError::BeforeSend(io::Error::new(
             error.io_error_kind().unwrap_or(ErrorKind::InvalidData),
             error,
-        )
+        ))
     })?;
-    tokio::time::timeout(EXCHANGE_TIMEOUT, async {
-        let mut stream = endpoint.connect().await?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut stream = tokio::time::timeout_at(deadline, endpoint.connect())
+        .await
+        .map_err(|error| RequestError::BeforeSend(io::Error::new(ErrorKind::TimedOut, error)))?
+        .map_err(RequestError::BeforeSend)?;
+    tokio::time::timeout_at(deadline, async {
         frame.write(&mut stream).await?;
         framing::read(&mut stream, MAX_REPLY_BYTES).await
     })
     .await
-    .map_err(|error| io::Error::new(ErrorKind::TimedOut, error))?
+    .map_err(|error| RequestError::DuringExchange(io::Error::new(ErrorKind::TimedOut, error)))?
+    .map_err(RequestError::DuringExchange)
 }
 
 async fn accept_connections(
