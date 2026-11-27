@@ -9,6 +9,7 @@ use gt_session_bridge::{
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DisplayCategory, SkyTrailsRequest};
 
+use crate::app::session_query::SessionCommand;
 use crate::app::test_util::{harness, session};
 use crate::app::{App, ui_tests};
 
@@ -16,7 +17,7 @@ use crate::app::{App, ui_tests};
 fn an_unpainted_desktop_has_no_map_bounds() {
     let mut context = eframe::CreationContext::_new_kittest(egui::Context::default());
     let mut app = harness::transient_app(&mut context);
-    let Reply::SessionState { state } = app
+    let SessionCommand::Completed(Reply::SessionState { state }) = app
         .execute_session_request(SessionRequest {
             request: Request::GetSessionState,
             session: session::SESSION_ID,
@@ -131,12 +132,13 @@ fn session_state_reports_applied_map_geometry_and_current_pins() {
         track: reference,
         point: 1,
     };
-    assert_eq!(
-        session::execute(&mut harness, Request::OpenPoint(point)),
-        Reply::MapPresentationQueued
-    );
+    let mut reply = session::begin(&mut harness, Request::OpenPoint(point));
     assert_eq!(self::session_state(&mut harness).map.pinned_point, None);
     harness.run_steps(2);
+    assert_eq!(
+        reply.try_recv().unwrap(),
+        Some(Reply::MapPointOpened(point))
+    );
     let displayed = self::session_state(&mut harness);
     assert_eq!(displayed.map.pinned_point, Some(point));
     let bounds = displayed.map.bounds.unwrap();

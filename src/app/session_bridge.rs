@@ -2,9 +2,10 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use egui::{Event, InputState};
-use gt_session_bridge::{ErrorCode, Reply, Request, Server, SessionExchange};
+use gt_session_bridge::{ErrorCode, Request, Server, SessionExchange};
 
 use super::App;
+use super::session_query::SessionCommand;
 use super::session_traffic_window::SessionTrafficWindow;
 
 #[derive(Default)]
@@ -148,10 +149,12 @@ impl App {
     fn release_session_bridge_state(&mut self) {
         self.editor_query.release_active_session_job();
         self.session_navigation = SessionNavigation::default();
+        self.shared.borrow_mut().cancel_pending_session_map();
         self.session_traffic_window = SessionTrafficWindow::default();
     }
 
     pub(super) fn dispatch_session_request(&mut self, ctx: &egui::Context) {
+        self.shared.borrow_mut().poll_session_map(ctx);
         let exchange = match &mut self.session_bridge {
             SessionBridge::Running(server) if server.is_running() => {
                 self.session_navigation.receive(ctx, server)
@@ -183,11 +186,20 @@ impl App {
         }
     }
 
-    fn respond_to_session_exchange(&mut self, exchange: SessionExchange) {
-        exchange.respond(|request| {
-            self.execute_session_request(request)
-                .unwrap_or_else(Reply::from)
-        });
+    pub(super) fn respond_to_session_exchange(&mut self, exchange: SessionExchange) {
+        let Some((request, reply)) = exchange.into_request() else {
+            return;
+        };
+        match self.execute_session_request(request) {
+            Ok(SessionCommand::Completed(completed)) => reply.send(completed),
+            Ok(SessionCommand::Map(presentation)) => {
+                self.shared
+                    .borrow_mut()
+                    .queue_session_map(presentation, reply);
+                self.ctx.request_repaint();
+            }
+            Err(error) => reply.send(error),
+        }
     }
 }
 

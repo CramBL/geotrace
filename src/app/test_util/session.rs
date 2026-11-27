@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use egui_kittest::Harness;
-use gt_session_bridge::test_util::TestEndpoint;
+use gt_session_bridge::test_util::{TestEndpoint, TestSessionReply};
 use gt_session_bridge::{
     GetQueryResults, GetRecording, GetTrack, ListRecordings, QueryCounts, QueryJobId,
     QueryJobRequest, QueryJobState, QueryMatch, QueryMatchPosition, QueryPageRequest,
@@ -155,13 +155,22 @@ pub fn wait_for_query_to_stop(harness: &mut Harness<'_, App>, job: QueryJobId) -
 }
 
 pub fn execute(harness: &mut Harness<'_, App>, request: Request) -> Reply {
+    let mut reply = self::begin(harness, request);
+    if let Some(reply) = reply.try_recv().unwrap() {
+        return reply;
+    }
     harness
-        .state_mut()
-        .execute_session_request(SessionRequest {
-            request,
-            session: SESSION_ID,
-        })
-        .unwrap_or_else(Reply::from)
+        .step_until_some(|_| reply.try_recv().unwrap())
+        .unwrap()
+}
+
+pub fn begin(harness: &mut Harness<'_, App>, request: Request) -> TestSessionReply {
+    let (exchange, reply) = TestSessionReply::channel(SessionRequest {
+        request,
+        session: SESSION_ID,
+    });
+    harness.state_mut().respond_to_session_exchange(exchange);
+    reply
 }
 
 pub fn visible_action_notices<'a>(harness: &'a Harness<'_, App>) -> Vec<&'a str> {

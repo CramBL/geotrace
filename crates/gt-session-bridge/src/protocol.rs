@@ -283,28 +283,69 @@ impl TrackReference {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Reply {
-    Error { code: ErrorCode },
-    FilesQueued { queued_files: usize },
-    HistoryOpen { operation: HistoryOpenStatus },
-    HistoryRecordings { page: HistoryRecordings },
-    MapPresentationQueued,
-    Metrics { page: Metrics },
-    PanelOpenQueued { panel: SessionPanel },
+    Error {
+        code: ErrorCode,
+    },
+    FilesQueued {
+        queued_files: usize,
+    },
+    HistoryOpen {
+        operation: HistoryOpenStatus,
+    },
+    HistoryRecordings {
+        page: HistoryRecordings,
+    },
+    MapPointOpened(OpenPoint),
+    MapRangeFramed {
+        track: TrackReference,
+        start: usize,
+        end: usize,
+    },
+    Metrics {
+        page: Metrics,
+    },
+    PanelOpenQueued {
+        panel: SessionPanel,
+    },
     PlotPresentationQueued,
     ProcessingApplied,
-    QueryCheck { validation: QueryValidation },
+    QueryCheck {
+        validation: QueryValidation,
+    },
     QueryDraftOpened,
-    QueryJob { job: QueryJobStatus },
-    QueryResults { results: QueryResults },
-    Range { details: RangeDetails },
-    Recording { details: RecordingDetails },
-    Recordings { page: Recordings },
-    RecordingsUnloaded { unloaded_recordings: usize },
-    SessionState { state: SessionState },
-    Setting { setting: SettingInfo },
-    SettingOpened { key: SettingKey },
-    Settings { settings: Vec<SettingInfo> },
-    Track { details: TrackDetails },
+    QueryJob {
+        job: QueryJobStatus,
+    },
+    QueryResults {
+        results: QueryResults,
+    },
+    Range {
+        details: RangeDetails,
+    },
+    Recording {
+        details: RecordingDetails,
+    },
+    Recordings {
+        page: Recordings,
+    },
+    RecordingsUnloaded {
+        unloaded_recordings: usize,
+    },
+    SessionState {
+        state: SessionState,
+    },
+    Setting {
+        setting: SettingInfo,
+    },
+    SettingOpened {
+        key: SettingKey,
+    },
+    Settings {
+        settings: Vec<SettingInfo>,
+    },
+    Track {
+        details: TrackDetails,
+    },
     TrackVisibility(TrackVisibilityResult),
 }
 
@@ -347,6 +388,9 @@ pub enum ErrorCode {
     InvalidSettingValue,
     InvalidTimeFilter,
     MapboxTokenRequired,
+    MapPresentationStale,
+    MapPresentationSuperseded,
+    MapPresentationTimedOut,
     NoLoadedNavPoints,
     NoSkyTrailReports,
     NoVisibleMapGeometry,

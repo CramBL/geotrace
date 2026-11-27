@@ -290,12 +290,14 @@ Enable Query highlights in the map's visibility controls before calling `show_on
 GeoTrace returns an error if Query highlights is disabled.
 Pass a `track` and a zero-based `point` index to `open_point` to center the map and open point information.
 Both tools use the current filters and visibility and report an error for a target with no visible geometry.
-The `map_presentation_queued` status acknowledges the request.
-GeoTrace applies the request when the map next draws if the recording, filter, query run, and target visibility still permit it.
-A later camera action supersedes a queued presentation.
-Dismissing or changing the point pin supersedes a queued point request.
+`map_range_framed` confirms the camera fit and highlight and returns the `track`, `start` and `end` of the original point range.
+`map_point_opened` confirms the camera center and point pin and returns the `track` and `point`.
+GeoTrace waits briefly for the next visible map frame after competing map input settles.
+If the map cannot apply the request in time, GeoTrace returns a timeout.
+A later camera action supersedes a waiting presentation.
+Dismissing or changing the point pin supersedes a waiting point request.
 GeoTrace can still apply an earlier desktop camera request if it discards the MCP presentation.
-GeoTrace discards a queued range request if Query highlights is disabled when the map draws.
+GeoTrace returns an error if the recording, filter, query run, or target visibility changes and prevents the presentation.
 Use Query highlights to hide or show an active range.
 GeoTrace clears a `show_on_map` match highlight when its job becomes stale or another job replaces it.
 The map shows which point, range, or query match the request presented.

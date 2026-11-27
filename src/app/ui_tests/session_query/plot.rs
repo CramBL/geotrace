@@ -117,7 +117,11 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
     let map = Request::ShowOnMap(ShowOnMap { target });
     assert_eq!(
         session::execute(&mut harness, map.clone()),
-        Reply::MapPresentationQueued
+        Reply::MapRangeFramed {
+            track,
+            start: 40,
+            end: 45
+        }
     );
     harness.run_steps(3);
     let shared = harness.state().shared.borrow();
@@ -148,7 +152,11 @@ fn the_plot_syncs_again_when_the_map_time_range_changes() {
 
     assert_eq!(
         session::execute(&mut harness, map),
-        Reply::MapPresentationQueued
+        Reply::MapRangeFramed {
+            track,
+            start: 40,
+            end: 45
+        }
     );
     harness.run_steps(3);
     let shared = harness.state().shared.borrow();

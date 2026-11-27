@@ -454,7 +454,7 @@ fn file_load_fit_precedence_depends_on_camera_source(#[case] second_file_is_fram
         });
     } else {
         map.overlays().presentation_camera = Some(PresentationCamera::TrackRange(
-            MatchHighlight::new(track, &(0..1)),
+            GeoBounds::single_position(Latitude::new(first_latitude), Longitude::new(12.0)),
         ));
     }
     map.render_one_more_frame();
