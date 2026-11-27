@@ -63,6 +63,7 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     write_markers(nav_file, &mut fb)?;
     write_event_markers(nav_file, &mut fb)?;
     write_channels(nav_file, &mut fb);
+    write_bundled_logs(nav_file, &mut fb);
 
     Ok(fb.finish()?)
 }
@@ -145,6 +146,27 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
             value.with_shape(&[n]).with_chunks(&[chunk]);
         }
         value.with_shuffle().with_deflate(DeflateLevel::Six);
+        root.add_group(grp.finish());
+    }
+    fb.add_group(root.finish());
+}
+
+fn write_bundled_logs(nav_file: &NavFile, fb: &mut FileBuilder) {
+    let bundled_logs = nav_file.bundled_logs();
+    if bundled_logs.is_empty() {
+        return;
+    }
+
+    let mut root = fb.create_group("logs");
+    for log in bundled_logs {
+        let bytes = log.text().as_bytes();
+        let mut grp = root.create_group(log.name());
+        grp.create_dataset("text")
+            .with_u8_data(bytes)
+            .with_shape(&[bytes.len() as u64])
+            .set_attr("encoding", AttrValue::String("utf-8".to_owned()))
+            .with_chunks(&[CHUNK_SIZE])
+            .with_deflate(DeflateLevel::Six);
         root.add_group(grp.finish());
     }
     fb.add_group(root.finish());
@@ -692,6 +714,7 @@ mod tests {
             event_markers: Vec::new(),
             event_marker_styles: Vec::new(),
             channels: Vec::new(),
+            bundled_logs: Vec::new(),
         };
 
         let file = File::from_bytes(build_hdf5(&nav_file).expect("build")).expect("read");

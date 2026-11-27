@@ -27,9 +27,10 @@
 pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
+pub use bundled_log::BundledLog;
 pub use error::{
-    BuildError, ChannelError, DebugTimeRepairError, Error, EventMarkerError, EventMarkerStyleError,
-    MetaField, MetaStringWithNul, UnplacedRecordCounts, VariantPathError,
+    BuildError, BundledLogError, ChannelError, DebugTimeRepairError, Error, EventMarkerError,
+    EventMarkerStyleError, MetaField, MetaStringWithNul, UnplacedRecordCounts, VariantPathError,
 };
 pub use fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
@@ -66,6 +67,7 @@ pub use chrono::{DateTime, Duration, Utc};
 #[doc(hidden)]
 pub mod __private;
 mod builder;
+mod bundled_log;
 mod error;
 mod fixed_width_string;
 mod format_version;

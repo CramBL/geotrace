@@ -39,6 +39,9 @@ pub(crate) fn file_error(e: Error) -> PyErr {
         | Error::TimestampOutOfRange { .. }
         | Error::TimestampCountOutOfRange { .. }
         | Error::TimestampIsTheAbsentValue { .. }
-        | Error::DatasetSizePastFileLength { .. } => PyValueError::new_err(msg),
+        | Error::DatasetSizePastFileLength { .. }
+        | Error::InvalidBundledLog { .. }
+        | Error::InvalidBundledLogShape { .. }
+        | Error::MissingBundledLogDataset { .. } => PyValueError::new_err(msg),
     }
 }

@@ -1,5 +1,8 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::io;
+use std::path::PathBuf;
+use std::str::Utf8Error;
 
 use crate::fixed_width_string::{self, FixedWidthStringError, VariantPathField};
 
@@ -95,6 +98,39 @@ pub enum EventMarkerStyleError {
 
     #[error("invalid event marker icon name: {source}")]
     UnwritableIconName { source: FixedWidthStringError },
+}
+
+/// Errors returned when constructing or validating a [`BundledLog`](crate::BundledLog).
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BundledLogError {
+    /// The log has no non-empty lines.
+    #[error("bundled log {name:?}: log is empty")]
+    Empty { name: String },
+
+    /// The file path has no valid UTF-8 file name to use as a bundled log name.
+    #[error("bundled log path {path:?}: file name is missing or not valid UTF-8")]
+    InvalidFileName { path: PathBuf },
+
+    /// The log name is not valid as an HDF5 group name under `logs/`.
+    #[error(
+        "invalid bundled log name {name:?}: must be non-empty, not '.' or '..', and contain no '/' or nul byte"
+    )]
+    InvalidName { name: String },
+
+    /// The raw log bytes are not valid UTF-8.
+    #[error("bundled log {name:?}: content is not valid UTF-8: {source}")]
+    InvalidUtf8 { name: String, source: Utf8Error },
+
+    /// Reading the log file from disk failed.
+    #[error("bundled log {path:?}: {source}")]
+    Io { path: PathBuf, source: io::Error },
+
+    /// None of the first non-empty lines match a recognised timestamp format.
+    #[error(
+        "bundled log {name:?}: no recognised timestamp format in the head of the log (first line: {first_line:?})"
+    )]
+    UnrecognisedFormat { name: String, first_line: String },
 }
 
 /// Errors that can occur when building a [`Channel`](crate::Channel).
@@ -234,6 +270,11 @@ pub enum BuildError {
     /// to clamp each to the nearest endpoint and continue.
     #[error("{count} annotation(s) fall outside the nav fix time range")]
     AnnotationsOutsideRange { count: usize },
+
+    /// Two bundled logs share a name. Names become HDF5 group names under `logs/`,
+    /// so they must be unique.
+    #[error("two bundled logs share the name {name:?}: bundled log names must be unique")]
+    DuplicateBundledLogName { name: String },
 
     /// Two channels share a name. Names are the primary key (queries reference
     /// them as `@name`) and become HDF5 group names, so they must be unique.
@@ -461,6 +502,29 @@ pub enum Error {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// A bundled log stored under `logs/<name>/text` failed validation.
+    #[error(transparent)]
+    InvalidBundledLog {
+        #[from]
+        source: BundledLogError,
+    },
+
+    /// A bundled log dataset is not 1-D.
+    #[error("logs/{name}/text: expected a 1-D dataset, found shape {actual:?}")]
+    InvalidBundledLogShape {
+        /// Bundled log group name.
+        name: String,
+        /// Stored dimensions.
+        actual: Vec<u64>,
+    },
+
+    /// A bundled log group under `logs/<name>` is missing its `text` dataset.
+    #[error("logs/{name}/text: required bundled log dataset is missing")]
+    MissingBundledLogDataset {
+        /// Bundled log group name.
+        name: String,
+    },
 
     #[error("failed to parse {unit} from {input:?}: {reason}")]
     ParseError {

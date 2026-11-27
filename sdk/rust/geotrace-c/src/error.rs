@@ -105,7 +105,10 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::EmptyField { .. }
         | Error::IndexPastTable { .. }
         | Error::TimestampOutOfRange { .. }
-        | Error::DatasetSizePastFileLength { .. } => GtdStatus::GTD_ERR_PARSE,
+        | Error::DatasetSizePastFileLength { .. }
+        | Error::InvalidBundledLog { .. }
+        | Error::InvalidBundledLogShape { .. }
+        | Error::MissingBundledLogDataset { .. } => GtdStatus::GTD_ERR_PARSE,
         Error::DebugTimeRepairTimestampOutOfRange { .. }
         | Error::TimestampCountOutOfRange { .. } => GtdStatus::GTD_ERR_OUT_OF_RANGE,
         Error::UnwritableField { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
