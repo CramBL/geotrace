@@ -383,7 +383,9 @@ Ordering and date filters use the stored bounds.
 Pass `next_cursor` as `cursor` with the same dates to continue, or start again after History refreshes or the app restarts.
 Recording IDs remain stable across app restarts with the same History database contents and path.
 GeoTrace returns up to 32 recordings per page and sets `metadata_truncated` when it shortens a title or identity.
-If GeoTrace is preparing History, retry the listing.
+When History is opening or loading its listing, GeoTrace waits up to one second after admitting the request.
+The wait can end sooner near the connection timeout.
+If History is still preparing when the wait ends, GeoTrace returns `history_not_ready` and you can retry the listing.
 
 Pass a History recording ID as `recording` to `open_history_recording`.
 GeoTrace reports the operation's current state, including failure to start a History read.

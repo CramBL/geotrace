@@ -13,8 +13,8 @@ use gt_pending_writes::WriteAccess;
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, GetHistoryOpenStatus, HistoryDates, HistoryOpenId,
     HistoryOpenState, HistoryOpenStatus, HistoryRecordings, ListHistoryRecordings, ListRecordings,
-    OpenHistoryRecording, OpenPanel, PanelOpenState, QueryCounts, QueryJobState,
-    RecordingReference, Reply, Request, SessionPanel, StatusWait,
+    MAX_DEFERRED_OPERATION_REPLIES, OpenHistoryRecording, OpenPanel, PanelOpenState, QueryCounts,
+    QueryJobState, RecordingReference, Reply, Request, SessionPanel, StatusWait,
 };
 use gt_side_panel::{CheckState, NodeKey};
 use gt_store::{
@@ -37,6 +37,7 @@ use crate::app::history_db::{
 };
 use crate::app::history_list::RecordingListing;
 use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
+use crate::app::session_operations::INITIAL_OPERATION_WAIT;
 use crate::app::storage::OpenStorage;
 use crate::app::test_util::harness::{self, TestDroppedFile};
 use crate::app::test_util::recordings;
@@ -1503,10 +1504,9 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open_in(dir.path());
     let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
-    assert_eq!(
-        session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
-        Reply::from(ErrorCode::HistoryNotReady)
-    );
+    let mut opening = session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+    assert_eq!(opening.try_recv().unwrap(), None);
+    drop(opening);
     databases
         .send(harness::storage_opened_in(
             &store,
@@ -1514,10 +1514,8 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
             &harness.state().pending_writes,
         ))
         .unwrap();
-    assert_eq!(
-        session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
-        Reply::from(ErrorCode::HistoryNotReady)
-    );
+    let mut pending = session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+    assert_eq!(pending.try_recv().unwrap(), None);
 
     let app = harness.state_mut();
     let Response::Listed { request, .. } = recordings::next_response(&app.history) else {
@@ -1529,6 +1527,11 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
     });
     {
         let _access = HistoryAccess::lock();
+        harness::step_minimized_logic(&mut harness);
+        assert_eq!(
+            pending.try_recv().unwrap(),
+            Some(Reply::from(ErrorCode::HistoryListingFailed))
+        );
         assert_eq!(
             session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
             Reply::from(ErrorCode::HistoryListingFailed)
@@ -1541,12 +1544,11 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
 
     let obsolete = recordings::next_response(&harness.state().history);
     harness.state_mut().invalidate_history_listing();
-    {
+    let mut refreshed = {
         let _access = HistoryAccess::lock();
-        assert_eq!(
-            session::execute(&mut harness, Request::ListHistoryRecordings(UNFILTERED)),
-            Reply::from(ErrorCode::HistoryNotReady)
-        );
+        let mut refreshed =
+            session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+        assert_eq!(refreshed.try_recv().unwrap(), None);
         harness.state_mut().handle_history_response(obsolete);
         assert!(matches!(
             harness.state().history_listing.view(),
@@ -1556,23 +1558,18 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
         harness.run_steps(3);
         harness.get_by_label_contains("Failed to load history");
         harness.state_mut().history_window.open = false;
-    }
+        assert_eq!(refreshed.try_recv().unwrap(), None);
+        refreshed
+    };
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !matches!(
-        harness.state().history_listing.view(),
-        RecordingListing::Ready { .. }
-    ) {
-        harness::step_minimized_logic(&mut harness);
-        assert!(Instant::now() < deadline, "timed out listing History");
-        std::thread::sleep(Duration::from_millis(5));
-    }
     assert_eq!(
-        self::await_page(&mut harness, UNFILTERED),
-        HistoryRecordings {
-            recordings: Vec::new(),
-            next_cursor: None
-        }
+        harness.step_until_some(|_| refreshed.try_recv().unwrap()),
+        Some(Reply::HistoryRecordings {
+            page: HistoryRecordings {
+                recordings: Vec::new(),
+                next_cursor: None
+            }
+        })
     );
 
     let _access = HistoryAccess::lock();
@@ -1584,6 +1581,195 @@ fn history_discovery_distinguishes_opening_list_failure_and_an_empty_database() 
             .query_by_label_contains("Failed to load history")
             .is_none()
     );
+}
+
+#[rstest]
+#[case::databases_opening(true)]
+#[case::listing_pending(false)]
+fn a_cold_history_listing_waits_until_the_listing_is_ready(#[case] databases_opening: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    recordings::insert_recording_as_one_whole_file_track(
+        &mut store.open_recordings().unwrap(),
+        "cold",
+        &recordings::bytes_starting_at(1_000_000, 2),
+    );
+    let (mut harness, mut reply) = if databases_opening {
+        let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
+        let mut reply = session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+        assert_eq!(reply.try_recv().unwrap(), None);
+        assert_eq!(harness.state().session_operation_replies.waiting_count(), 1);
+        databases
+            .send(harness::storage_opened_in(
+                &store,
+                &harness.ctx,
+                &harness.state().pending_writes,
+            ))
+            .unwrap();
+        (harness, reply)
+    } else {
+        let mut harness = self::owner_app(&store);
+        let reply = {
+            let _access = HistoryAccess::lock();
+            let mut reply =
+                session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+            assert_eq!(harness.state().storage_open.databases_pending(), None);
+            assert!(matches!(
+                harness.state().history_listing.view(),
+                RecordingListing::Pending
+            ));
+            assert_eq!(reply.try_recv().unwrap(), None);
+            assert_eq!(harness.state().session_operation_replies.waiting_count(), 1);
+            reply
+        };
+        (harness, reply)
+    };
+    let Some(Reply::HistoryRecordings { page }) =
+        harness.step_until_some(|_| reply.try_recv().unwrap())
+    else {
+        panic!("expected a History page");
+    };
+    assert_eq!(page.recordings.len(), 1);
+    assert_eq!(page.recordings[0].identity, "cold");
+    assert_eq!(harness.state().session_operation_replies.waiting_count(), 0);
+}
+
+#[rstest]
+#[case::listing_failed(false, ErrorCode::HistoryListingFailed)]
+#[case::history_unavailable(true, ErrorCode::HistoryUnavailable)]
+fn a_waiting_history_listing_reports_failure_when_history_cannot_list(
+    #[case] history_unavailable: bool,
+    #[case] expected: ErrorCode,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    let (mut harness, databases) = harness::app_with_the_databases_still_opening(&[]);
+    let mut reply = session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+    assert_eq!(reply.try_recv().unwrap(), None);
+    if history_unavailable {
+        databases
+            .send(OpenStorage {
+                history: HistoryWorker::disabled(),
+                history_failure: None,
+                archive: None,
+                geomagnetic_indices: None,
+                tec_maps: None,
+                solar_flares: None,
+                unavailable_archives: UnavailableArchives::default(),
+            })
+            .unwrap();
+        harness::step_minimized_logic(&mut harness);
+    } else {
+        databases
+            .send(harness::storage_opened_in(
+                &store,
+                &harness.ctx,
+                &harness.state().pending_writes,
+            ))
+            .unwrap();
+        harness::step_minimized_logic(&mut harness);
+        let Response::Listed { request, .. } = recordings::next_response(&harness.state().history)
+        else {
+            panic!("expected the pending History list");
+        };
+        harness
+            .state_mut()
+            .handle_history_response(Response::Listed {
+                request,
+                entries: Err(DbError::Busy),
+            });
+        harness::step_minimized_logic(&mut harness);
+    }
+    assert_eq!(reply.try_recv().unwrap(), Some(Reply::from(expected)));
+    assert_eq!(harness.state().session_operation_replies.waiting_count(), 0);
+}
+
+#[test]
+fn a_cold_history_listing_returns_history_not_ready_at_expiry() {
+    let (mut harness, _databases) = harness::app_with_the_databases_still_opening(&[]);
+    let started = Instant::now();
+    let mut reply = session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+    assert_eq!(reply.try_recv().unwrap(), None);
+    std::thread::sleep(INITIAL_OPERATION_WAIT.saturating_sub(started.elapsed()));
+    assert_eq!(
+        harness.step_until_some(|_| reply.try_recv().unwrap()),
+        Some(Reply::from(ErrorCode::HistoryNotReady))
+    );
+    harness::step_minimized_logic(&mut harness);
+    assert_eq!(harness.state().session_operation_replies.waiting_count(), 0);
+}
+
+#[test]
+fn saturated_history_listings_reply_immediately_with_history_not_ready() {
+    let (mut harness, _databases) = harness::app_with_the_databases_still_opening(&[]);
+    let waiting: [_; MAX_DEFERRED_OPERATION_REPLIES] = std::array::from_fn(|_| {
+        let mut reply = session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+        assert_eq!(reply.try_recv().unwrap(), None);
+        reply
+    });
+    assert_eq!(
+        harness.state().session_operation_replies.waiting_count(),
+        MAX_DEFERRED_OPERATION_REPLIES
+    );
+    let mut saturated = session::begin(&mut harness, Request::ListHistoryRecordings(UNFILTERED));
+    assert_eq!(
+        saturated.try_recv().unwrap(),
+        Some(Reply::from(ErrorCode::HistoryNotReady))
+    );
+    drop(waiting);
+}
+
+#[test]
+fn invalid_history_dates_and_pending_listing_cursors_reject_without_waiting() {
+    let (mut opening, _databases) = harness::app_with_the_databases_still_opening(&[]);
+    let inverted = ListHistoryRecordings {
+        dates: Some(HistoryDates {
+            from: NaiveDate::from_ymd_opt(2025, 2, 3),
+            through: NaiveDate::from_ymd_opt(2025, 2, 2),
+        }),
+        ..UNFILTERED
+    };
+    let mut date_reply = session::begin(&mut opening, Request::ListHistoryRecordings(inverted));
+    assert_eq!(
+        date_reply.try_recv().unwrap(),
+        Some(Reply::from(ErrorCode::InvalidHistoryDateRange))
+    );
+    assert_eq!(opening.state().session_operation_replies.waiting_count(), 0);
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in(dir.path());
+    {
+        let mut db = store.open_recordings().unwrap();
+        for (identity, start) in [("first", 1_000_000), ("second", 2_000_000)] {
+            recordings::insert_recording_as_one_whole_file_track(
+                &mut db,
+                identity,
+                &recordings::bytes_starting_at(start, 2),
+            );
+        }
+    }
+    let mut harness = self::owner_app(&store);
+    let request = ListHistoryRecordings {
+        limit: Some(NonZeroUsize::MIN),
+        ..UNFILTERED
+    };
+    let cursor = self::await_page(&mut harness, request)
+        .next_cursor
+        .expect("two stored recordings");
+    harness.state_mut().invalidate_history_listing();
+    let _access = HistoryAccess::lock();
+    let mut cursor_reply = session::begin(
+        &mut harness,
+        Request::ListHistoryRecordings(ListHistoryRecordings {
+            cursor: Some(cursor),
+            ..request
+        }),
+    );
+    assert_eq!(
+        cursor_reply.try_recv().unwrap(),
+        Some(Reply::from(ErrorCode::InvalidHistoryCursor))
+    );
+    assert_eq!(harness.state().session_operation_replies.waiting_count(), 0);
 }
 
 #[test]

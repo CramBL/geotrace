@@ -3,7 +3,8 @@ use std::sync::{Arc, Weak};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFilesView, RecordingData};
 use gt_session_bridge::{
     ErrorCode, HistoryListing, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
-    HistoryRecordingId, ListHistoryRecordings, OpenHistoryRecording, RecordingReference, Reply,
+    HistoryRecordingId, HistoryRecordings, ListHistoryRecordings, OpenHistoryRecording,
+    RecordingReference, Reply,
 };
 use gt_store::{
     RecordingDebugTag, RecordingUiState, StoredLayoutRevision, StoredSegmentation,
@@ -19,6 +20,8 @@ use super::history_db::{OpenedRecording, RecordingUiStateError};
 use super::history_list::RecordingListing;
 use super::history_open::ResegmentChoice;
 use super::loader::{LoadCompletion, LoadedRecordingResult};
+use super::session_operations::{INITIAL_OPERATION_WAIT, SessionOperationStatus};
+use super::session_query::SessionCommand;
 
 #[derive(Default)]
 pub(super) struct SessionHistory {
@@ -434,10 +437,28 @@ impl App {
         &mut self,
         session: Uuid,
         request: ListHistoryRecordings,
-    ) -> Result<Reply, ErrorCode> {
+    ) -> Result<SessionCommand, ErrorCode> {
+        match self.list_history_recordings_page(session, request) {
+            Ok(page) => Ok(SessionCommand::Completed(Reply::HistoryRecordings { page })),
+            Err(ErrorCode::HistoryNotReady) => Ok(SessionCommand::Operation {
+                status: SessionOperationStatus::HistoryListing { session, request },
+                wait: INITIAL_OPERATION_WAIT,
+            }),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(super) fn list_history_recordings_page(
+        &mut self,
+        session: Uuid,
+        request: ListHistoryRecordings,
+    ) -> Result<HistoryRecordings, ErrorCode> {
+        if self.shutdown_requested() {
+            return Err(ErrorCode::ShuttingDown);
+        }
+        request.dates.unwrap_or_default().timestamps()?;
         self.session_history_listing(session)
             .and_then(|listing| listing.page(request))
-            .map(|page| Reply::HistoryRecordings { page })
             .map_err(|error| {
                 if request.cursor.is_some()
                     && matches!(

@@ -218,7 +218,9 @@ impl App {
             Request::GetTrack(args) => {
                 self.inspect_session_request(session, InspectionRequest::GetTrack(args))
             }
-            Request::ListHistoryRecordings(args) => self.list_history_recordings(session, args),
+            Request::ListHistoryRecordings(args) => {
+                return self.list_history_recordings(session, args);
+            }
             Request::ListMetrics(args) => {
                 self.inspect_session_request(session, InspectionRequest::ListMetrics(args))
             }
