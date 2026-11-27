@@ -8,17 +8,17 @@ use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta};
 use gt_query::{Diagnostic, Span};
 use gt_session_bridge::{
     AnalysisSettingKey, ApplyProcessing, ErrorCode, GetHistoryOpenStatus, GetQueryResults,
-    GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState, HistoryOpenStatus,
-    HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics, ListRecordings,
-    MAX_RECORDING_BATCH, MAX_VISIBILITY_TRACKS, ManageRecordings, Metrics, NumericObservation,
-    OpenHistoryRecording, OpenPanel, PanelOpenState, PointDetails, QueryCounts, QueryJobId,
-    QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition, QueryPageRequest,
-    QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource, QueryResultTime,
-    QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget, Recording,
-    RecordingReference, Recordings, Reply, Request, SessionPanel, SessionState, SetSetting,
-    SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey, SettingSelection,
-    SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, TimeRange, TrackReference,
-    TrackVisibilityAction, TrackVisibilityResult,
+    GetQueryStatus, GetRangeDetails, HistoryDates, HistoryOpenId, HistoryOpenState,
+    HistoryOpenStatus, HistoryRecording, HistoryRecordings, ListHistoryRecordings, ListMetrics,
+    ListRecordings, MAX_RECORDING_BATCH, MAX_VISIBILITY_TRACKS, ManageRecordings, Metrics,
+    NumericObservation, OpenHistoryRecording, OpenPanel, PanelOpenState, PointDetails, QueryCounts,
+    QueryJobId, QueryJobRequest, QueryJobState, QueryJobStatus, QueryMatchPosition,
+    QueryPageRequest, QueryResultColumn, QueryResultPage, QueryResultRow, QueryResultSource,
+    QueryResultTime, QueryResults, QueryText, QueryValidation, RangeDetails, RangeTarget,
+    Recording, RecordingReference, Recordings, Reply, Request, SessionPanel, SessionState,
+    SetSetting, SetTrackVisibility, SettingApply, SettingInfo, SettingInput, SettingKey,
+    SettingSelection, SettingUnit, SettingValue, ShowOnMap, ShowOnPlot, StatusWait, TimeRange,
+    TrackReference, TrackVisibilityAction, TrackVisibilityResult,
 };
 use gt_types::PointIdx;
 use rmcp::ServiceExt as _;
@@ -32,6 +32,109 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
+
+#[tokio::test]
+async fn status_tools_advertise_and_forward_bounded_waits() {
+    let (queued, mut requests) = mpsc::channel(1);
+    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+    client.initialize().await;
+    let listing = client
+        .exchange(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+        .await;
+    let tools = listing
+        .pointer("/result/tools")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let job = self::query_job_id();
+    let wait_ms = StatusWait::try_from(2_000).unwrap();
+    let cases = [
+        (
+            "get_query_status",
+            json!({"job": job, "wait_ms": 2_000}),
+            Request::GetQueryStatus(GetQueryStatus { job, wait_ms }),
+            self::query_reply(QueryJobState::Stale),
+        ),
+        (
+            "get_history_open_status",
+            json!({"operation": HISTORY_OPEN, "wait_ms": 2_000}),
+            Request::GetHistoryOpenStatus(GetHistoryOpenStatus {
+                operation: HISTORY_OPEN,
+                wait_ms,
+            }),
+            Reply::HistoryOpen {
+                operation: HistoryOpenStatus {
+                    operation: HISTORY_OPEN,
+                    state: HistoryOpenState::AwaitingTrackSettings,
+                },
+            },
+        ),
+    ];
+    for (id, (method, arguments, request, reply)) in (3..).zip(cases) {
+        let schema = tools
+            .iter()
+            .find(|tool| tool.get("name") == Some(&json!(method)))
+            .and_then(|tool| tool.get("inputSchema"))
+            .unwrap();
+        let wait = schema.pointer("/properties/wait_ms").unwrap();
+        let limits = wait
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|reference| schema.pointer(reference.trim_start_matches('#')))
+            .unwrap_or(wait);
+        assert_eq!(limits.get("type"), Some(&json!("integer")));
+        assert_eq!(limits.get("minimum").and_then(Value::as_f64), Some(0.0));
+        assert_eq!(limits.get("maximum").and_then(Value::as_f64), Some(2_000.0));
+        assert!(
+            !schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("wait_ms"))
+        );
+        client.send_tool(id, method, arguments).await;
+        let exchange = self::next_bridge_exchange(&mut requests).await;
+        assert_eq!(exchange.request, request);
+        exchange.reply.send(reply).unwrap();
+        assert_eq!(
+            client.receive().await.pointer("/result/isError"),
+            Some(&json!(false))
+        );
+        assert!(requests.try_recv().is_err());
+    }
+    drop(client);
+    worker.await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_waits_and_cancellation_waits_do_not_reach_geotrace() {
+    let (queued, mut requests) = mpsc::channel(1);
+    let (mut client, worker) = Client::start(Bridge::Pending(PendingBridge(queued)));
+    client.initialize().await;
+    let cases = [
+        (
+            "get_query_status",
+            json!({"job": self::query_job_id(), "wait_ms": 2_001}),
+        ),
+        (
+            "get_history_open_status",
+            json!({"operation": HISTORY_OPEN, "wait_ms": -1}),
+        ),
+        (
+            "cancel_query",
+            json!({"job": self::query_job_id(), "wait_ms": 0}),
+        ),
+    ];
+    for (id, (method, arguments)) in (2..).zip(cases) {
+        client.send_tool(id, method, arguments).await;
+        assert_eq!(
+            client.receive().await.pointer("/result/isError"),
+            Some(&json!(true))
+        );
+        assert!(requests.try_recv().is_err());
+    }
+    drop(client);
+    worker.await.unwrap();
+}
 
 #[tokio::test]
 async fn open_panel_validates_panel_arguments_before_requesting_the_desktop() {
@@ -1189,7 +1292,7 @@ fn inspection_fixture(request: &Request) -> io::Result<Reply> {
                 }],
             }))
         }
-        Request::GetQueryStatus(QueryJobRequest { job }) if *job == self::query_job_id() => {
+        Request::GetQueryStatus(GetQueryStatus { job, .. }) if *job == self::query_job_id() => {
             Ok(self::query_reply(QueryJobState::Completed {
                 queries: vec![QueryCounts {
                     matches: 2,
@@ -1357,7 +1460,7 @@ fn history_open_fixture(request: &Request) -> io::Result<Reply> {
                 },
             })
         }
-        Request::GetHistoryOpenStatus(GetHistoryOpenStatus { operation })
+        Request::GetHistoryOpenStatus(GetHistoryOpenStatus { operation, .. })
             if *operation == HISTORY_OPEN =>
         {
             Ok(Reply::HistoryOpen {

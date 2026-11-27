@@ -578,7 +578,7 @@ fn session_query_uses_current_filter_and_visibility() {
         session::wait_for_query_to_stop(&mut harness, hidden),
         session::completed_single_track_query(0)
     );
-    let old = Request::GetQueryStatus(QueryJobRequest { job: filtered });
+    let old = Request::GetQueryStatus(filtered.into());
     assert_eq!(
         session::execute(&mut harness, old),
         ErrorCode::QueryJobNotFound.into()

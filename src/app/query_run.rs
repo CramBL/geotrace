@@ -434,16 +434,17 @@ impl QuerySeries {
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
+    use std::thread;
     use std::time::{Duration, Instant};
 
     use egui::accesskit::Role;
     use egui_kittest::{Harness, kittest::Queryable as _};
     use gt_query_run::{PreparedRun, RunOutcome};
     use gt_session_bridge::{
-        ApplyProcessing, ErrorCode, ListRecordings, QueryJobId, QueryJobRequest, QueryJobState,
-        QueryJobStatus, QueryText, Reply, Request, SessionRequest,
+        ApplyProcessing, ErrorCode, GetQueryStatus, ListRecordings, QueryJobId, QueryJobRequest,
+        QueryJobState, QueryJobStatus, QueryText, Reply, Request, SessionRequest, StatusWait,
     };
-    use gt_test_utils::recording_fixtures;
+    use gt_test_utils::{HarnessInteraction as _, recording_fixtures};
     use rstest::rstest;
 
     use super::{QueryPhase, QuerySeries};
@@ -606,19 +607,141 @@ mod tests {
     fn a_query_wait_reports_stale_after_track_data_changes_before_preparation() {
         let mut harness = self::app_with_query_recording();
         let (job, mut reply) = session::begin_query(&mut harness, "points | draw");
+        let mut current = session::begin(&mut harness, Request::GetQueryStatus(job.into()));
+        assert_eq!(
+            current.try_recv().unwrap(),
+            Some(Reply::QueryJob {
+                job: QueryJobStatus {
+                    job,
+                    state: QueryJobState::Preparing
+                }
+            })
+        );
+        let mut waiting = session::begin(
+            &mut harness,
+            Request::GetQueryStatus(GetQueryStatus {
+                job,
+                wait_ms: StatusWait::try_from(2_000).unwrap(),
+            }),
+        );
+        assert_eq!(waiting.try_recv().unwrap(), None);
         assert_eq!(
             session::execute(&mut harness, Request::ApplyProcessing(ApplyProcessing {})),
             Reply::ProcessingApplied
         );
         harness::step_minimized_logic(&mut harness);
+        let stale = Some(Reply::QueryJob {
+            job: QueryJobStatus {
+                job,
+                state: QueryJobState::Stale,
+            },
+        });
+        assert_eq!(reply.try_recv().unwrap(), stale);
+        assert_eq!(waiting.try_recv().unwrap(), stale);
+    }
+
+    #[test]
+    fn a_status_wait_returns_the_published_running_status_at_expiry() {
+        let mut harness = self::app_with_query_recording();
+        let job = session::start_query(&mut harness, "points | draw");
+        let wait_ms = StatusWait::try_from(750).unwrap();
+        let started = Instant::now();
+        let mut status = session::begin(
+            &mut harness,
+            Request::GetQueryStatus(GetQueryStatus { job, wait_ms }),
+        );
+        let _worker = self::hold_query_completion(harness.state_mut());
+        harness::step_minimized_logic(&mut harness);
+        assert_eq!(status.try_recv().unwrap(), None);
+        thread::sleep(Duration::from(wait_ms).saturating_sub(started.elapsed()));
+        let reply = harness.step_until_some(|_| status.try_recv().unwrap());
         assert_eq!(
-            reply.try_recv().unwrap(),
+            reply,
             Some(Reply::QueryJob {
                 job: QueryJobStatus {
                     job,
-                    state: QueryJobState::Stale
+                    state: QueryJobState::Running {
+                        tracks_prepared: 0,
+                        track_total: 1,
+                    },
                 },
             })
+        );
+    }
+
+    #[test]
+    fn an_ipc_status_wait_preserves_the_job_id_through_cancellation() {
+        let mut harness = self::app_with_query_recording();
+        let endpoint = session::install_bridge(&mut harness);
+        let Reply::Recordings { page } = session::exchange_request(
+            &mut harness,
+            &endpoint,
+            &Request::ListRecordings(ListRecordings {
+                after: None,
+                limit: None,
+            }),
+        ) else {
+            panic!("expected loaded recordings");
+        };
+        let app = harness.state_mut();
+        let SessionCommand::Operation {
+            status: SessionOperationStatus::Query(start),
+            ..
+        } = app
+            .execute_session_request(SessionRequest {
+                session: page.recordings.first().unwrap().id.session,
+                request: Request::RunQuery(QueryText {
+                    text: "points | draw".to_owned(),
+                }),
+            })
+            .unwrap()
+        else {
+            panic!("expected a query job");
+        };
+        let (prepared, send) = self::hold_query_completion(app);
+        let job = start.job;
+        let payload = serde_json::to_vec(&Request::GetQueryStatus(GetQueryStatus {
+            job,
+            wait_ms: StatusWait::try_from(2_000).unwrap(),
+        }))
+        .unwrap();
+        thread::scope(|scope| {
+            let exchange = scope.spawn(|| endpoint.exchange_payload(&payload).unwrap());
+            assert!(harness.step_until(|harness| {
+                harness.state().session_operation_replies.waiting_count() == 1
+            }));
+            assert_eq!(
+                session::exchange_request(
+                    &mut harness,
+                    &endpoint,
+                    &Request::CancelQuery(QueryJobRequest { job }),
+                ),
+                Reply::QueryJob {
+                    job: QueryJobStatus {
+                        job,
+                        state: QueryJobState::Cancelling
+                    }
+                }
+            );
+            assert!(prepared.handle().cancelled());
+            send.send(prepared.execute()).unwrap();
+            harness::step_minimized_logic(&mut harness);
+            let Reply::QueryJob { job: observed } =
+                serde_json::from_slice(&exchange.join().unwrap()).unwrap()
+            else {
+                panic!("expected a status reply");
+            };
+            assert_eq!(observed.job, job);
+            assert!(matches!(
+                observed.state,
+                QueryJobState::Cancelled
+                    | QueryJobState::Cancelling
+                    | QueryJobState::Running { .. }
+            ));
+        });
+        assert!(
+            harness.state().editor_query.phase_for_job(job.session, job)
+                == Ok(QueryPhase::Cancelled)
         );
     }
 
@@ -704,7 +827,10 @@ mod tests {
             text: "points | draw".to_owned(),
         });
         let app = harness.state_mut();
-        let SessionCommand::Operation(SessionOperationStatus::Query(original)) = app
+        let SessionCommand::Operation {
+            status: SessionOperationStatus::Query(original),
+            ..
+        } = app
             .execute_session_request(SessionRequest {
                 request: request.clone(),
                 session,
@@ -729,7 +855,7 @@ mod tests {
             session::exchange_request(
                 &mut harness,
                 &endpoint,
-                &Request::GetQueryStatus(QueryJobRequest { job: original.job }),
+                &Request::GetQueryStatus(original.job.into()),
             ),
             ErrorCode::StaleSession.into()
         );

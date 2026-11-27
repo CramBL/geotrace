@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gt_session_bridge::{
     ApplyProcessing, ErrorCode, Inspection, InspectionRequest, OpenPanel, QueryJobId,
     QueryJobState, QueryJobStatus, QueryPreparation, QueryResults, Reply, Request, SessionRequest,
@@ -17,8 +19,14 @@ use super::session_plot::PlotPresentation;
 pub(super) enum SessionCommand {
     Completed(Reply),
     Map(MapPresentation),
-    Operation(SessionOperationStatus),
-    Panel { session: Uuid, args: OpenPanel },
+    Operation {
+        status: SessionOperationStatus,
+        wait: Duration,
+    },
+    Panel {
+        session: Uuid,
+        args: OpenPanel,
+    },
     Plot(PlotPresentation),
 }
 
@@ -79,12 +87,13 @@ impl App {
             .record_run(self.editor_query.session().text());
         self.sync_settings_autosave();
         McpActionNotice::QueueQuery.enqueue(&mut self.toasts);
-        Ok(SessionCommand::Operation(SessionOperationStatus::Query(
-            QueryJobStatus {
+        Ok(SessionCommand::Operation {
+            status: SessionOperationStatus::Query(QueryJobStatus {
                 job,
                 state: QueryJobState::Preparing,
-            },
-        )))
+            }),
+            wait: INITIAL_OPERATION_WAIT,
+        })
     }
 
     pub(super) fn require_completed_query(
@@ -171,9 +180,13 @@ impl App {
             Request::DescribeSetting(args) => Ok(Reply::Setting {
                 setting: self.describe_setting(args.key),
             }),
-            Request::GetHistoryOpenStatus(args) => self
-                .history_open_status(session, args)
-                .map(|operation| Reply::HistoryOpen { operation }),
+            Request::GetHistoryOpenStatus(args) => {
+                let status = self.history_open_status(session, args.operation)?;
+                return Ok(SessionCommand::Operation {
+                    status: SessionOperationStatus::History(status),
+                    wait: args.wait_ms.into(),
+                });
+            }
             Request::GetQueryResults(args) => {
                 self.require_completed_query(session, args.job)?;
                 let shared = self.shared.borrow();
@@ -183,9 +196,13 @@ impl App {
                     .retained_results(shared.loaded_files.view())?;
                 QueryResults::project(&results, args).map(|results| Reply::QueryResults { results })
             }
-            Request::GetQueryStatus(args) => self
-                .session_query_status(session, args.job)
-                .map(|job| Reply::QueryJob { job }),
+            Request::GetQueryStatus(args) => {
+                let status = self.session_query_status(session, args.job)?;
+                return Ok(SessionCommand::Operation {
+                    status: SessionOperationStatus::Query(status),
+                    wait: args.wait_ms.into(),
+                });
+            }
             Request::GetRangeDetails(args) => {
                 self.inspect_session_request(session, InspectionRequest::GetRangeDetails(args))
             }
@@ -211,9 +228,10 @@ impl App {
             Request::ManageRecordings(args) => self.manage_recordings(session, args),
             Request::OpenHistoryRecording(args) => {
                 let status = self.open_session_history_recording(session, args)?;
-                return Ok(SessionCommand::Operation(SessionOperationStatus::History(
-                    status,
-                )));
+                return Ok(SessionCommand::Operation {
+                    status: SessionOperationStatus::History(status),
+                    wait: INITIAL_OPERATION_WAIT,
+                });
             }
             Request::OpenPanel(args) => return Ok(SessionCommand::Panel { session, args }),
             Request::OpenPoint(args) => {
@@ -261,3 +279,5 @@ impl App {
         .execute(request)
     }
 }
+
+const INITIAL_OPERATION_WAIT: Duration = Duration::from_secs(1);

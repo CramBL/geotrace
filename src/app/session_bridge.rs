@@ -212,8 +212,8 @@ impl App {
                     .queue_session_map(presentation, reply);
                 self.ctx.request_repaint();
             }
-            Ok(SessionCommand::Operation(status)) => {
-                self.await_session_operation(status, reply, admitted_at);
+            Ok(SessionCommand::Operation { status, wait }) => {
+                self.await_session_operation(status, wait, reply, admitted_at);
             }
             Ok(SessionCommand::Panel { session, args }) => {
                 self.open_session_panel(session, args, reply)
