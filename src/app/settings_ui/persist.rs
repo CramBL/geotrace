@@ -9,7 +9,7 @@ use gt_types::{AssociationConfig, AssociationWindow};
 use strum::IntoEnumIterator;
 
 use crate::app::{App, loader};
-use crate::settings::AnalysisSettings;
+use crate::settings::{AnalysisSettings, McpSettings};
 
 impl App {
     /// Apply loaded settings on startup.
@@ -133,6 +133,7 @@ impl App {
         self.environment_storage_settings = s.environment_storage.clamped_to_offered_range();
         self.update_check_on_startup = s.update.check_on_startup;
         self.skipped_version = s.update.skipped_version.clone();
+        self.mcp_start_on_launch = s.mcp.start_on_launch;
         self.query_window.set_history(s.query.history.clone());
         self.snap_settings = s.snap.clone();
         self.interference_settings = s.interference.clone();
@@ -261,6 +262,9 @@ impl App {
             geomagnetic_indices: self.geomagnetic_index_settings.clone(),
             tec: self.tec_settings.clone(),
             solar_flares: self.solar_flare_settings.clone(),
+            mcp: McpSettings {
+                start_on_launch: self.mcp_start_on_launch,
+            },
         }
     }
 

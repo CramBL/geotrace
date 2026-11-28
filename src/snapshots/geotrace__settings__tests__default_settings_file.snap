@@ -103,3 +103,6 @@ layout = "cddis"
 [solar_flares]
 base_url = "https://api.nasa.gov"
 api_key = ""
+
+[mcp]
+start_on_launch = false

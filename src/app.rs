@@ -263,6 +263,9 @@ pub struct StartupOptions {
     /// another instance holding it leaves the database closed until it takes
     /// it.
     pub instance_lock: DataDirectoryLock,
+    pub start_session_bridge: bool,
+    #[cfg(test)]
+    pub session_bridge_endpoint: Option<Arc<TestEndpoint>>,
 }
 
 /// The dense per-component color slots the plot reads, from the settings
@@ -418,6 +421,7 @@ pub struct App {
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
     session_bridge: SessionBridge,
+    mcp_start_on_launch: bool,
     #[cfg(test)]
     session_bridge_endpoint: Option<Arc<TestEndpoint>>,
     session_traffic_window: SessionTrafficWindow,
@@ -670,8 +674,9 @@ impl App {
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
             session_bridge: SessionBridge::default(),
+            mcp_start_on_launch: false,
             #[cfg(test)]
-            session_bridge_endpoint: None,
+            session_bridge_endpoint: options.session_bridge_endpoint,
             session_traffic_window: SessionTrafficWindow::default(),
             session_history: SessionHistory::default(),
             session_navigation: SessionNavigation::default(),
@@ -805,6 +810,10 @@ impl App {
                 })
                 .collect(),
         );
+
+        if options.start_session_bridge || app.mcp_start_on_launch {
+            app.start_session_bridge();
+        }
 
         app
     }
@@ -944,6 +953,7 @@ impl App {
             environment_storage: self.environment_storage_settings,
             update_check_on_startup: self.update_check_on_startup,
             skipped_version: self.skipped_version.clone(),
+            mcp_start_on_launch: self.mcp_start_on_launch,
             query_history_revision: self.query_window.history_revision(),
             snap: self.snap_settings.clone(),
             geomagnetic_indices: self.geomagnetic_index_settings.clone(),

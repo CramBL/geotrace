@@ -34,6 +34,7 @@ pub struct Settings {
     pub geomagnetic_indices: GeomagneticIndexSettings,
     pub tec: TecSettings,
     pub solar_flares: SolarFlareSettings,
+    pub mcp: McpSettings,
 }
 
 impl Default for Settings {
@@ -54,8 +55,15 @@ impl Default for Settings {
             geomagnetic_indices: GeomagneticIndexSettings::default(),
             tec: TecSettings::default(),
             solar_flares: SolarFlareSettings::default(),
+            mcp: McpSettings::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct McpSettings {
+    pub start_on_launch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1125,6 +1133,21 @@ mod tests {
             expected == InitialPositionSourcePolicy::Ask
         )));
         assert!(!serialized.contains("initial_position_source_policy"));
+    }
+
+    #[test]
+    fn mcp_start_on_launch_defaults_to_false_and_roundtrips_through_toml() {
+        let older: Settings = toml::from_str("").expect("deserialize empty config");
+        assert!(!older.mcp.start_on_launch);
+
+        let empty_section: Settings = toml::from_str("[mcp]\n").expect("deserialize empty mcp");
+        assert!(!empty_section.mcp.start_on_launch);
+
+        let mut settings = Settings::default();
+        settings.mcp.start_on_launch = true;
+        let serialized = toml::to_string(&settings).expect("serialize settings");
+        let restored: Settings = toml::from_str(&serialized).expect("deserialize settings");
+        assert!(restored.mcp.start_on_launch);
     }
 
     /// The settings file a fresh install writes.

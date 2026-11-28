@@ -11,6 +11,9 @@ impl App {
         ui.label("Allow MCP clients under your user account to inspect and control GeoTrace.");
         ui.add_space(ui.spacing().item_spacing.y);
         self.mcp_bridge_controls_ui(ui);
+        ui.add_space(ui.spacing().item_spacing.y);
+        ui.checkbox(&mut self.mcp_start_on_launch, START_ON_LAUNCH)
+            .on_hover_text("Start MCP automatically when GeoTrace opens");
 
         ui.separator();
         if ui
@@ -61,4 +64,5 @@ impl App {
 }
 
 const COPY_CONFIG: &str = "Copy MCP config";
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[COPY_CONFIG];
+const START_ON_LAUNCH: &str = "Start MCP on launch";
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[START_ON_LAUNCH, COPY_CONFIG];

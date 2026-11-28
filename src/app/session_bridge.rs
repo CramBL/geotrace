@@ -129,7 +129,9 @@ impl App {
         #[cfg(test)]
         let started = match &self.session_bridge_endpoint {
             Some(endpoint) => endpoint.start_server(wake),
-            None => Server::start(wake),
+            None => Err(io::Error::other(
+                "test session bridge endpoint is not configured",
+            )),
         };
         #[cfg(not(test))]
         let started = Server::start(wake);

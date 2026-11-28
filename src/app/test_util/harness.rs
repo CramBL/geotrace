@@ -152,6 +152,8 @@ pub fn build_app_with_the_instance_lock(
             app_version: TEST_APP_VERSION,
             pending_writes,
             instance_lock,
+            start_session_bridge: false,
+            session_bridge_endpoint: None,
         },
     )
 }
@@ -310,6 +312,8 @@ pub fn transient_app_with_the_settings_file(
             app_version: TEST_APP_VERSION,
             pending_writes,
             instance_lock,
+            start_session_bridge: false,
+            session_bridge_endpoint: None,
         },
     )
 }
