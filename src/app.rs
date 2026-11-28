@@ -422,6 +422,7 @@ pub struct App {
     offline: bool,
     session_bridge: SessionBridge,
     mcp_start_on_launch: bool,
+    mcp_config_copied_at: Option<f64>,
     #[cfg(test)]
     session_bridge_endpoint: Option<Arc<TestEndpoint>>,
     session_traffic_window: SessionTrafficWindow,
@@ -675,6 +676,7 @@ impl App {
             offline: options.offline,
             session_bridge: SessionBridge::default(),
             mcp_start_on_launch: false,
+            mcp_config_copied_at: None,
             #[cfg(test)]
             session_bridge_endpoint: options.session_bridge_endpoint,
             session_traffic_window: SessionTrafficWindow::default(),

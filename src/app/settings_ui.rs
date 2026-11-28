@@ -32,7 +32,7 @@ mod geomagnetic_indices;
 mod interface;
 mod interference;
 mod label;
-mod mcp;
+pub(super) mod mcp;
 mod mcp_config;
 mod persist;
 pub(super) mod processing;
