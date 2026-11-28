@@ -15,8 +15,9 @@ pub mod terms;
 
 /// The action requested on the command line, resolved before any GUI setup.
 ///
-/// Flags win over files, so `geotrace --version foo.gtd` prints the version and
-/// never opens a window. The variants are ordered by that precedence.
+/// Flags win over `mcp` and files, so `geotrace --version foo.gtd` prints the
+/// version and never opens a window. The variants are ordered by that
+/// precedence.
 #[derive(Debug, PartialEq, Eq)]
 enum CliAction {
     /// Print the version and exit (`--version` / `-V`).
@@ -26,6 +27,7 @@ enum CliAction {
     /// Update in place and exit (`--update`). Recognized in every build so one
     /// without the updater can report it clearly. Only dist builds honor it.
     SelfUpdate,
+    Mcp,
     /// Launch the GUI, opening `paths` on startup.
     Launch {
         paths: Vec<PathBuf>,
@@ -44,6 +46,8 @@ impl CliAction {
             Self::Help
         } else if has(&["--update"]) {
             Self::SelfUpdate
+        } else if args.first().map(String::as_str) == Some(MCP_COMMAND) {
+            Self::Mcp
         } else {
             Self::Launch {
                 paths: args
@@ -79,6 +83,16 @@ fn run_self_update_cli() -> ExitCode {
 fn run_self_update_cli() -> ExitCode {
     eprintln!("updating is not supported by this build");
     ExitCode::FAILURE
+}
+
+fn run_mcp_server() -> ExitCode {
+    match gt_mcp::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("MCP server failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// What the wait for the last writes does about the termination-signal flag
@@ -151,7 +165,9 @@ fn begin_shutdown_and_wait_for_pending_writes(
 fn main() -> ExitCode {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
-    // Flags that must not open a window are handled before any GUI/GPU setup.
+    // Actions that must not open a window are handled before any GUI/GPU setup.
+    // MCP mode also runs before the data directory lock: the desktop session
+    // owns that lock.
     // Release smoke tests run `geotrace --version` to confirm the installed
     // binary launches without the GUI. On Windows the release build has no
     // attached console, so the clean exit code is the cross-platform signal and
@@ -164,7 +180,10 @@ fn main() -> ExitCode {
         CliAction::Help => {
             println!(
                 "GeoTrace {} - GNSS navigation data visualizer\n\n\
-                 Usage: geotrace [OPTIONS] [FILES]...\n\n\
+                 Usage: geotrace [OPTIONS] [FILES]...\n       \
+                 geotrace mcp\n\n\
+                 Commands:\n  \
+                 mcp    Serve MCP over stdio for the desktop session\n\n\
                  Arguments:\n  \
                  [FILES]...  .gtd recordings or .log files to open on startup\n\n\
                  Options:\n  \
@@ -179,6 +198,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         CliAction::SelfUpdate => return run_self_update_cli(),
+        CliAction::Mcp => return run_mcp_server(),
         CliAction::Launch {
             paths,
             offline,
@@ -314,6 +334,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// Minimum 2D texture dimension to request from wgpu, matching eframe's
 /// default: the surface/depth textures must cover 4k+ displays.
 const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
+
+const MCP_COMMAND: &str = "mcp";
 
 /// Under this flag GeoTrace is offline: no map tiles, no downloads, no
 /// snapping, no update check.
@@ -518,10 +540,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_flag_wins_over_files() {
-        let args = vec!["--version".to_owned(), "foo.gtd".to_owned()];
-        assert_eq!(CliAction::parse(&args), CliAction::Version);
+    #[rstest]
+    #[case(&["--version", "foo.gtd"], CliAction::Version)]
+    #[case(&["mcp", "--version"], CliAction::Version)]
+    fn flags_win_over_files_and_mcp(#[case] args: &[&str], #[case] expected: CliAction) {
+        let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+        assert_eq!(CliAction::parse(&args), expected);
+    }
+
+    #[rstest]
+    #[case(&["mcp"], CliAction::Mcp)]
+    #[case(&["./mcp"], CliAction::Launch {
+        paths: vec![PathBuf::from("./mcp")],
+        offline: false,
+        session_bridge: false,
+    })]
+    #[case(&["--offline", "mcp"], CliAction::Launch {
+        paths: vec![PathBuf::from("mcp")],
+        offline: true,
+        session_bridge: false,
+    })]
+    fn mcp_selects_mcp_mode_only_as_the_first_argument(
+        #[case] args: &[&str],
+        #[case] expected: CliAction,
+    ) {
+        let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+        assert_eq!(CliAction::parse(&args), expected);
     }
 
     const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
