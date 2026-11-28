@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+GeoTrace includes a built-in MCP server launched with `geotrace mcp`.
+Connect an MCP client to a running GeoTrace session to inspect loaded recordings and History, run queries, frame results on the map and plot, and adjust settings.
+Start MCP and copy the client configuration in **Settings > MCP**.
+
 ### Added
 
 - **Log Viewer:** Drag to select and copy text across log lines with table filters applied.
@@ -14,8 +18,9 @@
 - **Plots:** Dilution of precision metrics are available for recordings with DOP samples.
 - **Recordings:** Boot readings are available in fix details, with system/boot clock delta in plots and `system_boot_delta` queries.
 - **Log Viewer:** Date policies can be edited and reset with source links, export range status and save status.
-- **Recordings:** `geotrace mcp` lists and opens recordings in History, inspects loaded recordings, controls track visibility, runs queries, frames track ranges on the map, and opens point information when MCP is enabled in Settings or with `--session-bridge`.
-- **MCP:** Copy the client configuration from Settings.
+- **MCP:** `geotrace mcp` lists and opens recordings in History, inspects loaded recordings, controls track visibility, runs queries, frames results on the map and plot, opens point information, and adjusts Analysis and Processing settings.
+  Start MCP in **Settings > MCP** with **Start MCP** or **Start MCP on launch**, or launch GeoTrace with `--session-bridge`.
+  Copy the client configuration with **Copy MCP config**.
 
 ### Changed
 
