@@ -25,7 +25,7 @@ impl SettingsPage {
             | Self::SolarFlares => crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL,
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Drag to pan",
-            Self::Mcp => "Start MCP",
+            Self::Mcp => "Copy MCP config",
             Self::Application => crate::app::environment_storage_ui::AUTO_PRUNE_LABEL,
         }
     }

@@ -328,7 +328,7 @@ fn main() -> ExitCode {
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
         native_options,
         Box::new(move |cc| {
-            let mut app = app::App::new_with_files(
+            let app = app::App::new_with_files(
                 cc,
                 &initial_paths,
                 app::StartupOptions {
@@ -343,11 +343,11 @@ fn main() -> ExitCode {
                     app_version: env!("CARGO_PKG_VERSION"),
                     pending_writes: app_pending_writes,
                     instance_lock: app_instance_lock,
+                    start_session_bridge: session_bridge,
+                    #[cfg(test)]
+                    session_bridge_endpoint: None,
                 },
             );
-            if session_bridge {
-                app.start_session_bridge();
-            }
             Ok(Box::new(app))
         }),
     );

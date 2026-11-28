@@ -39,6 +39,7 @@ See [Apple's instructions](https://support.apple.com/en-us/102445).
 ## Start and stop MCP
 
 Click **Start MCP** in **Settings > MCP** or launch `geotrace --session-bridge`.
+Enable **Start MCP on launch** in **Settings > MCP** to start MCP automatically when GeoTrace opens.
 Click **Stop MCP** in **Settings > MCP** to close access to GeoTrace.
 GeoTrace clears captured traffic.
 GeoTrace continues work from accepted requests.

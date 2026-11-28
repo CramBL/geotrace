@@ -93,6 +93,7 @@ pub(super) struct AppSnapshot {
     pub environment_storage: crate::settings::EnvironmentStorageSettings,
     pub update_check_on_startup: bool,
     pub skipped_version: Option<String>,
+    pub mcp_start_on_launch: bool,
     /// Query-history mutation counter. The history is a growing `Vec` that
     /// this flat snapshot cannot compare directly against, so the window
     /// bumps this counter on every change and the dirty-check watches the
@@ -167,6 +168,7 @@ impl Default for AppSnapshot {
             environment_storage: crate::settings::EnvironmentStorageSettings::default(),
             update_check_on_startup: true,
             skipped_version: None,
+            mcp_start_on_launch: false,
             query_history_revision: 0,
             snap: crate::settings::SnapSettings::default(),
             geomagnetic_indices: crate::settings::GeomagneticIndexSettings::default(),

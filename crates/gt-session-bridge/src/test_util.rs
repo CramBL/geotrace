@@ -49,6 +49,7 @@ impl TestSessionReply {
 }
 
 /// An isolated socket or pipe for local server integration tests.
+#[derive(Debug)]
 pub struct TestEndpoint {
     pub(crate) endpoint: Endpoint,
     #[cfg(unix)]
