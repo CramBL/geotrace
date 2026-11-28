@@ -1,8 +1,10 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use gt_map::{DoubleClickBehavior, DragPanButton, MapControls, ScrollBehavior};
+use gt_session_bridge::test_util::TestEndpoint;
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness, recording_fixtures};
 use strum::IntoEnumIterator as _;
 
@@ -92,6 +94,17 @@ fn snapshot_settings_pages() {
         harness.run();
         harness.snapshot_with_color_tolerance(page.snapshot_file_stem());
     }
+}
+
+#[test]
+fn snapshot_settings_window_mcp_running() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    let endpoint = Arc::new(TestEndpoint::new().unwrap());
+    harness.inner.state_mut().session_bridge_endpoint = Some(endpoint);
+    harness.inner.state_mut().settings_page = SettingsPage::Mcp;
+    harness.inner.state_mut().start_session_bridge();
+    harness.run();
+    harness.snapshot_with_color_tolerance("settings_window_mcp_running");
 }
 
 /// The window opens at one size that holds every page at default content, and

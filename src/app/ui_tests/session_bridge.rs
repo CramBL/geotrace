@@ -5,6 +5,7 @@ use std::sync::Arc;
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
+use egui_phosphor::regular::{CHECK as ICON_CHECK, COPY as ICON_COPY};
 use gt_instance_lock::DataDirectoryLock;
 use gt_map::TileAccess;
 use gt_pending_writes::PendingWrites;
@@ -12,11 +13,11 @@ use gt_session_bridge::test_util::TestEndpoint;
 use gt_session_bridge::{
     ErrorCode, GetRecording, ListRecordings, RecordingReference, Reply, Request,
 };
-use gt_test_utils::{HarnessInteraction as _, TestHarness};
+use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use rstest::rstest;
 
 use crate::app::test_util::{harness, session};
-use crate::app::{App, StartupOptions, Storage, ui_tests};
+use crate::app::{App, StartupOptions, Storage, settings_ui, ui_tests};
 use crate::settings::Settings;
 
 #[test]
@@ -191,6 +192,36 @@ fn startup_starts_mcp_when_enabled_by_settings_or_flag(#[case] trigger: StartupT
     harness.get_by_label("MCP is running");
 }
 
+#[test]
+fn copy_mcp_config_shows_transient_checkmark_feedback() {
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_wait_for_pending_images(false)
+        .build_eframe(harness::transient_app);
+    harness.step();
+    self::open_mcp_settings(&mut harness);
+
+    let default_label = format!("{ICON_COPY} Copy MCP config");
+    let copied_label = format!("{ICON_CHECK} Copy MCP config");
+
+    harness
+        .get_by_role_and_label(Role::Window, "Settings")
+        .get_by_role_and_label(Role::Button, &default_label)
+        .click();
+    harness.run_steps(2);
+    harness
+        .get_by_role_and_label(Role::Window, "Settings")
+        .get_by_role_and_label(Role::Button, &copied_label);
+
+    let expired_time =
+        harness.ctx.input(|input| input.time) + settings_ui::mcp::COPY_FEEDBACK_DURATION_SECS + 0.1;
+    harness.input_mut().time = Some(expired_time);
+    harness.step();
+    harness
+        .get_by_role_and_label(Role::Window, "Settings")
+        .get_by_role_and_label(Role::Button, &default_label);
+}
+
 fn open_mcp_settings(harness: &mut Harness<'_, App>) {
     harness.state_mut().settings_open = true;
     harness.run_steps(2);
@@ -204,7 +235,7 @@ fn open_mcp_settings(harness: &mut Harness<'_, App>) {
 fn click_mcp_button(harness: &mut Harness<'_, App>, label: &str) {
     harness
         .get_by_role_and_label(Role::Window, "Settings")
-        .get_by_role_and_label(Role::Button, label)
+        .get(By::new().role(Role::Button).label_contains(label))
         .click();
     harness.run_steps(2);
 }

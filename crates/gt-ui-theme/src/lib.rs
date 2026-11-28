@@ -87,6 +87,11 @@ pub const fn error_indicator(dark_mode: bool) -> Color32 {
     ERROR.resolve(dark_mode)
 }
 
+/// Affirmative green for the current theme. Pass `ui.visuals().dark_mode`.
+pub const fn success_indicator(dark_mode: bool) -> Color32 {
+    SUCCESS.resolve(dark_mode)
+}
+
 /// Background colour for a hovered map element.
 ///
 /// Pass `ui.visuals().dark_mode`.
@@ -601,6 +606,9 @@ pub const ERROR: ThemedColor = ThemedColor::new(ERROR_INDICATOR, Color32::from_r
 /// button in the update prompt.
 pub const SUCCESS_GREEN: Color32 = Color32::from_rgb(46, 160, 67);
 
+/// [`SUCCESS_GREEN`] paired with a deeper light-surface variant.
+pub const SUCCESS: ThemedColor = ThemedColor::new(SUCCESS_GREEN, Color32::from_rgb(26, 127, 55));
+
 /// The cloth of the flag the map draws at the first fix of a track, whether
 /// or not that track is highlighted. The light variant is a deeper green than
 /// [`SUCCESS_GREEN`]: this flag draws over the map's tiles, not the app's
@@ -791,6 +799,7 @@ pub const NAVIGATION_UNKNOWN: ThemedColor = ThemedColor::new(
 pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
     ("WARNING", WARNING),
     ("ERROR", ERROR),
+    ("SUCCESS", SUCCESS),
     ("FIX_QUALITY_GREEN", FIX_QUALITY_GREEN),
     ("FIX_QUALITY_YELLOW", FIX_QUALITY_YELLOW),
     ("FIX_QUALITY_RED", FIX_QUALITY_RED),
