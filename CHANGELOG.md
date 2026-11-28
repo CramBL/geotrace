@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.20.0 - 2026-11-28
+
 GeoTrace includes a built-in MCP server launched with `geotrace mcp`.
 Connect an MCP client to a running GeoTrace session to inspect loaded recordings and History, run queries, frame results on the map and plot, and adjust settings.
 Start MCP and copy the client configuration in **Settings > MCP**.
