@@ -14,7 +14,7 @@ use crate::errors;
 /// `time` must be a timezone-aware `datetime.datetime`. An empty `label` gives a
 /// `label` of `None`. A `label` longer than the 255 bytes the `markers/label`
 /// field holds raises `ValueError`.
-#[pyclass(skip_from_py_object, name = "Annotation")]
+#[pyclass(name = "Annotation")]
 #[derive(Clone, Debug)]
 pub struct PyAnnotation {
     pub(crate) inner: Annotation,
@@ -79,7 +79,7 @@ impl PyAnnotation {
 }
 
 /// A map annotation with its interpolated position on the nav track.
-#[pyclass(skip_from_py_object, name = "Marker")]
+#[pyclass(name = "Marker")]
 #[derive(Clone, Debug)]
 pub struct PyMarker {
     inner: Marker,
@@ -176,7 +176,7 @@ pub(crate) enum SkippableEventMarker {
 /// ``annotation`` is past 511 bytes for a marker that is not skipped.
 ///
 /// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
-#[pyclass(skip_from_py_object, name = "EventMarker")]
+#[pyclass(name = "EventMarker")]
 #[derive(Clone, Debug)]
 pub struct PyEventMarker {
     pub(crate) marker: SkippableEventMarker,
@@ -268,7 +268,7 @@ impl PyEventMarker {
 /// ``color`` is ``#RRGGBB``, e.g. ``"#FF9900"``, or ``None`` or an empty string for the
 /// deterministic hash color. The constructor raises ``ValueError`` for a malformed variant path
 /// and for any other color.
-#[pyclass(skip_from_py_object, name = "EventMarkerStyle")]
+#[pyclass(name = "EventMarkerStyle")]
 #[derive(Clone, Debug)]
 pub struct PyEventMarkerStyle {
     pub(crate) inner: EventMarkerStyle,
@@ -346,7 +346,7 @@ impl From<&EventMarkerStyle> for PyEventMarkerStyle {
 /// map position.
 ///
 /// Obtain via ``NavFile.event_markers``.
-#[pyclass(skip_from_py_object, name = "EventMarkerPoint")]
+#[pyclass(name = "EventMarkerPoint")]
 #[derive(Clone, Debug)]
 pub struct PyEventMarkerPoint {
     inner: EventMarkerPoint,

@@ -10,7 +10,7 @@ use crate::errors;
 /// Constructors reject invalid names, invalid UTF-8, empty content, and logs
 /// whose head does not match a recognised timestamp format.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[pyclass(eq, frozen, skip_from_py_object, name = "BundledLog")]
+#[pyclass(eq, frozen, name = "BundledLog")]
 pub struct PyBundledLog {
     pub(crate) inner: BundledLog,
 }

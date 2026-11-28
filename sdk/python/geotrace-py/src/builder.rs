@@ -28,7 +28,7 @@ use crate::satellite::PySatelliteReport;
 /// ```
 ///
 /// Calling `finish()` consumes the builder. Further calls raise `RuntimeError`.
-#[pyclass(skip_from_py_object, name = "NavFileBuilder")]
+#[pyclass(name = "NavFileBuilder")]
 pub struct PyNavFileBuilder {
     config: Option<NavFileBuilder>,
     recorder: Option<NavRecorder>,

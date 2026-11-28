@@ -26,7 +26,7 @@ use crate::timestamps::{self, TimestampArguments};
 /// Both coordinates may be `None` with an explicit state. Coordinate origin is then unreported.
 /// Equality treats two NaN coordinates as absent only with explicit state and unreported origin.
 /// Other NaN values retain ordinary inequality.
-#[pyclass(frozen, skip_from_py_object, name = "NavFix")]
+#[pyclass(frozen, name = "NavFix")]
 #[derive(Clone, Copy, Debug)]
 pub struct PyNavFix {
     pub(crate) inner: NavFix,

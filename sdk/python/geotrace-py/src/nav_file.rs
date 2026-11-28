@@ -19,7 +19,7 @@ use crate::metadata::PyMeta;
 ///
 /// Construct via `NavFileBuilder.finish()` to write, or `NavFile.open(path)`
 /// to read.
-#[pyclass(skip_from_py_object, name = "NavFile")]
+#[pyclass(name = "NavFile")]
 pub struct PyNavFile {
     inner: Arc<NavFile>,
 }

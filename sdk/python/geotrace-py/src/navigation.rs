@@ -138,7 +138,7 @@ navigation_enum!(
 
 /// Constellation and PRN identify one satellite within a report.
 /// PRN values are unsigned 32-bit integers.
-#[pyclass(frozen, skip_from_py_object, name = "SatelliteIdentity")]
+#[pyclass(frozen, name = "SatelliteIdentity")]
 #[derive(Clone, Debug)]
 pub(crate) struct PySatelliteIdentity {
     inner: SatelliteIdentity,
@@ -172,7 +172,7 @@ impl PySatelliteIdentity {
 }
 
 /// Global scope remains distinct from an explicit set of all constellations.
-#[pyclass(frozen, skip_from_py_object, name = "SatelliteScope")]
+#[pyclass(frozen, name = "SatelliteScope")]
 #[derive(Clone, Debug)]
 pub(crate) struct PySatelliteScope {
     inner: SatelliteScope,
@@ -224,7 +224,7 @@ impl PySatelliteScope {
 }
 
 /// One identity's source-reported used, unused or unknown membership.
-#[pyclass(frozen, skip_from_py_object, name = "SatelliteUsage")]
+#[pyclass(frozen, name = "SatelliteUsage")]
 #[derive(Clone, Debug)]
 pub(crate) struct PySatelliteUsage {
     inner: SatelliteUsage,
@@ -262,7 +262,7 @@ impl PySatelliteUsage {
 
 /// Each geometry and signal measurement is optional. A measured zero remains present.
 /// Measurements use 32-bit floats.
-#[pyclass(frozen, skip_from_py_object, name = "SatelliteObservation")]
+#[pyclass(frozen, name = "SatelliteObservation")]
 #[derive(Clone, Debug)]
 pub(crate) struct PySatelliteObservation {
     inner: SatelliteObservation,
@@ -327,7 +327,7 @@ macro_rules! evidence_report {
         /// Independent satellite report with original source clocks and ordered rows.
         /// Equality includes source rows, metadata and optional recorder placement.
         /// At least one timezone-aware source timestamp is required.
-        #[pyclass(frozen, skip_from_py_object, name = $name)]
+        #[pyclass(frozen, name = $name)]
         #[derive(Clone, Debug)]
         pub(crate) struct $python {
             pub(crate) inner: $rust,
