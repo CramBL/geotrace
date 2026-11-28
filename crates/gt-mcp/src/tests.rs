@@ -33,7 +33,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use super::{Bridge, COMPANION_NAME, Companion, START_DESKTOP, VERSION};
+use super::{Bridge, START_DESKTOP, Server, VERSION};
 
 #[tokio::test]
 async fn status_tools_advertise_and_forward_bounded_waits() {
@@ -369,12 +369,12 @@ async fn the_query_language_resource_is_available_without_the_desktop() {
     drop(client);
     tokio::time::timeout(Duration::from_secs(2), worker)
         .await
-        .expect("companion shutdown")
-        .expect("companion task");
+        .expect("server shutdown")
+        .expect("server task");
 }
 
 #[tokio::test]
-async fn the_companion_lists_tools_and_returns_structured_results() {
+async fn the_server_lists_tools_and_returns_structured_results() {
     let (mut client, worker) = Client::start(Bridge::Fixture(self::inspection_fixture));
     let initialized = client.initialize().await;
     assert_eq!(
@@ -383,7 +383,7 @@ async fn the_companion_lists_tools_and_returns_structured_results() {
     );
     assert_eq!(
         initialized.pointer("/result/serverInfo/name"),
-        Some(&json!(COMPANION_NAME))
+        Some(&json!("geotrace"))
     );
     assert_eq!(
         initialized.pointer("/result/serverInfo/version"),
@@ -1533,7 +1533,7 @@ impl Client {
     fn start(bridge: Bridge) -> (Self, JoinHandle<()>) {
         let (server, stream) = tokio::io::duplex(8192);
         let worker = tokio::spawn(async move {
-            Companion { bridge }
+            Server { bridge }
                 .serve(server)
                 .await
                 .unwrap()
@@ -1625,7 +1625,7 @@ impl PendingBridge {
 #[case::not_found(ErrorKind::NotFound, START_DESKTOP)]
 #[case::permission_denied(
     ErrorKind::PermissionDenied,
-    "The GeoTrace session denied access. Run GeoTrace and its companion as the same user."
+    "The GeoTrace session denied access. Run GeoTrace and geotrace mcp as the same user."
 )]
 #[case::file_too_large(
     ErrorKind::FileTooLarge,

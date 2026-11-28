@@ -177,7 +177,7 @@ def investigate(call, workflow, requested_mask):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("workflow", choices=["loaded", "history"])
-parser.add_argument("--companion", default="geotrace-mcp")
+parser.add_argument("--geotrace", default="geotrace")
 parser.add_argument("--elevation-mask", type=float)
 options = parser.parse_args()
 if options.workflow != "history" and options.elevation_mask is not None:
@@ -186,7 +186,7 @@ if options.elevation_mask is not None and not math.isfinite(options.elevation_ma
     parser.error("--elevation-mask requires a finite number")
 
 with subprocess.Popen(
-    [options.companion], stdin=subprocess.PIPE, stdout=subprocess.PIPE, encoding="utf-8",
+    [options.geotrace, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, encoding="utf-8",
 ) as server:
     request_ids = count(1)
 
