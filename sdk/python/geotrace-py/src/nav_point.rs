@@ -18,7 +18,7 @@ use crate::satellite::PySatelliteReport;
 /// Equality compares all fix and satellite facts, treating intentional missing positions as absent.
 /// Two NaN coordinates require explicit state and unreported origin for this comparison.
 /// Other NaN values retain ordinary inequality.
-#[pyclass(frozen, skip_from_py_object, name = "NavPoint")]
+#[pyclass(frozen, name = "NavPoint")]
 #[derive(Clone, Debug)]
 pub struct PyNavPoint {
     inner: NavPoint,

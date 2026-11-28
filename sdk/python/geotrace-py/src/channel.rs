@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 /// A unit read back from a file is also a ``ChannelUnit``. ``is_custom`` is
 /// true for a label that is not a catalog unit, including a legacy label an
 /// older writer stored, which raises ``ValueError`` when written again.
-#[pyclass(eq, skip_from_py_object, name = "ChannelUnit")]
+#[pyclass(eq, name = "ChannelUnit")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PyChannelUnit {
     inner: ChannelUnit,
@@ -85,7 +85,7 @@ impl PyChannelUnit {
 ///
 /// Pass one straight to :class:`Channel`, or ``Unit.MG.label`` for its
 /// spelling.
-#[pyclass(eq, skip_from_py_object, name = "Unit")]
+#[pyclass(eq, name = "Unit")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PyUnit {
     inner: Unit,
@@ -105,7 +105,7 @@ include!("unit_catalog.rs");
 /// :meth:`ChannelUnit.custom` for a label outside the catalog. A label that is
 /// neither a catalog unit nor wrapped in `ChannelUnit.custom` raises
 /// `ValueError`.
-#[pyclass(skip_from_py_object, name = "Channel")]
+#[pyclass(name = "Channel")]
 #[derive(Clone, Debug)]
 pub struct PyChannel {
     pub(crate) inner: Channel,

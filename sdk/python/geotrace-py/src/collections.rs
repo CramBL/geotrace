@@ -31,7 +31,7 @@ macro_rules! nav_file_sequence {
             "` per element read. The sequence keeps working after the :class:`NavFile` object ",
             "is gone."
         )]
-        #[pyclass(sequence, skip_from_py_object, name = $sequence_name)]
+        #[pyclass(sequence, name = $sequence_name)]
         pub struct $sequence {
             file: Arc<NavFile>,
         }
@@ -73,7 +73,7 @@ macro_rules! nav_file_sequence {
             }
         }
 
-        #[pyclass(skip_from_py_object, name = $iterator_name)]
+        #[pyclass(name = $iterator_name)]
         pub struct $iterator {
             file: Arc<NavFile>,
             position: usize,

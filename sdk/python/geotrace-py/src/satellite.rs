@@ -107,7 +107,7 @@ impl PySatellite {
 ///
 /// Raises `ValueError` when `gps_time` and `sys_time` are both `None`.
 /// Both must be timezone-aware `datetime.datetime` objects.
-#[pyclass(skip_from_py_object, name = "SatelliteReport")]
+#[pyclass(name = "SatelliteReport")]
 #[derive(Clone, Debug)]
 pub struct PySatelliteReport {
     pub(crate) inner: SatelliteReport,

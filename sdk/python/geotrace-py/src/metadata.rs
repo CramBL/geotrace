@@ -8,7 +8,7 @@ use crate::enums::{PyTravelMode, TravelModeArg};
 /// Optional file-level metadata for a `.gtd` file.
 ///
 /// Raises `ValueError` for a value with a nul byte.
-#[pyclass(skip_from_py_object, name = "Meta")]
+#[pyclass(name = "Meta")]
 #[derive(Clone, Debug)]
 pub struct PyMeta {
     inner: Meta,
