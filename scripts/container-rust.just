@@ -1,11 +1,17 @@
 [group("container-rust")]
 typos: (_native_or_dev "typos" "typos")
 
+# cargo-sort ignores --workspace when given path arguments, so both recipes run
+# the root workspace without paths and the three single-crate workspaces by path.
 [group("container-rust")]
-sort: (_dev "cargo" "sort" "--workspace" "." "sdk/python/geotrace-py" "sdk/rust/geotrace-sdk/fuzz" "crates/gt-logfile/fuzz")
+sort:
+    just _native_or_dev "cargo-sort" "cargo sort --workspace"
+    just _native_or_dev "cargo-sort" "cargo sort sdk/python/geotrace-py sdk/rust/geotrace-sdk/fuzz crates/gt-logfile/fuzz"
 
 [group("container-rust")]
-sort-check: (_native_or_dev "cargo-sort" "cargo sort --workspace --check . sdk/python/geotrace-py sdk/rust/geotrace-sdk/fuzz crates/gt-logfile/fuzz")
+sort-check:
+    just _native_or_dev "cargo-sort" "cargo sort --workspace --check"
+    just _native_or_dev "cargo-sort" "cargo sort --check sdk/python/geotrace-py sdk/rust/geotrace-sdk/fuzz crates/gt-logfile/fuzz"
 
 [group("container-rust")]
 shear *ARGS:
