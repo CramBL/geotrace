@@ -1,6 +1,4 @@
-use std::env;
 use std::error::Error;
-use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
 
 use gt_session_bridge::{
@@ -25,10 +23,6 @@ use rmcp::{
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn run() -> Result<(), Box<dyn Error>> {
-    if env::args_os().nth(1).as_deref() == Some(OsStr::new("--version")) {
-        println!("{COMPANION_NAME} {VERSION}");
-        return Ok(());
-    }
     let reason = Companion {
         bridge: Bridge::Desktop,
     }
@@ -773,8 +767,8 @@ impl Bridge {
     }
 }
 
-const COMPANION_NAME: &str = "geotrace-mcp";
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const COMPANION_NAME: &str = "geotrace-mcp";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const QUERY_LANGUAGE_URI: &str = "geotrace://query-language";
 const QUERY_LANGUAGE_MIME_TYPE: &str = "text/markdown";
 const START_DESKTOP: &str = "Start MCP in GeoTrace Settings and try again.";
