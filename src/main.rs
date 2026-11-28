@@ -369,7 +369,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// default: the surface/depth textures must cover 4k+ displays.
 const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
 
-const MCP_COMMAND: &str = "mcp";
+pub(crate) const MCP_COMMAND: &str = "mcp";
 
 /// Under this flag GeoTrace is offline: no map tiles, no downloads, no
 /// snapping, no update check.
