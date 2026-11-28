@@ -136,7 +136,7 @@ log = "0.4"
 logos = "0.16"
 memchr = "2"
 nalgebra = "0.35"
-parking_lot = "0.12"
+parking_lot = "0.13"
 polyline = "0.11"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 proc-macro2 = "1"
@@ -148,14 +148,14 @@ regex = "1"
 # serves datasets gzip-encoded regardless of the client's Accept-Encoding.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "gzip", "json", "rustls"] }
 rstar = "0.14"
-rstest = "0.27"
+rstest = "0.29"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 signal-hook = "0.4.5"
 smallvec = { version = "1", features = ["union"] }
 strum = { version = "0.28", features = ["derive"] }
-syn = "2"
+syn = "3"
 tempfile = "3"
 test-log = "0.2"
 thiserror = "2"
@@ -164,11 +164,11 @@ trybuild = "1"
 uom = "0.38.0"
 uuid = { version = "1", features = ["v4"] }
 vec1 = "1"
-walkers = "0.65.0"
+walkers = "0.66.0"
 # XXH3, for the content hash a log attachment is stored under. The algorithm
 # is frozen upstream: every build reads back the same hash.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
-zstd = "0.13"
+zstd = "0.14"
 
 [workspace.lints.rust]
 missing_copy_implementations = "warn"
@@ -357,7 +357,7 @@ jiff.workspace = true
 log.workspace = true
 mimalloc = { version = "0.1.52" }
 parking_lot.workspace = true
-rfd = "0.17.2"
+rfd = "0.18"
 rustc-hash.workspace = true
 semver = "1"
 serde.workspace = true
