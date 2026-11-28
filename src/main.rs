@@ -4,6 +4,10 @@ use std::{path::PathBuf, process::ExitCode};
 
 use gt_instance_lock::DataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteAccess};
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+#[cfg(windows)]
+use windows_sys::Win32::System::Console;
 
 use crate::app::shutdown;
 use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
@@ -60,7 +64,34 @@ impl CliAction {
             }
         }
     }
+
+    fn needs_parent_console(&self) -> bool {
+        match self {
+            Self::Version | Self::Help | Self::SelfUpdate => true,
+            Self::Mcp | Self::Launch { .. } => false,
+        }
+    }
 }
+
+#[cfg(windows)]
+#[expect(
+    unsafe_code,
+    reason = "Win32 console attachment calls GetStdHandle and AttachConsole"
+)]
+fn attach_parent_console_if_stdout_missing() {
+    // SAFETY: `GetStdHandle` takes only the `STD_OUTPUT_HANDLE` selector constant.
+    let stdout = unsafe { Console::GetStdHandle(Console::STD_OUTPUT_HANDLE) };
+    if stdout.is_null() || stdout == INVALID_HANDLE_VALUE {
+        // SAFETY: `AttachConsole` takes only `ATTACH_PARENT_PROCESS` and runs
+        // before any stdio writes or background threads start.
+        unsafe {
+            Console::AttachConsole(Console::ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console_if_stdout_missing() {}
 
 /// Run the headless in-place update and return the process exit code. This is
 /// the CLI counterpart of the GUI prompt: a manual path for users on a wedged
@@ -165,14 +196,17 @@ fn begin_shutdown_and_wait_for_pending_writes(
 fn main() -> ExitCode {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
+    let action = CliAction::parse(&raw_args);
+    if action.needs_parent_console() {
+        attach_parent_console_if_stdout_missing();
+    }
+
     // Actions that must not open a window are handled before any GUI/GPU setup.
     // MCP mode also runs before the data directory lock: the desktop session
     // owns that lock.
     // Release smoke tests run `geotrace --version` to confirm the installed
-    // binary launches without the GUI. On Windows the release build has no
-    // attached console, so the clean exit code is the cross-platform signal and
-    // the printed version is checked on Unix.
-    let (initial_paths, offline, session_bridge) = match CliAction::parse(&raw_args) {
+    // binary prints its version and exits without starting the GUI.
+    let (initial_paths, offline, session_bridge) = match action {
         CliAction::Version => {
             println!("geotrace {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
@@ -566,6 +600,26 @@ mod tests {
     ) {
         let args: Vec<String> = args.iter().map(ToString::to_string).collect();
         assert_eq!(CliAction::parse(&args), expected);
+    }
+
+    #[rstest]
+    #[case(CliAction::Version, true)]
+    #[case(CliAction::Help, true)]
+    #[case(CliAction::SelfUpdate, true)]
+    #[case(CliAction::Mcp, false)]
+    #[case(
+        CliAction::Launch {
+            paths: vec![],
+            offline: false,
+            session_bridge: false,
+        },
+        false
+    )]
+    fn only_printing_cli_actions_need_a_parent_console(
+        #[case] action: CliAction,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(action.needs_parent_console(), expected);
     }
 
     const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {

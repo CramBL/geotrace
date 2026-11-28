@@ -1,7 +1,5 @@
 name: Smoke / GUI
 
-# The Windows GUI executable has no console. Check its exit status and read
-# the companion version from the console executable.
 on:
   workflow_call:
     inputs:
@@ -105,8 +103,12 @@ jobs:
         run: &verify-windows-binaries |
           $ErrorActionPreference = "Stop"
           $exe = (Get-Command geotrace.exe -CommandType Application).Source
-          $p = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "geotrace --version exited $($p.ExitCode)" }
+          $desktopVersion = & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "geotrace --version exited $LASTEXITCODE" }
+          Write-Output $desktopVersion
+          if ($desktopVersion -isnot [string] -or $desktopVersion -cne "geotrace $env:VERSION") {
+            throw "Expected geotrace $env:VERSION from $exe"
+          }
           if ($env:EXPECT_COMPANION -eq "true") {
             $companion = Join-Path ([System.IO.Path]::GetDirectoryName($exe)) "geotrace-mcp.exe"
             $companionVersion = & $companion --version

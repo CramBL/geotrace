@@ -306,6 +306,9 @@ self-update = ["dep:axoupdater", "dep:tokio"]
 rustix = { version = "1", features = ["fs"] }
 signal-hook.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
 [dependencies]
 # Used as a library (not a standalone updater binary) for the startup update
 # check, behind the `self-update` feature. Driven through its `async` API on a
