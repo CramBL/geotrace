@@ -7,12 +7,24 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[target.'cfg(unix)'.dev-dependencies]
+tempfile.workspace = true
+
 [lib]
 doctest = false
 
 [features]
 schema = ["dep:schemars", "gt-ui-types/schema"]
 test-util = ["dep:tempfile"]
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+tempfile = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+widestring = "1"
+win-custody = "0.1.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
@@ -44,18 +56,6 @@ gt-loader = { path = "../gt-loader" }
 gt-query-run = { path = "../gt-query-run", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils" }
 proptest.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["process"] }
-tempfile = { workspace = true, optional = true }
-
-[target.'cfg(windows)'.dependencies]
-widestring = "1"
-win-custody = "0.1.6"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
-
-[target.'cfg(unix)'.dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true
