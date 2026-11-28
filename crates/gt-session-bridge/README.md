@@ -1,10 +1,10 @@
 # GeoTrace session bridge
 
-Click **Start MCP** in **Settings > MCP** to let `geotrace-mcp` inspect and control the running desktop app.
+Click **Start MCP** in **Settings > MCP** to let `geotrace mcp` inspect and control the running desktop app.
 Pass `--session-bridge` to enable the bridge at launch.
 Run both processes as the same user.
 
-Configure your MCP client to launch `geotrace-mcp` as a stdio server. [Binary entry point](../../src/bin/geotrace-mcp.rs)
+Configure your MCP client to launch `geotrace mcp` as a stdio server. [Binary entry point](../../src/main.rs)
 
 The bridge exchanges length-prefixed JSON requests and replies over a Unix-domain socket or a Windows named pipe.
 See the [request and reply types](src/protocol.rs) and [frame encoding](src/framing.rs).

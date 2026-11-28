@@ -23,7 +23,7 @@ use rmcp::{
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn run() -> Result<(), Box<dyn Error>> {
-    let reason = Companion {
+    let reason = Server {
         bridge: Bridge::Desktop,
     }
     .serve(transport::stdio_pipes())
@@ -33,16 +33,16 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     match reason {
         QuitReason::Closed | QuitReason::Cancelled => Ok(()),
         QuitReason::JoinError(error) => Err(error.into()),
-        reason => Err(io::Error::other(format!("Companion stopped ({reason:?})")).into()),
+        reason => Err(io::Error::other(format!("MCP server stopped ({reason:?})")).into()),
     }
 }
 
-struct Companion {
+struct Server {
     bridge: Bridge,
 }
 
 #[tool_router]
-impl Companion {
+impl Server {
     #[tool(
         description = "Rebuild loaded tracks and generated markers with current Processing settings. Returns processing_applied after the rebuild.",
         annotations(
@@ -528,7 +528,7 @@ impl Companion {
             ErrorCode::InvalidQueryCursor => "The query, match or row index is outside the result.",
             ErrorCode::InvalidRange => "Choose an ordered point range within the track.",
             ErrorCode::InvalidRequest => {
-                "GeoTrace could not read the request. Use the companion from the same release."
+                "GeoTrace could not read the request. Run geotrace mcp from the same release."
             }
             ErrorCode::InvalidSettingType => {
                 "Use the boolean or numeric value type from describe_setting."
@@ -617,7 +617,7 @@ impl Companion {
                     Self::reply_error_message(ErrorCode::RequestTooLarge).to_owned()
                 }
                 ErrorKind::PermissionDenied => {
-                    "The GeoTrace session denied access. Run GeoTrace and its companion as the same user."
+                    "The GeoTrace session denied access. Run GeoTrace and geotrace mcp as the same user."
                         .to_owned()
                 }
                 ErrorKind::TimedOut => {
@@ -689,7 +689,7 @@ impl Companion {
 }
 
 #[tool_handler]
-impl ServerHandler for Companion {
+impl ServerHandler for Server {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -715,7 +715,7 @@ impl ServerHandler for Companion {
                 .enable_resources()
                 .build(),
         )
-        .with_server_info(Implementation::new(COMPANION_NAME, VERSION))
+        .with_server_info(Implementation::new(SERVER_NAME, VERSION))
         .with_instructions(format!(
             "Read {QUERY_LANGUAGE_URI} for query syntax and examples."
         ))
@@ -767,8 +767,8 @@ impl Bridge {
     }
 }
 
-pub const COMPANION_NAME: &str = "geotrace-mcp";
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+const SERVER_NAME: &str = "geotrace";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const QUERY_LANGUAGE_URI: &str = "geotrace://query-language";
 const QUERY_LANGUAGE_MIME_TYPE: &str = "text/markdown";
 const START_DESKTOP: &str = "Start MCP in GeoTrace Settings and try again.";

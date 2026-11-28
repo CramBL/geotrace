@@ -2,7 +2,6 @@
 name = "geotrace"
 version.workspace = true
 description.workspace = true
-default-run = "geotrace"
 edition.workspace = true
 license.workspace = true
 # The GUI app ships as prebuilt binaries via dist, never to crates.io (it also

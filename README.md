@@ -101,7 +101,7 @@ The check can be turned off under Settings.
 
 > [!NOTE]
 > Releases are currently **unsigned**.
-> On macOS, see [how to open the unsigned GeoTrace binaries](docs/mcp.md#macos-gatekeeper) if Gatekeeper blocks a launch.
+> On macOS, see [how to open the unsigned GeoTrace binary](docs/mcp.md#macos-gatekeeper) if Gatekeeper blocks a launch.
 > On Windows, SmartScreen shows **More info &rarr; Run anyway**.
 
 ## Inspect recordings from an MCP client

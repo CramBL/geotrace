@@ -4,34 +4,33 @@ Follow the [setup instructions](../README.md#inspect-recordings-from-an-mcp-clie
 
 ## Configure your client
 
-**Copy MCP config** uses the absolute path to the companion in your GeoTrace installation.
+**Copy MCP config** uses the absolute path to the `geotrace` executable in your GeoTrace installation with `["mcp"]` as its arguments.
 If you move GeoTrace or an upgrade changes its install path, copy the config again.
-If you build GeoTrace yourself, build `geotrace` and `geotrace-mcp` in the same output directory.
 
-For manual setup, configure your client to launch `geotrace-mcp` as a stdio server.
+For manual setup, configure your client to launch `geotrace mcp` as a stdio server.
 
 ```json
 {
   "mcpServers": {
     "geotrace": {
-      "command": "/absolute/path/to/geotrace-mcp"
+      "command": "/absolute/path/to/geotrace",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-On Windows, use the path to `geotrace-mcp.exe` and escape backslashes in JSON.
+On Windows, use the path to `geotrace.exe` and escape backslashes in JSON.
 Stop active MCP sessions before updating GeoTrace on Windows.
 
 ### macOS Gatekeeper
 
-GeoTrace releases include `geotrace` and `geotrace-mcp` as unsigned binaries.
-If Gatekeeper blocks a binary from the [official release](https://github.com/CramBL/geotrace/releases/latest), remove its quarantine attribute with `xattr`.
-Substitute the paths from your installation and use the command for each blocked binary.
+GeoTrace releases ship `geotrace` as an unsigned binary.
+If Gatekeeper blocks the binary from the [official release](https://github.com/CramBL/geotrace/releases/latest), remove its quarantine attribute with `xattr`.
+Substitute the path from your installation.
 
 ```sh
 xattr -d com.apple.quarantine "/path/to/geotrace"
-xattr -d com.apple.quarantine "/path/to/geotrace-mcp"
 ```
 
 After a blocked launch, you can also use **Open Anyway** under **System Settings > Privacy & Security**.
@@ -80,11 +79,11 @@ If a query is still running, call `run_query` to get its new job identifier in t
 
 ## Connection errors and retries
 
-Failures before the companion sends a request, such as a missing desktop session, permission denial, an oversized request, or a connection timeout, leave GeoTrace unchanged and are safe to retry after resolving the cause.
-A timeout or disconnect after the companion sends a request leaves the outcome uncertain for mutating tools because GeoTrace may have already received and started or applied the request.
+Failures before the MCP server sends a request, such as a missing desktop session, permission denial, an oversized request, or a connection timeout, leave GeoTrace unchanged and are safe to retry after resolving the cause.
+A timeout or disconnect after the MCP server sends a request leaves the outcome uncertain for mutating tools because GeoTrace may have already received and started or applied the request.
 
 Read-only tools (`get_session_state`, `list_recordings`, `get_recording`, `get_track`, `get_range_details`, `list_metrics`, `get_settings`, `describe_setting`, `list_history_recordings`, `get_history_open_status`, `check_query`, `get_query_status`, and `get_query_results`) are safe to retry after any timeout or disconnect.
-For idempotent mutating tools (`cancel_query`, `open_panel`, `open_point`, `open_query`, `open_setting`, `set_session_view`, `set_setting`, `set_track_visibility`, `show_on_map`, and `show_on_plot`), the companion reports that GeoTrace may have applied the change and that inspecting state or retrying the same call is safe.
+For idempotent mutating tools (`cancel_query`, `open_panel`, `open_point`, `open_query`, `open_setting`, `set_session_view`, `set_setting`, `set_track_visibility`, `show_on_map`, and `show_on_plot`), the MCP server reports that GeoTrace may have applied the change and that inspecting state or retrying the same call is safe.
 For non-idempotent mutating tools, inspect state before retrying:
 
 - `manage_recordings` and `apply_processing`: check `list_recordings` or `get_session_state` before retrying.
@@ -237,7 +236,7 @@ The reply confirms the in-memory change.
 ## Queries
 
 Read the MCP resource `geotrace://query-language` for syntax, operators, units, and examples.
-The companion advertises it through `resources/list` and serves it through `resources/read`, even when GeoTrace is closed.
+The MCP server advertises it through `resources/list` and serves it through `resources/read`, even when GeoTrace is closed.
 
 `list_metrics` returns the built-in query identifiers, summaries, quantities, accepted unit examples, and sources.
 Metric definitions describe where values can come from, including environment archives and completed road snapping runs.
@@ -441,8 +440,8 @@ GeoTrace displays and copies payloads with invalid UTF-8 or NUL bytes in lossles
 
 These examples use the repository's [demo recording](../tests/fixtures/demo_trip/demo_trip.gtd).
 The [investigation script](examples/investigate.py) uses the returned recording, track and query references throughout each investigation.
-Run the commands from the repository root with Python 3.10 or later and both GeoTrace binaries on `PATH`.
-Use `--companion` to specify another path to the companion.
+Run the commands from the repository root with Python 3.10 or later and `geotrace` on `PATH`.
+Use `--geotrace` to specify another path to the `geotrace` executable.
 Enable **Query highlights** in GeoTrace's map visibility controls before running the script.
 
 ### Show an unusual interval on the map and plot

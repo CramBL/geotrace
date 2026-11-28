@@ -128,14 +128,6 @@
                                 Source='$(var.CargoTargetBinDir)\geotrace.exe'
                                 KeyPath='yes'/>
                         </Component>
-                        <Component Id='McpCompanion' Guid='*'>
-                            <File
-                                Id='McpCompanionExe'
-                                Name='geotrace-mcp.exe'
-                                DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\geotrace-mcp.exe'
-                                KeyPath='yes'/>
-                        </Component>
                     </Directory>
                 </Directory>
             </Directory>
@@ -184,7 +176,6 @@
             <!--<ComponentRef Id='License'/>-->
 
             <ComponentRef Id='binary0'/>
-            <ComponentRef Id='McpCompanion'/>
             <ComponentRef Id='Shortcuts'/>
 
             <Feature

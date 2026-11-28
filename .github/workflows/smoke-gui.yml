@@ -12,9 +12,6 @@ on:
       prerelease:
         required: true
         type: string
-      expect_companion:
-        default: true
-        type: boolean
 
 permissions:
   contents: read
@@ -23,7 +20,6 @@ env:
   REPO: CramBL/geotrace
   TAP: CramBL/homebrew-tap
   VERSION: ${{ inputs.version }}
-  EXPECT_COMPANION: ${{ inputs.expect_companion }}
 
 defaults:
   run:
@@ -57,8 +53,8 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Verify installed binaries
-        run: &verify-unix-binaries |
+      - name: Verify installed binary
+        run: &verify-unix-binary |
           set -euo pipefail
           desktop="${GEOTRACE_EXE:-$(command -v geotrace)}"
           desktop_version="$("$desktop" --version)"
@@ -67,14 +63,14 @@ jobs:
             printf 'Expected geotrace %s from %s\n' "$VERSION" "$desktop" >&2
             exit 1
           fi
-          if [[ "$EXPECT_COMPANION" == true ]]; then
-            companion="$(dirname "$desktop")/geotrace-mcp"
-            companion_version="$("$companion" --version)"
-            printf '%s\n' "$companion_version"
-            if [[ "$companion_version" != "geotrace-mcp $VERSION" ]]; then
-              printf 'Expected geotrace-mcp %s from %s\n' "$VERSION" "$companion" >&2
-              exit 1
-            fi
+          init_request='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+          initialized='{"jsonrpc":"2.0","method":"notifications/initialized"}'
+          mcp_reply="$(printf '%s\n%s\n' "$init_request" "$initialized" | "$desktop" mcp)"
+          mcp_server="$(printf '%s\n' "$mcp_reply" | jq -r '[.result.serverInfo.name, .result.serverInfo.version] | join(" ")')"
+          printf '%s\n' "$mcp_server"
+          if [[ "$mcp_server" != "geotrace $VERSION" ]]; then
+            printf 'Expected MCP server geotrace %s from %s\n' "$VERSION" "$desktop" >&2
+            exit 1
           fi
 
   powershell-installer:
@@ -98,9 +94,9 @@ jobs:
                       [Environment]::GetEnvironmentVariable("Path","Machine")
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path (Get-Command geotrace).Source)
 
-      - name: Verify installed binaries
+      - name: Verify installed binary
         shell: pwsh
-        run: &verify-windows-binaries |
+        run: &verify-windows-binary |
           $ErrorActionPreference = "Stop"
           $exe = (Get-Command geotrace.exe -CommandType Application).Source
           $desktopVersion = & $exe --version
@@ -109,14 +105,37 @@ jobs:
           if ($desktopVersion -isnot [string] -or $desktopVersion -cne "geotrace $env:VERSION") {
             throw "Expected geotrace $env:VERSION from $exe"
           }
-          if ($env:EXPECT_COMPANION -eq "true") {
-            $companion = Join-Path ([System.IO.Path]::GetDirectoryName($exe)) "geotrace-mcp.exe"
-            $companionVersion = & $companion --version
-            if ($LASTEXITCODE -ne 0) { throw "geotrace-mcp --version exited $LASTEXITCODE" }
-            Write-Output $companionVersion
-            if ($companionVersion -isnot [string] -or $companionVersion -cne "geotrace-mcp $env:VERSION") {
-              throw "Expected geotrace-mcp $env:VERSION from $companion"
+          $psi = [System.Diagnostics.ProcessStartInfo]::new($exe, "mcp")
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $process = [System.Diagnostics.Process]::Start($psi)
+          try {
+            $initRequest = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+            $initialized = '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+            $process.StandardInput.Write("$initRequest`n$initialized`n")
+            $process.StandardInput.Flush()
+            $process.StandardInput.Close()
+            $replyLine = $process.StandardOutput.ReadLine()
+            if (-not $process.WaitForExit(10000)) {
+              $process.Kill()
+              throw "geotrace mcp did not exit after stdin closed"
             }
+            if ($process.ExitCode -ne 0) { throw "geotrace mcp exited $($process.ExitCode)" }
+          } finally {
+            $process.Dispose()
+          }
+          if ([string]::IsNullOrWhiteSpace($replyLine)) {
+            throw "geotrace mcp returned no initialize reply"
+          }
+          $reply = $replyLine | ConvertFrom-Json
+          $serverInfo = $reply.result.serverInfo
+          $mcpServer = "$($serverInfo.name) $($serverInfo.version)"
+          Write-Output $mcpServer
+          if ($mcpServer -cne "geotrace $env:VERSION") {
+            throw "Expected MCP server geotrace $env:VERSION from $exe"
           }
 
   msi:
@@ -145,9 +164,9 @@ jobs:
                       [Environment]::GetEnvironmentVariable("Path","Machine")
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path (Get-Command geotrace).Source)
 
-      - name: Verify installed binaries
+      - name: Verify installed binary
         shell: pwsh
-        run: *verify-windows-binaries
+        run: *verify-windows-binary
 
   homebrew:
     name: brew / ${{ matrix.runner }}
@@ -188,8 +207,8 @@ jobs:
           brew install "${TAP}/geotrace"
           echo "GEOTRACE_EXE=$(brew --prefix "${TAP}/geotrace")/bin/geotrace" >> "$GITHUB_ENV"
 
-      - name: Verify installed binaries
-        run: *verify-unix-binaries
+      - name: Verify installed binary
+        run: *verify-unix-binary
 
   # Prove an existing install can pick up this release: install the previous
   # stable version (writing an install receipt), run its `geotrace --update`,
@@ -271,6 +290,6 @@ jobs:
           "$desktop" --update
           echo "GEOTRACE_EXE=$desktop" >> "$GITHUB_ENV"
 
-      - name: Verify updated binaries
+      - name: Verify updated binary
         if: steps.prev.outputs.skip == 'false'
-        run: *verify-unix-binaries
+        run: *verify-unix-binary
